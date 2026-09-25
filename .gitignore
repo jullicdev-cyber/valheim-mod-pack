@@ -3,3 +3,4 @@ dist/
 *.log
 BepInEx/cache/
 BepInEx/LogOutput.log
+__pycache__/

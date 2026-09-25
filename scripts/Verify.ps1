@@ -8,7 +8,11 @@ $inventory = Get-Content (Join-Path $root 'files.sha256.json') -Raw | ConvertFro
 foreach ($entry in $inventory) {
     $file = Join-Path $pack $entry.path
     if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Missing file: $($entry.path)" }
-    if ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $entry.sha256) { throw "Changed file: $($entry.path)" }
+    $stream = [IO.File]::OpenRead($file)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $hash = [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '').ToLowerInvariant() }
+    finally { $stream.Dispose(); $sha.Dispose() }
+    if ($hash -ne $entry.sha256) { throw "Changed file: $($entry.path)" }
 }
 $actual = @(Get-ChildItem -LiteralPath $pack -File -Recurse -Force)
 if ($actual.Count -ne @($inventory).Count) { throw 'Unexpected extra files in pack.' }
