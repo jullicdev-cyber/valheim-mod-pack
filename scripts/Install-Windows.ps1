@@ -36,6 +36,11 @@ function Copy-BackupEntry($Entry, [string]$Destination) {
 
 try {
     if (-not $GameDirectory) { $GameDirectory = Read-Host 'Valheim directory (contains valheim.exe)' }
+    # Accept a pasted console line, including repeated prompt prefixes.
+    $GameDirectory = $GameDirectory.Trim()
+    while ($GameDirectory -match '^Valheim directory \(contains valheim\.exe\):\s*') {
+        $GameDirectory = $GameDirectory.Substring($Matches[0].Length).Trim()
+    }
     $GameDirectory = $GameDirectory.Trim().Trim('"')
     if (-not $GameDirectory) { throw 'No directory specified.' }
     $target = (Resolve-Path -LiteralPath $GameDirectory).Path

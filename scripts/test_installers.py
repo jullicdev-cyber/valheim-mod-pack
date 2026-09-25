@@ -65,6 +65,15 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(list(invalid.iterdir()), [])
 
     @unittest.skipUnless(sys.platform == 'win32', 'Windows PowerShell test')
+    def test_windows_pasted_prompt(self):
+        pasted = 'Valheim directory (contains valheim.exe): ' * 2 + '"' + str(self.target) + '"'
+        result = subprocess.run(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass',
+                                 '-File', str(ROOT / 'scripts/Install-Windows.ps1'),
+                                 '-GameDirectory', pasted], capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((self.target / 'BepInEx/core/BepInEx.dll').exists())
+
+    @unittest.skipUnless(sys.platform == 'win32', 'Windows PowerShell test')
     def test_windows_vortex_file_links(self):
         outside = Path(tempfile.mkdtemp(prefix='vortex staging '))
         payload = outside / 'mod.dll'
