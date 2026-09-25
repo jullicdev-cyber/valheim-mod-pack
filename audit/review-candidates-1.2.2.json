@@ -1,0 +1,125 @@
+{
+  "reviewDate": "2026-09-25",
+  "packVersion": "1.2.2",
+  "purpose": "Research snapshot only. Not an installation manifest or a runtime compatibility certificate.",
+  "candidates": [
+    {
+      "package": "Goldenrevolver/Quick_Stack_Store_Sort_Trash_Restock",
+      "version": "1.4.15",
+      "updated": "2026-09-12T18:31:45.870343Z",
+      "deprecated": false,
+      "dependencies": [
+        "denikson-BepInExPack_Valheim-5.4.2350"
+      ],
+      "page": "https://thunderstore.io/c/valheim/p/Goldenrevolver/Quick_Stack_Store_Sort_Trash_Restock/",
+      "api": "https://thunderstore.io/api/experimental/package/Goldenrevolver/Quick_Stack_Store_Sort_Trash_Restock/",
+      "downloadUrl": "https://thunderstore.io/package/download/Goldenrevolver/Quick_Stack_Store_Sort_Trash_Restock/1.4.15/",
+      "downloadedArchiveSha256": "f73d07cdd94261f9bbb9facc7a5d990d8d47805362a9a2232125df53ac45c707",
+      "installedInPack": false
+    },
+    {
+      "package": "MSchmoecker/MultiUserChest",
+      "version": "0.6.2",
+      "updated": "2026-09-12T15:06:48.207626Z",
+      "deprecated": false,
+      "dependencies": [
+        "denikson-BepInExPack_Valheim-5.4.2350",
+        "ValheimModding-Jotunn-2.30.0"
+      ],
+      "page": "https://thunderstore.io/c/valheim/p/MSchmoecker/MultiUserChest/",
+      "api": "https://thunderstore.io/api/experimental/package/MSchmoecker/MultiUserChest/",
+      "downloadUrl": "https://thunderstore.io/package/download/MSchmoecker/MultiUserChest/0.6.2/",
+      "downloadedArchiveSha256": "822233992ec47d43b134265e57b42b89682482fb884005c3b23aba98c0352949",
+      "installedInPack": false
+    },
+    {
+      "package": "Searica/ProjectileTweaks",
+      "version": "1.7.1",
+      "updated": "2026-09-18T01:10:05.094579Z",
+      "deprecated": false,
+      "dependencies": [
+        "denikson-BepInExPack_Valheim-5.4.2350",
+        "ValheimModding-Jotunn-2.30.1"
+      ],
+      "page": "https://thunderstore.io/c/valheim/p/Searica/ProjectileTweaks/",
+      "api": "https://thunderstore.io/api/experimental/package/Searica/ProjectileTweaks/",
+      "downloadUrl": "https://thunderstore.io/package/download/Searica/ProjectileTweaks/1.7.1/",
+      "downloadedArchiveSha256": "b6edff08e4b32f9c1e5e77c43cd36924ee11f1d401961766f180f1b6467f075b",
+      "installedInPack": false
+    },
+    {
+      "package": "Searica/ToolTweaks",
+      "version": "1.4.0",
+      "updated": "2026-09-14T23:27:32.601195Z",
+      "deprecated": false,
+      "dependencies": [
+        "denikson-BepInExPack_Valheim-5.4.2350",
+        "ValheimModding-Jotunn-2.30.0"
+      ],
+      "page": "https://thunderstore.io/c/valheim/p/Searica/ToolTweaks/",
+      "api": "https://thunderstore.io/api/experimental/package/Searica/ToolTweaks/",
+      "downloadUrl": "https://thunderstore.io/package/download/Searica/ToolTweaks/1.4.0/",
+      "downloadedArchiveSha256": null,
+      "installedInPack": false
+    },
+    {
+      "package": "Searica/CameraTweaks",
+      "version": "1.4.0",
+      "updated": "2026-09-15T18:29:14.976738Z",
+      "deprecated": false,
+      "dependencies": [
+        "denikson-BepInExPack_Valheim-5.4.2202"
+      ],
+      "page": "https://thunderstore.io/c/valheim/p/Searica/CameraTweaks/",
+      "api": "https://thunderstore.io/api/experimental/package/Searica/CameraTweaks/",
+      "downloadUrl": "https://thunderstore.io/package/download/Searica/CameraTweaks/1.4.0/",
+      "downloadedArchiveSha256": null,
+      "installedInPack": false
+    },
+    {
+      "package": "shudnal/ConfigurationManager",
+      "version": "1.1.21",
+      "updated": "2026-09-15T14:50:00.964209Z",
+      "deprecated": false,
+      "dependencies": [
+        "denikson-BepInExPack_Valheim-5.4.2350",
+        "shudnal-ConditionalConfigSync-1.0.5",
+        "ValheimModding-YamlDotNet-16.3.0",
+        "ValheimModding-JsonDotNET-13.0.3"
+      ],
+      "page": "https://thunderstore.io/c/valheim/p/shudnal/ConfigurationManager/",
+      "api": "https://thunderstore.io/api/experimental/package/shudnal/ConfigurationManager/",
+      "downloadUrl": "https://thunderstore.io/package/download/shudnal/ConfigurationManager/1.1.21/",
+      "downloadedArchiveSha256": null,
+      "installedInPack": false
+    },
+    {
+      "package": "blacks7ar/FoodDurationMultiplier",
+      "version": "1.1.7",
+      "updated": "2026-09-13T09:15:05.945305Z",
+      "deprecated": false,
+      "dependencies": [
+        "denikson-BepInExPack_Valheim-5.4.2350"
+      ],
+      "page": "https://thunderstore.io/c/valheim/p/blacks7ar/FoodDurationMultiplier/",
+      "api": "https://thunderstore.io/api/experimental/package/blacks7ar/FoodDurationMultiplier/",
+      "downloadUrl": "https://thunderstore.io/package/download/blacks7ar/FoodDurationMultiplier/1.1.7/",
+      "downloadedArchiveSha256": null,
+      "installedInPack": false
+    },
+    {
+      "package": "kinghfb/Sleepover",
+      "version": "1.1.1",
+      "updated": "2023-04-06T11:01:39.959587Z",
+      "deprecated": true,
+      "dependencies": [
+        "denikson-BepInExPack_Valheim-5.4.2102"
+      ],
+      "page": "https://thunderstore.io/c/valheim/p/kinghfb/Sleepover/",
+      "api": "https://thunderstore.io/api/experimental/package/kinghfb/Sleepover/",
+      "downloadUrl": "https://thunderstore.io/package/download/kinghfb/Sleepover/1.1.1/",
+      "downloadedArchiveSha256": null,
+      "installedInPack": false
+    }
+  ]
+}
