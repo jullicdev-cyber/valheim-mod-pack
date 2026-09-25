@@ -1,5 +1,11 @@
 # Проверка сборки
 
+## Версия 1.2.2
+
+- Ключи MonsterProjectile сверены с исходным кодом V+ 0.10.2.0: enabled=true, monsterMaxChargeVelocityMultiplier=100, monsterMaxChargeAccuracyMultiplier=0.
+- Проверены неизменность PlayerProjectile, совпадение исходного конфига с Game и 97 контрольных сумм / зависимости 15 пакетов через Verify.ps1.
+- Запуск игры не выполнялся; особые атаки мобов и модовые снаряды могут обходить патч штатного Attack.ProjectileAttackTriggered.
+
 ## Версия 1.2.1
 
 - PlayerProjectile настроен по схеме исходного кода V+ 0.10.2.0: оба множителя скорости 100, оба множителя точности 0, enableScaleWithSkillLevel=false.
