@@ -1,5 +1,5 @@
 {
-  "packVersion": "1.1.0",
+  "packVersion": "1.2.0",
   "created": "2026-09-25",
   "targetGameVersion": "1.0.16",
   "packages": [
@@ -115,6 +115,85 @@
       ],
       "sourceSubdirectory": "BepInEx",
       "destination": "BepInEx"
+    },
+    {
+      "id": "ValheimModding-YamlDotNet",
+      "version": "16.3.1",
+      "source": "Thunderstore",
+      "page": "https://thunderstore.io/package/ValheimModding/YamlDotNet/",
+      "downloadUrl": "https://thunderstore.io/package/download/ValheimModding/YamlDotNet/16.3.1/",
+      "sha256": "2280480d2add7d6a7a17b882f9b755145160c852e89a14794d1493d08495d2ac",
+      "dependencies": [],
+      "sourceSubdirectory": "plugins",
+      "destination": "BepInEx/plugins/ValheimModding-YamlDotNet"
+    },
+    {
+      "id": "ValheimModding-JsonDotNET",
+      "version": "13.0.4",
+      "source": "Thunderstore",
+      "page": "https://thunderstore.io/package/ValheimModding/JsonDotNET/",
+      "downloadUrl": "https://thunderstore.io/package/download/ValheimModding/JsonDotNET/13.0.4/",
+      "sha256": "a221c7be7163ab9739274b962fbd1f63abde65b1418839a62f02aca210868147",
+      "dependencies": [],
+      "sourceSubdirectory": "plugins",
+      "destination": "BepInEx/plugins/ValheimModding-JsonDotNET"
+    },
+    {
+      "id": "Vapok-AdventureBackpacks",
+      "version": "2.1.13",
+      "source": "Thunderstore",
+      "page": "https://thunderstore.io/package/Vapok/AdventureBackpacks/",
+      "downloadUrl": "https://thunderstore.io/package/download/Vapok/AdventureBackpacks/2.1.13/",
+      "sha256": "6936a742e396fbe9e71d100dff9d58e405c3a3ddfdbc5ba37370c4a0efac9d3e",
+      "dependencies": [
+        "denikson-BepInExPack_Valheim-5.4.2350",
+        "ValheimModding-Jotunn-2.30.2",
+        "ValheimModding-YamlDotNet-16.3.1"
+      ],
+      "sourceSubdirectory": "plugins",
+      "destination": "BepInEx/plugins/Vapok-AdventureBackpacks"
+    },
+    {
+      "id": "RandyKnapp-EquipmentAndQuickSlots",
+      "version": "3.1.3",
+      "source": "Thunderstore",
+      "page": "https://thunderstore.io/package/RandyKnapp/EquipmentAndQuickSlots/",
+      "downloadUrl": "https://thunderstore.io/package/download/RandyKnapp/EquipmentAndQuickSlots/3.1.3/",
+      "sha256": "bb5b51fb63842864b89a0408535adaa8290bde5605579ed69c17e0cdcd9721dd",
+      "dependencies": [
+        "denikson-BepInExPack_Valheim-5.4.2201",
+        "ValheimModding-Jotunn-2.29.2"
+      ],
+      "sourceSubdirectory": "plugins",
+      "destination": "BepInEx/plugins/RandyKnapp-EquipmentAndQuickSlots"
+    },
+    {
+      "id": "Advize-PlantEverything",
+      "version": "1.21.3",
+      "source": "Thunderstore",
+      "page": "https://thunderstore.io/package/Advize/PlantEverything/",
+      "downloadUrl": "https://thunderstore.io/package/download/Advize/PlantEverything/1.21.3/",
+      "sha256": "a731227548d4bb0c669da8faf3b4d17f02ea2696b6fac85fcee9cfc3cfd32446",
+      "dependencies": [
+        "denikson-BepInExPack_Valheim-5.4.2351"
+      ],
+      "sourceSubdirectory": "",
+      "destination": "BepInEx/plugins/Advize-PlantEverything"
+    },
+    {
+      "id": "RandyKnapp-EpicLoot",
+      "version": "0.14.13",
+      "source": "Thunderstore",
+      "page": "https://thunderstore.io/package/RandyKnapp/EpicLoot/",
+      "downloadUrl": "https://thunderstore.io/package/download/RandyKnapp/EpicLoot/0.14.13/",
+      "sha256": "8fd19132c46527471092ac732b71651e11862f2c0b784fc907b387b6ace3bb4f",
+      "dependencies": [
+        "denikson-BepInExPack_Valheim-5.4.2333",
+        "ValheimModding-JsonDotNET-13.0.4",
+        "ValheimModding-Jotunn-2.29.2"
+      ],
+      "sourceSubdirectory": "plugins",
+      "destination": "BepInEx/plugins/EpicLoot"
     }
   ]
 }

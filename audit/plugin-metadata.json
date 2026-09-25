@@ -1,0 +1,378 @@
+{
+  "scope": "Static DLL metadata only; not a gameplay or Harmony compatibility test",
+  "assemblies": [
+    {
+      "name": "Jotunn",
+      "version": "2.30.2.0",
+      "file": "BepInEx/plugins/Jotunn.dll"
+    },
+    {
+      "name": "ValheimPlus",
+      "version": "0.10.2.0",
+      "file": "BepInEx/plugins/ValheimPlus.dll"
+    },
+    {
+      "name": "Advize_PlantEasily",
+      "version": "2.2.2.0",
+      "file": "BepInEx/plugins/Advize-PlantEasily/Advize_PlantEasily.dll"
+    },
+    {
+      "name": "Advize_PlantEverything",
+      "version": "1.21.3.0",
+      "file": "BepInEx/plugins/Advize-PlantEverything/Advize_PlantEverything.dll"
+    },
+    {
+      "name": "AzuAutoStore",
+      "version": "3.1.6.0",
+      "file": "BepInEx/plugins/Azumatt-AzuAutoStore/AzuAutoStore.dll"
+    },
+    {
+      "name": "AzuCraftyBoxes",
+      "version": "1.8.24.0",
+      "file": "BepInEx/plugins/Azumatt-AzuCraftyBoxes/AzuCraftyBoxes.dll"
+    },
+    {
+      "name": "EpicLoot",
+      "version": "0.13.0.0",
+      "file": "BepInEx/plugins/EpicLoot/EpicLoot.dll"
+    },
+    {
+      "name": "MushroomSync",
+      "version": "1.0.0.0",
+      "file": "BepInEx/plugins/Mushroom_Vikings-MushroomSync/MushroomSync.dll"
+    },
+    {
+      "name": "ResourceDropModifier",
+      "version": "0.1.0.0",
+      "file": "BepInEx/plugins/Mushroom_Vikings-ResourceDropModifier/ResourceDropModifier.dll"
+    },
+    {
+      "name": "EquipmentAndQuickSlots",
+      "version": "3.0.1.0",
+      "file": "BepInEx/plugins/RandyKnapp-EquipmentAndQuickSlots/EquipmentAndQuickSlots.dll"
+    },
+    {
+      "name": "Newtonsoft.Json",
+      "version": "13.0.0.0",
+      "file": "BepInEx/plugins/ValheimModding-JsonDotNET/Newtonsoft.Json.dll"
+    },
+    {
+      "name": "NewtonsoftJsonDetector",
+      "version": "1.0.0.0",
+      "file": "BepInEx/plugins/ValheimModding-JsonDotNET/NewtonsoftJsonDetector.dll"
+    },
+    {
+      "name": "YamlDotNet",
+      "version": "16.0.0.0",
+      "file": "BepInEx/plugins/ValheimModding-YamlDotNet/YamlDotNet.dll"
+    },
+    {
+      "name": "YamlDotNetDetector",
+      "version": "1.0.0.0",
+      "file": "BepInEx/plugins/ValheimModding-YamlDotNet/YamlDotNetDetector.dll"
+    },
+    {
+      "name": "AdventureBackpacks",
+      "version": "2.1.13.0",
+      "file": "BepInEx/plugins/Vapok-AdventureBackpacks/AdventureBackpacks.dll"
+    },
+    {
+      "name": "XPortal",
+      "version": "1.2.25.0",
+      "file": "BepInEx/plugins/XPortal/XPortal.dll"
+    }
+  ],
+  "plugins": [
+    {
+      "guid": "com.jotunn.jotunn",
+      "name": "Jotunn",
+      "version": "2.30.2",
+      "file": "BepInEx/plugins/Jotunn.dll",
+      "dependencies": [
+        {
+          "guid": "com.bepis.bepinex.configurationmanager",
+          "hard": false,
+          "minimum": null
+        },
+        {
+          "guid": "com.maxsch.valheim.LocalizationCache",
+          "hard": false,
+          "minimum": null
+        }
+      ],
+      "incompatible": [],
+      "processes": []
+    },
+    {
+      "guid": "org.bepinex.plugins.valheim_plus",
+      "name": "Valheim Plus",
+      "version": "0.10.2.0",
+      "file": "BepInEx/plugins/ValheimPlus.dll",
+      "dependencies": [
+        {
+          "guid": "com.bepis.bepinex.configurationmanager",
+          "hard": false,
+          "minimum": null
+        },
+        {
+          "guid": "_shudnal.ConfigurationManager",
+          "hard": false,
+          "minimum": null
+        }
+      ],
+      "incompatible": [],
+      "processes": []
+    },
+    {
+      "guid": "advize.PlantEasily",
+      "name": "PlantEasily",
+      "version": "2.2.2",
+      "file": "BepInEx/plugins/Advize-PlantEasily/Advize_PlantEasily.dll",
+      "dependencies": [],
+      "incompatible": [],
+      "processes": []
+    },
+    {
+      "guid": "advize.PlantEverything",
+      "name": "PlantEverything",
+      "version": "1.21.3",
+      "file": "BepInEx/plugins/Advize-PlantEverything/Advize_PlantEverything.dll",
+      "dependencies": [],
+      "incompatible": [],
+      "processes": []
+    },
+    {
+      "guid": "Azumatt.AzuAutoStore",
+      "name": "AzuAutoStore",
+      "version": "3.1.6",
+      "file": "BepInEx/plugins/Azumatt-AzuAutoStore/AzuAutoStore.dll",
+      "dependencies": [
+        {
+          "guid": "kg.ItemDrawers",
+          "hard": false,
+          "minimum": null
+        },
+        {
+          "guid": "Azumatt.AzuExtendedPlayerInventory",
+          "hard": false,
+          "minimum": null
+        },
+        {
+          "guid": "org.bepinex.plugins.backpacks",
+          "hard": false,
+          "minimum": null
+        }
+      ],
+      "incompatible": [],
+      "processes": []
+    },
+    {
+      "guid": "Azumatt.AzuCraftyBoxes",
+      "name": "AzuCraftyBoxes",
+      "version": "1.8.24",
+      "file": "BepInEx/plugins/Azumatt-AzuCraftyBoxes/AzuCraftyBoxes.dll",
+      "dependencies": [
+        {
+          "guid": "kg.ItemDrawers",
+          "hard": false,
+          "minimum": null
+        },
+        {
+          "guid": "org.bepinex.plugins.backpacks",
+          "hard": false,
+          "minimum": null
+        },
+        {
+          "guid": "org.bepinex.plugins.jewelcrafting",
+          "hard": false,
+          "minimum": null
+        },
+        {
+          "guid": "randyknapp.mods.epicloot",
+          "hard": false,
+          "minimum": null
+        }
+      ],
+      "incompatible": [
+        "aedenthorn.CraftFromContainers",
+        "CFCMod"
+      ],
+      "processes": []
+    },
+    {
+      "guid": "randyknapp.mods.epicloot",
+      "name": "Epic Loot",
+      "version": "0.14.13",
+      "file": "BepInEx/plugins/EpicLoot/EpicLoot.dll",
+      "dependencies": [
+        {
+          "guid": "com.jotunn.jotunn",
+          "hard": true,
+          "minimum": null
+        },
+        {
+          "guid": "com.ValheimModding.NewtonsoftJsonDetector",
+          "hard": true,
+          "minimum": null
+        },
+        {
+          "guid": "randyknapp.mods.auga",
+          "hard": false,
+          "minimum": null
+        },
+        {
+          "guid": "vapok.mods.adventurebackpacks",
+          "hard": false,
+          "minimum": null
+        },
+        {
+          "guid": "kg.ValheimEnchantmentSystem",
+          "hard": false,
+          "minimum": null
+        },
+        {
+          "guid": "org.bepinex.plugins.steadyregeneration",
+          "hard": false,
+          "minimum": null
+        }
+      ],
+      "incompatible": [],
+      "processes": []
+    },
+    {
+      "guid": "mushroom.sync",
+      "name": "Mushroom Sync",
+      "version": "1.0.0",
+      "file": "BepInEx/plugins/Mushroom_Vikings-MushroomSync/MushroomSync.dll",
+      "dependencies": [],
+      "incompatible": [],
+      "processes": []
+    },
+    {
+      "guid": "Gonfreecss.ResourceDropModifier",
+      "name": "ResourceDropModifier",
+      "version": "0.1.0",
+      "file": "BepInEx/plugins/Mushroom_Vikings-ResourceDropModifier/ResourceDropModifier.dll",
+      "dependencies": [
+        {
+          "guid": "mushroom.sync",
+          "hard": true,
+          "minimum": null
+        }
+      ],
+      "incompatible": [],
+      "processes": [
+        "valheim.exe",
+        "valheim_server.exe"
+      ]
+    },
+    {
+      "guid": "randyknapp.mods.equipmentandquickslots",
+      "name": "Equipment and Quick Slots",
+      "version": "3.1.3",
+      "file": "BepInEx/plugins/RandyKnapp-EquipmentAndQuickSlots/EquipmentAndQuickSlots.dll",
+      "dependencies": [
+        {
+          "guid": "com.jotunn.jotunn",
+          "hard": true,
+          "minimum": null
+        },
+        {
+          "guid": "moreslots",
+          "hard": false,
+          "minimum": null
+        },
+        {
+          "guid": "randyknapp.mods.auga",
+          "hard": false,
+          "minimum": null
+        },
+        {
+          "guid": "randyknapp.mods.epicloot",
+          "hard": false,
+          "minimum": null
+        },
+        {
+          "guid": "ishid4.mods.betterarchery",
+          "hard": false,
+          "minimum": null
+        }
+      ],
+      "incompatible": [
+        "Azumatt.AzuExtendedPlayerInventory",
+        "aedenthorn.ExtendedPlayerInventory",
+        "shudnal.ExtraSlots",
+        "com.bruce.valheim.comfyquickslots"
+      ],
+      "processes": []
+    },
+    {
+      "guid": "com.ValheimModding.NewtonsoftJsonDetector",
+      "name": "Newtonsoft.Json Detector",
+      "version": "1.0.0",
+      "file": "BepInEx/plugins/ValheimModding-JsonDotNET/NewtonsoftJsonDetector.dll",
+      "dependencies": [],
+      "incompatible": [],
+      "processes": []
+    },
+    {
+      "guid": "com.ValheimModding.YamlDotNetDetector",
+      "name": "YamlDotNet Detector",
+      "version": "1.0.0",
+      "file": "BepInEx/plugins/ValheimModding-YamlDotNet/YamlDotNetDetector.dll",
+      "dependencies": [],
+      "incompatible": [],
+      "processes": []
+    },
+    {
+      "guid": "vapok.mods.adventurebackpacks",
+      "name": "Adventure Backpacks",
+      "version": "2.1.13",
+      "file": "BepInEx/plugins/Vapok-AdventureBackpacks/AdventureBackpacks.dll",
+      "dependencies": [
+        {
+          "guid": "com.jotunn.jotunn",
+          "hard": true,
+          "minimum": null
+        },
+        {
+          "guid": "com.ValheimModding.YamlDotNetDetector",
+          "hard": true,
+          "minimum": null
+        },
+        {
+          "guid": "com.chebgonaz.ChebsNecromancy",
+          "hard": false,
+          "minimum": null
+        },
+        {
+          "guid": "com.maxsch.valheim.contentswithin",
+          "hard": false,
+          "minimum": null
+        }
+      ],
+      "incompatible": [
+        "JotunnBackpacks"
+      ],
+      "processes": []
+    },
+    {
+      "guid": "yay.spikehimself.xportal",
+      "name": "XPortal",
+      "version": "1.2.25",
+      "file": "BepInEx/plugins/XPortal/XPortal.dll",
+      "dependencies": [
+        {
+          "guid": "com.jotunn.jotunn",
+          "hard": true,
+          "minimum": null
+        }
+      ],
+      "incompatible": [
+        "com.sweetgiorni.anyportal"
+      ],
+      "processes": []
+    }
+  ],
+  "errors": []
+}

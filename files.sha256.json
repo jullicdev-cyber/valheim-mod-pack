@@ -13,7 +13,11 @@
   },
   {
     "path": "BepInEx/config/org.bepinex.plugins.valheim_plus.cfg",
-    "sha256": "8592cce68cd377e7f4dc8ed2938fd0e51cd67c0e8350f7ea7b8c61b5df7389eb"
+    "sha256": "3806ca48a2c4e08ecea13343cfc706b8f8a62ed25272e0d2a07d010102172396"
+  },
+  {
+    "path": "BepInEx/config/randyknapp.mods.equipmentandquickslots.cfg",
+    "sha256": "c7216fbc0543ec119d2711452efdb45df3023af63eec04977fb098587b486f2e"
   },
   {
     "path": "BepInEx/core/0Harmony.dll",
@@ -92,12 +96,20 @@
     "sha256": "8e48c43bb36c4e299037001734607fadd0635803d60e8ab84023a3bc7ffc6a58"
   },
   {
+    "path": "BepInEx/plugins/Advize-PlantEverything/Advize_PlantEverything.dll",
+    "sha256": "313d57d5d9df2a27bff04ab184487d544a0749bbbe2c10cb1c41a0ae964cac62"
+  },
+  {
     "path": "BepInEx/plugins/Azumatt-AzuAutoStore/AzuAutoStore.dll",
     "sha256": "106876c65eef3c9b50ca2f9123ee166be3d64e5e6798dca1592a4ffc60378021"
   },
   {
     "path": "BepInEx/plugins/Azumatt-AzuCraftyBoxes/AzuCraftyBoxes.dll",
     "sha256": "468859fe8ec604796f3b474e02b3503f76cb6dd545b92b39c5febc62ee95c9bb"
+  },
+  {
+    "path": "BepInEx/plugins/EpicLoot/EpicLoot.dll",
+    "sha256": "802790e0cbd8a6f951627619a488b84e6a406e8770e2687b2fff8b63d2adf9ea"
   },
   {
     "path": "BepInEx/plugins/Jotunn.dll",
@@ -124,8 +136,172 @@
     "sha256": "988be2bbd586edd2c542a7f96ec1ee839183290ebd173661d44bdf644f4a45a7"
   },
   {
+    "path": "BepInEx/plugins/RandyKnapp-EquipmentAndQuickSlots/EquipmentAndQuickSlots.dll",
+    "sha256": "b08d791cc1324fc24c5aff591784ce867a8179d5b887797372506bb8626c6d9a"
+  },
+  {
+    "path": "BepInEx/plugins/ValheimModding-JsonDotNET/Newtonsoft.Json.dll",
+    "sha256": "d134937ec381729074694490e81983b08ec7991b31550eabafb9202e5b404f89"
+  },
+  {
+    "path": "BepInEx/plugins/ValheimModding-JsonDotNET/NewtonsoftJsonDetector.dll",
+    "sha256": "513f2b88dfea6b96336a63d4120cdfc05011391ab45d981989e88844722d84b7"
+  },
+  {
+    "path": "BepInEx/plugins/ValheimModding-YamlDotNet/YamlDotNet.dll",
+    "sha256": "9172f0758ed76963e0ede3b5ca9a1fb5b82f64c7e7a92cb3a6de39efa933a668"
+  },
+  {
+    "path": "BepInEx/plugins/ValheimModding-YamlDotNet/YamlDotNetDetector.dll",
+    "sha256": "db5a75085f60d69a05979af303d6b0f1db15b1d5d84c77f606d876547ef1f482"
+  },
+  {
     "path": "BepInEx/plugins/ValheimPlus.dll",
     "sha256": "68c930f507cae7e4c52251bfb144c2c707850a2ace6115335be09783a251a37a"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/AdventureBackpacks.dll",
+    "sha256": "5773e28a4e8a7f27b839f1fbc4ab2272c5349e7e38d671f683950e30d47d4541"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Abenaki.json",
+    "sha256": "395a9f5863be6c4aa43ab5b47c08e91669084f4db4d81324500a0b5f772405aa"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Bulgarian.json",
+    "sha256": "82db3dde2c87f01310cd4ec59d2b7bac0e8e87dbc5d60bc091c75cb276860c07"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Chinese.json",
+    "sha256": "cb4e0d585fd5f5113685e3b3fb2a335d778cab515b03712745bccd576147e0fb"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Chinese_Trad.json",
+    "sha256": "31dc97fa33cee77fd5fd4f127d7ffe261e9fff29c0aa7ec5e8e0499263f0654d"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Croatian.json",
+    "sha256": "2a662e88212202a3ddfc5e223ebb7b7922eb3b87e4cd49b7b343242c3cc9f237"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Czech.json",
+    "sha256": "7eb26950475b6b3026486e3561c08a3935c3a3c14f91d2c7d15b79789ef08686"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Danish.json",
+    "sha256": "b358d9aa2aaea9b420770234aa69c517f7313b149f5d05c93d9ec5d88a5f491b"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Dutch.json",
+    "sha256": "4f7bf0813e1005480aea0b6d7182c9428dc2f859b790cc8559fd907021b00177"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.English.json",
+    "sha256": "634aee59ba5393ce2527dbfb96df4d2d88c5948cbd35526d3d7e440faccd6fd9"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Finnish.json",
+    "sha256": "5f66e5347471e58ac831f1911448204c7d6f1516f1550cc4069ab1321a35a04c"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.French.json",
+    "sha256": "f6619e6de4d94ff622c2b26f9fa82ee40d2498e1bbf6b55f2562e8571c542560"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Georgian.json",
+    "sha256": "be1e816b516c14ce3139d7b071e2106bfdd01c453489fe96cd31f71dfe7c7b26"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.German.json",
+    "sha256": "fbe5a8ae62310ee364d45a7bef84d1d1ec6284e64851e2c7b069ac59a8ec9277"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Greek.json",
+    "sha256": "fc8df57854c6607df6769db31ec64fc6d642ca0b59108a0f313e81cc4a66613b"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Hindi.json",
+    "sha256": "86a3dea0730e69e917ad81b23fc39f1cd4c570d5518a91dd5a7883c44969aedc"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Hungarian.json",
+    "sha256": "e53137bf26d23a2242024709d1893bfce6ee15b815ad0e0af51348f33de9d08a"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Icelandic.json",
+    "sha256": "7fa986f117287e90d29eb6bdec31542f7c0f7cacec7042f9b40941daf08756e0"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Italian.json",
+    "sha256": "320a5b955bf03c1376128889d1426633d764647886ff32d93c919534d569b229"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Japanese.json",
+    "sha256": "8b00fbc824fe48a7c61662da0d8249d1c54cfbf2ca0e29d09875c632cf987dc7"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Korean.json",
+    "sha256": "6504e89444f96690744f934a37b2a8b68304ca5118f9b8ba3be6884f9775b136"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Lithuanian.json",
+    "sha256": "90b6c283a83a50d9ef5f186144059a9f7b9e80be70da390905a813f15bf925c7"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Macedonian.json",
+    "sha256": "32569e0a4cf6a1d826f75fbfbb2a965efefe8edef1e9592d1f9e15ebdf4f1d42"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Norwegian.json",
+    "sha256": "7286d573390c4762d7c5fa7877df7fdde9ecbe00c4c484f3b84632968513f7fa"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Polish.json",
+    "sha256": "af2eadf36c66281c4f60c06e206c23fb9872cc33248b39ce751bcada26955c02"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Portuguese_Brazilian.json",
+    "sha256": "657307da69c04946205bd80b419f9de2669a7d0ff0fc8d9279994c41102dcde4"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Portuguese_European.json",
+    "sha256": "71a6c191f7323920823ad19ae879304ad8c0adabb52ff8af88efedb943d90d14"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Romanian.json",
+    "sha256": "5054cf3c95818f3f55fa167e77f3958f9142a322b0c948b5dce8b3d5459e89d1"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Russian.json",
+    "sha256": "9aecc92f5b3cf84bc430b31b90320fc6aa579d1e93e8ed9d495b104c97949142"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Serbian.json",
+    "sha256": "79e658ee2399b1dba7e465e2e04515aaaebdc52f866946bc291b4ad88c5cb886"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Slovak.json",
+    "sha256": "3e07da3d3b508cfc6a656ff85c8bd69c5bb488ce5d837e087919562380dce206"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Spanish.json",
+    "sha256": "ebdf6e1312c24c5ff0b7458768b1c6a326fe54c0218f44880ab657eca706da96"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Swedish.json",
+    "sha256": "0e9a5c22fcb98b2e0110890f6179897c362f8ac0b57e85ff0d13470ef9c65175"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Thai.json",
+    "sha256": "cfc335914e9d807859f55366fb821fdd9ea67f6cece07af8f591f798a1907cdc"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Turkish.json",
+    "sha256": "80e21351fcab055dfeca7a30f8dee61f0fd413c07db32a4acac880fd072bfa9a"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Ukrainian.json",
+    "sha256": "e5a0ba61c4756e32af1b6b05c6ab54d3e36e29ba8f6de4a452d3f5f41e1eed84"
   },
   {
     "path": "BepInEx/plugins/XPortal/Translations/Chinese/xportal-translation-chinese.json",
