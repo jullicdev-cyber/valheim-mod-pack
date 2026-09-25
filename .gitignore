@@ -1,0 +1,5 @@
+.cache/
+dist/
+*.log
+BepInEx/cache/
+BepInEx/LogOutput.log

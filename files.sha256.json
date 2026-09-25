@@ -1,0 +1,206 @@
+[
+  {
+    "path": ".doorstop_version",
+    "sha256": "84fa42545c0993edf8a5559d2a0772260f85f4a7ed29ec75e6590be64ed98067"
+  },
+  {
+    "path": "BepInEx/config/BepInEx.cfg",
+    "sha256": "3d460196bb8f993fc71048efc6d1bbc21b5364eefac778df61955138c83cc677"
+  },
+  {
+    "path": "BepInEx/config/Gonfreecss.ResourceDropModifier.cfg",
+    "sha256": "b7a57d05f4cc4d6ebf857d32c90617706815fd786f5bc31032b7d0aee216bf30"
+  },
+  {
+    "path": "BepInEx/core/0Harmony.dll",
+    "sha256": "1a21cc03424fc82c3dd1346905d16494536b9595ae4162228d99fb7c285c1031"
+  },
+  {
+    "path": "BepInEx/core/0Harmony.xml",
+    "sha256": "d1f02fc3ada3a13da307de421225bfe56ebe24064370980979391c4be021672f"
+  },
+  {
+    "path": "BepInEx/core/0Harmony20.dll",
+    "sha256": "5708451a91eaecee71a49b1881fb081ee22142e11de04e8575f4f6832fa16d0e"
+  },
+  {
+    "path": "BepInEx/core/BepInEx.dll",
+    "sha256": "36bdb9af2b8f2eda4c911d2a49c2a05a4f643637ad724b876d292a9a5fcd8ae6"
+  },
+  {
+    "path": "BepInEx/core/BepInEx.Harmony.dll",
+    "sha256": "2f0270073e307095ce980f578bfc9489f7ac98d360b9d41f77370a84c33edd7a"
+  },
+  {
+    "path": "BepInEx/core/BepInEx.Harmony.xml",
+    "sha256": "a04fedf08f7c81f5d01aba6f2840a7ffce50b79bbd24587d8dbe69ab73971d29"
+  },
+  {
+    "path": "BepInEx/core/BepInEx.Preloader.dll",
+    "sha256": "c38f984772fdddc7f87ddd66c0326c6673cc6a4b4ea7beb5ab94edb3e59dbabe"
+  },
+  {
+    "path": "BepInEx/core/BepInEx.Preloader.xml",
+    "sha256": "ab433415cb8f006f683c0c193d140b92f0244568e6e443d53a5c4c18a632dc98"
+  },
+  {
+    "path": "BepInEx/core/BepInEx.xml",
+    "sha256": "65b9d6e40c8645e04cf1cf6342c2812f52766f2d0fc1b5736b03f17fb23df11e"
+  },
+  {
+    "path": "BepInEx/core/HarmonyXInterop.dll",
+    "sha256": "dac1b52655f03ba00773eb63894bfd0da4d4df6d47041a64cfd4b1da757371ba"
+  },
+  {
+    "path": "BepInEx/core/Mono.Cecil.dll",
+    "sha256": "7ae470288fff4a402899c254d0a76cefef55877f5c54f96e83c797cc5bb6e2f6"
+  },
+  {
+    "path": "BepInEx/core/Mono.Cecil.Mdb.dll",
+    "sha256": "5896d1898f616701fff18f3b2c71e6b844d2390ef9f41e1c5fccce8cb27c698e"
+  },
+  {
+    "path": "BepInEx/core/Mono.Cecil.Pdb.dll",
+    "sha256": "174db44a067f58561510af746f3caeb032037762c57a31c8d9ee32db25174984"
+  },
+  {
+    "path": "BepInEx/core/Mono.Cecil.Rocks.dll",
+    "sha256": "54ac539fb5ddc8b44c0e9acd0fcb7324f89d1a072edf8ebc1b06dd691e3d3927"
+  },
+  {
+    "path": "BepInEx/core/MonoMod.RuntimeDetour.dll",
+    "sha256": "40e49bb314391cd7bddc2644f8553eeba92c194b940836b103df16955c464e0c"
+  },
+  {
+    "path": "BepInEx/core/MonoMod.RuntimeDetour.xml",
+    "sha256": "54887808960d156550b37d602d08847607aa9e908d039f2765fb0b5e79394aa4"
+  },
+  {
+    "path": "BepInEx/core/MonoMod.Utils.dll",
+    "sha256": "9d1495f147ac93c4f81f84538c1a326e8f8a6aefc78d6289d798f3ce1162c5e9"
+  },
+  {
+    "path": "BepInEx/core/MonoMod.Utils.xml",
+    "sha256": "0577b362023a3432d6e8d7934c5eddc3e08fdbb19e191af083e341562c5ede38"
+  },
+  {
+    "path": "BepInEx/plugins/Advize-PlantEasily/Advize_PlantEasily.dll",
+    "sha256": "8e48c43bb36c4e299037001734607fadd0635803d60e8ab84023a3bc7ffc6a58"
+  },
+  {
+    "path": "BepInEx/plugins/Azumatt-AzuAutoStore/AzuAutoStore.dll",
+    "sha256": "106876c65eef3c9b50ca2f9123ee166be3d64e5e6798dca1592a4ffc60378021"
+  },
+  {
+    "path": "BepInEx/plugins/Azumatt-AzuCraftyBoxes/AzuCraftyBoxes.dll",
+    "sha256": "468859fe8ec604796f3b474e02b3503f76cb6dd545b92b39c5febc62ee95c9bb"
+  },
+  {
+    "path": "BepInEx/plugins/Jotunn.dll",
+    "sha256": "9509221046842a70f94b98bab4cb41005dee026823a7a79345829ed46a30f796"
+  },
+  {
+    "path": "BepInEx/plugins/Jotunn.dll.mdb",
+    "sha256": "0e4caf66e7b3ae3344779f4d3f2c85a1a4204e734a94a0cd47888bf76a732e5d"
+  },
+  {
+    "path": "BepInEx/plugins/Jotunn.pdb",
+    "sha256": "1f3e60d5b60ad2b187233d50d2aaaaace5af3a8a14da6ee8ed7c4e41a3027d82"
+  },
+  {
+    "path": "BepInEx/plugins/Jotunn.xml",
+    "sha256": "f1514f61744160645cf503b7286ca1f9198fbbeb4caa38dfeb8f4adab39021dc"
+  },
+  {
+    "path": "BepInEx/plugins/Mushroom_Vikings-MushroomSync/MushroomSync.dll",
+    "sha256": "7518e2e6f0c1fc951c8f0189c2453af7ef3c3edd8ccc8dc4be5fcf32669bbb43"
+  },
+  {
+    "path": "BepInEx/plugins/Mushroom_Vikings-ResourceDropModifier/ResourceDropModifier.dll",
+    "sha256": "988be2bbd586edd2c542a7f96ec1ee839183290ebd173661d44bdf644f4a45a7"
+  },
+  {
+    "path": "BepInEx/plugins/XPortal/Translations/Chinese/xportal-translation-chinese.json",
+    "sha256": "8931e588bf322a7a8ceab49ff494eb2bd9241a053761dfc038082796856d205e"
+  },
+  {
+    "path": "BepInEx/plugins/XPortal/Translations/Dutch/xportal-translations-dutch.json",
+    "sha256": "ec632b470d90f1466548ae8f7099f604084460681dfe18294823fe958ee83df2"
+  },
+  {
+    "path": "BepInEx/plugins/XPortal/Translations/English/xportal-translations-english.json",
+    "sha256": "38c9b0d469b18cc51feb3b84cbb60445b262f5f74709e5a3c5d4cf967d553929"
+  },
+  {
+    "path": "BepInEx/plugins/XPortal/Translations/French/xportal-translations-french.json",
+    "sha256": "3549282fe06d9e24b027e2f8974f07736892948b72b3af82cc219b4516240ee3"
+  },
+  {
+    "path": "BepInEx/plugins/XPortal/Translations/German/xportal-translations-german.json",
+    "sha256": "0b4c95250d7262fea38aa4c5cdd289d87be857578daccd495c41dabe29a894d7"
+  },
+  {
+    "path": "BepInEx/plugins/XPortal/Translations/Italian/xportal-translations-italian.json",
+    "sha256": "9aca740196380462d575f3c1f71d14cb8373520cad5cf91f862e0147bcaee7d6"
+  },
+  {
+    "path": "BepInEx/plugins/XPortal/Translations/Japanese/xportal-translations-japanese.json",
+    "sha256": "a8e2afaafe4a8e9cdf9bccee9fe4c2b7d3d777aa7ddd641bec02e333a02e2ead"
+  },
+  {
+    "path": "BepInEx/plugins/XPortal/Translations/Korean/xportal-translations-korean.json",
+    "sha256": "2635d2c7445de9fc663763c5ceaf1b3e73a81318dba20c9ff675cd5082938780"
+  },
+  {
+    "path": "BepInEx/plugins/XPortal/Translations/Polish/xportal-translations-polish.json",
+    "sha256": "66bfd72bca72ba82e9b2f46ea6a95581d73efa61d4b9f79ea8cec31818379773"
+  },
+  {
+    "path": "BepInEx/plugins/XPortal/Translations/Portuguese_Brazilian/xportal-translations-portuguese_brazillian.json",
+    "sha256": "130917fdcfb8abff8ce5a462cca4fbaa44bf0f844b7bfbcd940cb128700f0ddc"
+  },
+  {
+    "path": "BepInEx/plugins/XPortal/Translations/Russian/xportal-translations-russian.json",
+    "sha256": "808337c876814385cd87cdc7732a86dc3f821185796ef93cab969f2e2acd060e"
+  },
+  {
+    "path": "BepInEx/plugins/XPortal/Translations/Spanish/xportal-translations-spanish.json",
+    "sha256": "49c49fc9e42e31dada26ddb65e8b793b413b19632e8a6a91bf61c0d51e2f32a2"
+  },
+  {
+    "path": "BepInEx/plugins/XPortal/Translations/Ukrainian/xportal-translations-ukrainian.json",
+    "sha256": "fbd4a99b0e00474fe57f896b777cb12ddfbaa1b5ba133a833860cb31da69789a"
+  },
+  {
+    "path": "BepInEx/plugins/XPortal/XPortal.dll",
+    "sha256": "f133fb57501260276e1783f20dd89f8675e7e1efcf29571d53e0d40f3ae6cd5b"
+  },
+  {
+    "path": "changelog.txt",
+    "sha256": "74b3aa44b1a1609aa0e14baa202214f95ce9c8a87e227249dacacfce62e2cd0a"
+  },
+  {
+    "path": "doorstop_config.ini",
+    "sha256": "4d5c6dfa0f771c6a5b1b0c559aca0bd0ece7d08b08fff894708dc3b73ce73cfc"
+  },
+  {
+    "path": "doorstop_libs/libdoorstop_x64.dylib",
+    "sha256": "fb8e066b0de1e74341eeeb768157514df51a531311f2fcbc334168bb2a85bb1a"
+  },
+  {
+    "path": "doorstop_libs/libdoorstop_x64.so",
+    "sha256": "07ec6ee28c7d200c000ba9db6dfecec466a6ed449194a37decb719bf5321aee0"
+  },
+  {
+    "path": "start_game_bepinex.sh",
+    "sha256": "8e2159eaf2f8f44f6861af4b6fb5a852d72865e8bbafc700da99dd1084cdc323"
+  },
+  {
+    "path": "start_server_bepinex.sh",
+    "sha256": "ce627a9c2865a992bdf95d20f42636d0784c07afe39f49068d78b22103cdbe18"
+  },
+  {
+    "path": "winhttp.dll",
+    "sha256": "93406d0a02e7c164b89828cbfe3b289930a112d2eca50bd4a52e72ece169e6a8"
+  }
+]

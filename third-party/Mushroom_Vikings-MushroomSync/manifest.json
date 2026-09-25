@@ -1,0 +1,9 @@
+{
+  "name": "MushroomSync",
+  "version_number": "1.0.0",
+  "website_url": "https://github.com/NickSpinosa/Valheim_Mushroom_Mods",
+  "description": "Shared server-authoritative config sync used by the other Mushroom mods. No gameplay of its own. Required by Combat Adjustments, Craftable Spawners, Haldor Expansion and Random Yggdrasil.",
+  "dependencies": [
+    "denikson-BepInExPack_Valheim-5.4.2350"
+  ]
+}

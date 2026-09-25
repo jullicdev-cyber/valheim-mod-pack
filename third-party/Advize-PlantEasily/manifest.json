@@ -1,0 +1,9 @@
+{
+  "name": "PlantEasily",
+  "description": "Allows you to plant evenly spaced crops, either one at a time or in any amount of rows and columns, with grid snapping features and invalid crop placement prevention. Harvest in bulk and optionally auto replant crops. Configurable and supports gamepad.",
+  "version_number": "2.2.2",
+  "dependencies": [
+    "denikson-BepInExPack_Valheim-5.4.2350"
+  ],
+  "website_url": "https://www.nexusmods.com/valheim/mods/2350"
+}

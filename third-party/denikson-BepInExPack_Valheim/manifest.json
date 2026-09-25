@@ -1,0 +1,7 @@
+{
+    "name": "BepInExPack_Valheim",
+    "version_number": "5.4.2351",
+    "website_url": "https://github.com/AzumattDev/BepInEx",
+    "description": "BepInEx pack for Valheim. Preconfigured with the correct entry point for mods and preferred defaults for the community.",
+    "dependencies": []
+}

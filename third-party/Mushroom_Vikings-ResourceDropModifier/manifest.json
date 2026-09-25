@@ -1,0 +1,10 @@
+{
+  "name": "ResourceDropModifier",
+  "version_number": "0.1.0",
+  "website_url": "https://github.com/NickSpinosa/Valheim_Mushroom_Mods",
+  "description": "A drop multiplier for every item that drops in the game, one config setting per item grouped by biome, editable in Configuration Manager. The server's values are the ones that count.",
+  "dependencies": [
+    "denikson-BepInExPack_Valheim-5.4.2350",
+    "Mushroom_Vikings-MushroomSync-1.0.0"
+  ]
+}

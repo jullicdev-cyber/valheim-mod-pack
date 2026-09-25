@@ -1,0 +1,7 @@
+{
+    "name": "AzuAutoStore",
+    "version_number": "3.1.6",
+    "website_url": "https://discord.gg/pdHgy6Bsng",
+    "description": "Automatically store and deposit items from your inventory or ground into nearby chests and containers. Chest management, hotkey support, quick stack, auto-pickup, favorites, ItemDrawers, backpacks, WardIsLove, ward protection.",
+    "dependencies": []
+}
