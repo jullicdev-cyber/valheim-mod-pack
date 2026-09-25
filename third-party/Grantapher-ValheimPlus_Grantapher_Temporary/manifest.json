@@ -1,0 +1,9 @@
+{
+    "name": "ValheimPlus_Grantapher_Temporary",
+    "version_number": "10.2.0",
+    "website_url": "https://discord.gg/WU69A2JTcn",
+    "description": "A (not so) temporary Valheim Plus fork. Provides many configurable game tweaks.",
+    "dependencies": [
+        "denikson-BepInExPack_Valheim-5.4.2350"
+    ]
+}

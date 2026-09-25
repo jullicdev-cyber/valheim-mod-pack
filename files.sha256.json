@@ -12,6 +12,10 @@
     "sha256": "b7a57d05f4cc4d6ebf857d32c90617706815fd786f5bc31032b7d0aee216bf30"
   },
   {
+    "path": "BepInEx/config/org.bepinex.plugins.valheim_plus.cfg",
+    "sha256": "8592cce68cd377e7f4dc8ed2938fd0e51cd67c0e8350f7ea7b8c61b5df7389eb"
+  },
+  {
     "path": "BepInEx/core/0Harmony.dll",
     "sha256": "1a21cc03424fc82c3dd1346905d16494536b9595ae4162228d99fb7c285c1031"
   },
@@ -118,6 +122,10 @@
   {
     "path": "BepInEx/plugins/Mushroom_Vikings-ResourceDropModifier/ResourceDropModifier.dll",
     "sha256": "988be2bbd586edd2c542a7f96ec1ee839183290ebd173661d44bdf644f4a45a7"
+  },
+  {
+    "path": "BepInEx/plugins/ValheimPlus.dll",
+    "sha256": "68c930f507cae7e4c52251bfb144c2c707850a2ace6115335be09783a251a37a"
   },
   {
     "path": "BepInEx/plugins/XPortal/Translations/Chinese/xportal-translation-chinese.json",

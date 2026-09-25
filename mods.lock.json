@@ -1,5 +1,5 @@
 {
-  "packVersion": "1.0.0",
+  "packVersion": "1.1.0",
   "created": "2026-09-25",
   "targetGameVersion": "1.0.16",
   "packages": [
@@ -102,6 +102,19 @@
       ],
       "sourceSubdirectory": "",
       "destination": "BepInEx/plugins/Mushroom_Vikings-ResourceDropModifier"
+    },
+    {
+      "id": "Grantapher-ValheimPlus_Grantapher_Temporary",
+      "version": "10.2.0",
+      "source": "Thunderstore",
+      "page": "https://thunderstore.io/c/valheim/p/Grantapher/ValheimPlus_Grantapher_Temporary/",
+      "downloadUrl": "https://thunderstore.io/package/download/Grantapher/ValheimPlus_Grantapher_Temporary/10.2.0/",
+      "sha256": "1d53f0636538d2f21273ca8cb0ca75b2a00f0b373bc54b02f5369e1cfbed1539",
+      "dependencies": [
+        "denikson-BepInExPack_Valheim-5.4.2350"
+      ],
+      "sourceSubdirectory": "BepInEx",
+      "destination": "BepInEx"
     }
   ]
 }
