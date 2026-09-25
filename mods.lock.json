@@ -1,5 +1,5 @@
 {
-  "packVersion": "1.2.2",
+  "packVersion": "1.3.0",
   "created": "2026-09-25",
   "targetGameVersion": "1.0.16",
   "packages": [
@@ -194,6 +194,19 @@
       ],
       "sourceSubdirectory": "plugins",
       "destination": "BepInEx/plugins/EpicLoot"
+    },
+    {
+      "id": "Goldenrevolver-Quick_Stack_Store_Sort_Trash_Restock",
+      "version": "1.4.15",
+      "source": "Thunderstore",
+      "page": "https://thunderstore.io/c/valheim/p/Goldenrevolver/Quick_Stack_Store_Sort_Trash_Restock/",
+      "downloadUrl": "https://thunderstore.io/package/download/Goldenrevolver/Quick_Stack_Store_Sort_Trash_Restock/1.4.15/",
+      "sha256": "f73d07cdd94261f9bbb9facc7a5d990d8d47805362a9a2232125df53ac45c707",
+      "dependencies": [
+        "denikson-BepInExPack_Valheim-5.4.2350"
+      ],
+      "sourceSubdirectory": "",
+      "destination": "BepInEx/plugins/Goldenrevolver-Quick_Stack_Store_Sort_Trash_Restock"
     }
   ]
 }

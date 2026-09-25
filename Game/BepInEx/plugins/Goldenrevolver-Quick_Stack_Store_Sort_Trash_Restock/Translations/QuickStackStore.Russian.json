@@ -1,0 +1,37 @@
+{
+  "RestockLabelCharacter": "R",
+  "QuickStackLabelCharacter": "Q",
+  "SortLabelCharacter": "S",
+
+  "QuickStackResultMessageNothing": "Нечего переносить",
+  "QuickStackResultMessageNone": "Нет совпадающих предметов",
+  "QuickStackResultMessageOne": "Перенесен 1 предмет",
+  "QuickStackResultMessageMore": "Перемещенные предметы: {0}",
+
+  "RestockResultMessageNothing": "Пополнить запасы нечем",
+  "RestockResultMessageNone": "Не удалось пополнить запасы (пополнено стопок: 0/{0})",
+  "RestockResultMessagePartial": "Запасы пополнены частично (пополнено стопок: {0}/{1})",
+  "RestockResultMessageFull": "Запасы пополнены полностью (всего стопок: {0})",
+
+  "QuickStackLabel": "Перенести",
+  "StoreAllLabel": "Отдать все",
+  "SortLabel": "Сортировать",
+  "RestockLabel": "Пополнить",
+  "TrashLabel": "Корзина",
+
+  "SortByInternalNameLabel": "в.имя",
+  "SortByTranslatedNameLabel": "п.имя",
+  "SortByValueLabel": "цена",
+  "SortByWeightLabel": "вес",
+  "SortByTypeLabel": "вид",
+
+  "TrashConfirmationOkayButton": "Удалить",
+  "QuickTrashConfirmation": "Уничтожить выбранные?",
+  "CantTrashFavoritedItemWarning": "Невозможно уничтожить избранный предмет!",
+  "CantTrashFlagFavoritedItemWarning": "Избранный предмет невозможно пометить на уничтожение!",
+  "CantTrashHotkeyBarItemWarning": "Настройки запрещают уничтожение предметов из панели быстрого доступа!",
+  "CantFavoriteTrashFlaggedItemWarning": "Невозможно добавить в избранное предмет, помеченный как мусор!",
+
+  "FavoritedItemTooltip": "Помеченный предмет будет защищён от\nпереноса, сортировки, пополнения запасов и уничтожения",
+  "TrashFlaggedItemTooltip": "Помечено для быстрого уничтожения"
+}
