@@ -14,6 +14,14 @@ spec.loader.exec_module(installer)
 
 
 class InstallTests(unittest.TestCase):
+    def make_symlink(self, link, target):
+        try:
+            link.symlink_to(target)
+        except OSError as error:
+            if getattr(error, 'winerror', None) == 1314:
+                self.skipTest('Creating Windows symlinks requires Developer Mode or elevation.')
+            raise
+
     def setUp(self):
         # Retain fixtures for inspecting backups and failure recovery.
         self.target = Path(tempfile.mkdtemp(prefix='valheim installer test '))
@@ -55,6 +63,38 @@ class InstallTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             installer.install(ROOT, invalid)
         self.assertEqual(list(invalid.iterdir()), [])
+
+    @unittest.skipUnless(sys.platform == 'win32', 'Windows PowerShell test')
+    def test_windows_vortex_file_links(self):
+        outside = Path(tempfile.mkdtemp(prefix='vortex staging '))
+        payload = outside / 'mod.dll'
+        payload.write_bytes(b'previous mod contents')
+        self.make_symlink(self.target / 'BepInEx/linked.dll', payload)
+        self.make_symlink(self.target / 'BepInEx/relative.dll', 'old-plugin.txt')
+        self.make_symlink(self.target / 'winhttp.dll', payload)
+        result = subprocess.run(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass',
+                                 '-File', str(ROOT / 'scripts/Install-Windows.ps1'),
+                                 '-GameDirectory', str(self.target)], capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        backup = next((self.target / 'ValheimModpack-backups').iterdir())
+        for name in ['BepInEx/linked.dll', 'winhttp.dll']:
+            copy = backup / 'full-backup' / name
+            self.assertFalse(copy.is_symlink())
+            self.assertEqual(copy.read_bytes(), b'previous mod contents')
+            self.assertTrue((backup / 'original' / name).is_symlink())
+        self.assertEqual((backup / 'full-backup/BepInEx/relative.dll').read_text(), 'old mod')
+        self.assertEqual(payload.read_bytes(), b'previous mod contents')
+        self.assertFalse((self.target / 'winhttp.dll').is_symlink())
+
+    @unittest.skipUnless(sys.platform == 'win32', 'Windows PowerShell test')
+    def test_windows_dangling_link_preserves_game(self):
+        self.make_symlink(self.target / 'BepInEx/missing.dll', self.target / 'not-present.dll')
+        result = subprocess.run(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass',
+                                 '-File', str(ROOT / 'scripts/Install-Windows.ps1'),
+                                 '-GameDirectory', str(self.target)], capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual((self.target / 'BepInEx/old-plugin.txt').read_text(), 'old mod')
+        self.assertFalse((self.target / 'ValheimModpack-backups').exists())
 
     @unittest.skipUnless(sys.platform == 'win32', 'Windows PowerShell test')
     def test_windows_rollback_on_locked_loader(self):
