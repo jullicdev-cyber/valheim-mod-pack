@@ -4,6 +4,10 @@
     "sha256": "84fa42545c0993edf8a5559d2a0772260f85f4a7ed29ec75e6590be64ed98067"
   },
   {
+    "path": "BepInEx/config/Azumatt.AzuAutoStore.cfg",
+    "sha256": "6aa985fa58371c03b01fc68c112005fe7d0b0150eadb4675a245a11622a2a772"
+  },
+  {
     "path": "BepInEx/config/BepInEx.cfg",
     "sha256": "3d460196bb8f993fc71048efc6d1bbc21b5364eefac778df61955138c83cc677"
   },
@@ -13,7 +17,7 @@
   },
   {
     "path": "BepInEx/config/goldenrevolver.quick_stack_store.cfg",
-    "sha256": "4e849786ff8011960696c1d3f7fb6a99c5f58d7c69cc1e8dec52043e3c2b3c7d"
+    "sha256": "35854c3f599b113bf1999c89d95f5e63584711df9d78d0b8892d9f9cd13c2e51"
   },
   {
     "path": "BepInEx/config/org.bepinex.plugins.valheim_plus.cfg",
@@ -21,7 +25,7 @@
   },
   {
     "path": "BepInEx/config/randyknapp.mods.equipmentandquickslots.cfg",
-    "sha256": "c7216fbc0543ec119d2711452efdb45df3023af63eec04977fb098587b486f2e"
+    "sha256": "e05f4a618d2e67169568a2f62a0487386db2102f604e942cd4b81e90b5c15caa"
   },
   {
     "path": "BepInEx/core/0Harmony.dll",
