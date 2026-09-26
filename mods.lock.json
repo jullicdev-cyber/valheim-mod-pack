@@ -1,5 +1,5 @@
 {
-  "packVersion": "1.4.3",
+  "packVersion": "1.4.4",
   "created": "2026-09-25",
   "targetGameVersion": "1.0.16",
   "packages": [
@@ -220,6 +220,19 @@
       ],
       "sourceSubdirectory": "",
       "destination": "BepInEx/plugins/TastyChickenLegs-AutomaticFuel"
+    }
+  ],
+  "localPlugins": [
+    {
+      "id": "ValheimModPack-EAQSQuickStackBridge",
+      "version": "1.0.0",
+      "source": "local-plugins/EAQSQuickStackBridge.dll",
+      "destination": "BepInEx/plugins/ValheimModPack-EAQSQuickStackBridge/EAQSQuickStackBridge.dll",
+      "sha256": "590f1a2d59922edb623dc9b660e21b9b130b6ce2fa2a386e2d3da5f2194d3233",
+      "dependencies": [
+        "Goldenrevolver-Quick_Stack_Store_Sort_Trash_Restock-1.4.15",
+        "RandyKnapp-EquipmentAndQuickSlots-3.1.3"
+      ]
     }
   ]
 }

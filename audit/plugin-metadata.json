@@ -82,6 +82,11 @@
       "file": "BepInEx/plugins/ValheimModding-YamlDotNet/YamlDotNetDetector.dll"
     },
     {
+      "name": "EAQSQuickStackBridge",
+      "version": "0.0.0.0",
+      "file": "BepInEx/plugins/ValheimModPack-EAQSQuickStackBridge/EAQSQuickStackBridge.dll"
+    },
+    {
       "name": "AdventureBackpacks",
       "version": "2.1.13.0",
       "file": "BepInEx/plugins/Vapok-AdventureBackpacks/AdventureBackpacks.dll"
@@ -362,6 +367,26 @@
       "version": "1.0.0",
       "file": "BepInEx/plugins/ValheimModding-YamlDotNet/YamlDotNetDetector.dll",
       "dependencies": [],
+      "incompatible": [],
+      "processes": []
+    },
+    {
+      "guid": "valheimmodpack.eaqsquickstackbridge",
+      "name": "EAQS Quick Stack Bridge",
+      "version": "1.0.0",
+      "file": "BepInEx/plugins/ValheimModPack-EAQSQuickStackBridge/EAQSQuickStackBridge.dll",
+      "dependencies": [
+        {
+          "guid": "goldenrevolver.quick_stack_store",
+          "hard": true,
+          "minimum": "1.4.15"
+        },
+        {
+          "guid": "randyknapp.mods.equipmentandquickslots",
+          "hard": true,
+          "minimum": "3.1.3"
+        }
+      ],
       "incompatible": [],
       "processes": []
     },

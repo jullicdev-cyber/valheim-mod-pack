@@ -24,6 +24,13 @@ foreach ($mod in $lock.packages) {
         Copy-Item -LiteralPath $entry.FullName -Destination $target -Recurse -Force
     }
 }
+foreach ($local in $lock.localPlugins) {
+    $source = Join-Path $root $local.source
+    if ((Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash -ne $local.sha256) { throw "Local plugin hash mismatch: $($local.id)" }
+    $target = Join-Path $output $local.destination
+    New-Item -ItemType Directory -Force (Split-Path $target -Parent) | Out-Null
+    Copy-Item -LiteralPath $source -Destination $target
+}
 $config = Join-Path $output 'BepInEx/config'
 New-Item -ItemType Directory -Force $config | Out-Null
 Copy-Item -Path (Join-Path $root 'config/*.cfg') -Destination $config -Force
