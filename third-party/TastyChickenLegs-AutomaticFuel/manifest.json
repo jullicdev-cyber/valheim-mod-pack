@@ -1,0 +1,9 @@
+{
+  "name": "AutomaticFuel",
+  "description": "Automatically fuel smelter, kilns, spinning wheels, windmills, torches and much more.  Stack Smelter and use all ore in Blast Furnaces",
+  "version_number": "1.5.1",
+  "website_url": "https://discord.gg/PQMXbUS6FH",
+  "dependencies": [
+    "denikson-BepInExPack_Valheim-5.4.2101"
+  ]
+}

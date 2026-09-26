@@ -16,12 +16,16 @@
     "sha256": "44b2c301cf59ce931d3dbb5debabe81e19554f24c76fe9af451f6a397f7c1073"
   },
   {
+    "path": "BepInEx/config/TastyChickenLegs.AutomaticFuel.cfg",
+    "sha256": "f674a894740c35b9f2eb2322e444f8ba997815489b5490daa3e2c96ffcc546a6"
+  },
+  {
     "path": "BepInEx/config/goldenrevolver.quick_stack_store.cfg",
     "sha256": "35854c3f599b113bf1999c89d95f5e63584711df9d78d0b8892d9f9cd13c2e51"
   },
   {
     "path": "BepInEx/config/org.bepinex.plugins.valheim_plus.cfg",
-    "sha256": "b2a2d30eec614ce5ba44ca07784ae04d3e0bf187b42139d74967475229d9d055"
+    "sha256": "9b3955b477a5439b38a42305fa346937cf06de1c1d5949658e73db7585c7bde4"
   },
   {
     "path": "BepInEx/config/randyknapp.mods.equipmentandquickslots.cfg",
@@ -190,6 +194,10 @@
   {
     "path": "BepInEx/plugins/RandyKnapp-EquipmentAndQuickSlots/EquipmentAndQuickSlots.dll",
     "sha256": "b08d791cc1324fc24c5aff591784ce867a8179d5b887797372506bb8626c6d9a"
+  },
+  {
+    "path": "BepInEx/plugins/TastyChickenLegs-AutomaticFuel/AutomaticFuel.dll",
+    "sha256": "6bf2aac493c73bf6e0b45b84dbe4b8fae8de0507523b91e3e68ac909e38d0df5"
   },
   {
     "path": "BepInEx/plugins/ValheimModding-JsonDotNET/Newtonsoft.Json.dll",
