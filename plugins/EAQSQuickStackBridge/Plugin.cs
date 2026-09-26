@@ -7,7 +7,7 @@ using HarmonyLib;
 
 namespace ValheimModPack
 {
-    [BepInPlugin(Id, "EAQS Quick Stack Bridge", "1.0.0")]
+    [BepInPlugin(Id, "EAQS Quick Stack Bridge", "1.0.1")]
     [BepInDependency(QuickStack, "1.4.15")]
     [BepInDependency(Eaqs, "3.1.3")]
     public sealed class Plugin : BaseUnityPlugin
@@ -17,7 +17,30 @@ namespace ValheimModPack
         private const string Eaqs = "randyknapp.mods.equipmentandquickslots";
         private Harmony harmony;
 
-        private void Awake()
+        private System.Collections.IEnumerator Start()
+        {
+            // BepInEx dependencies order Awake, but Quick Stack binds its config in Start.
+            // Unity does not guarantee Start ordering, so wait for the entries themselves.
+            for (int frame = 0; frame < 1800; frame++)
+            {
+                if (SortingControlsReady())
+                {
+                    Initialize();
+                    yield break;
+                }
+                yield return null;
+            }
+            Logger.LogError("Quick Stack settings were not initialized; bridge left sorting disabled.");
+        }
+
+        private static bool SortingControlsReady()
+        {
+            ConfigFile cfg = Chainloader.PluginInfos[QuickStack].Instance.Config;
+            return cfg.ContainsKey(new ConfigDefinition("4 - Sorting", "DisplaySortButtons"))
+                && cfg.ContainsKey(new ConfigDefinition("4 - Sorting", "SortKeybind"));
+        }
+
+        private void Initialize()
         {
             try
             {
@@ -71,6 +94,7 @@ namespace ValheimModPack
 
         private static void SetSortingControls(bool enabled)
         {
+            if (!SortingControlsReady()) return;
             ConfigFile cfg = Chainloader.PluginInfos[QuickStack].Instance.Config;
             bool previous = cfg.SaveOnConfigSet;
             cfg.SaveOnConfigSet = false;

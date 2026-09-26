@@ -373,18 +373,18 @@
     {
       "guid": "valheimmodpack.eaqsquickstackbridge",
       "name": "EAQS Quick Stack Bridge",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "file": "BepInEx/plugins/ValheimModPack-EAQSQuickStackBridge/EAQSQuickStackBridge.dll",
       "dependencies": [
-        {
-          "guid": "goldenrevolver.quick_stack_store",
-          "hard": true,
-          "minimum": "1.4.15"
-        },
         {
           "guid": "randyknapp.mods.equipmentandquickslots",
           "hard": true,
           "minimum": "3.1.3"
+        },
+        {
+          "guid": "goldenrevolver.quick_stack_store",
+          "hard": true,
+          "minimum": "1.4.15"
         }
       ],
       "incompatible": [],

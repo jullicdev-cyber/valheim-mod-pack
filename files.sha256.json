@@ -201,7 +201,7 @@
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-EAQSQuickStackBridge/EAQSQuickStackBridge.dll",
-    "sha256": "590f1a2d59922edb623dc9b660e21b9b130b6ce2fa2a386e2d3da5f2194d3233"
+    "sha256": "281783592a2418b8d998039a70c824d6aa1856c7be317511198d3888f024e88b"
   },
   {
     "path": "BepInEx/plugins/ValheimModding-JsonDotNET/Newtonsoft.Json.dll",

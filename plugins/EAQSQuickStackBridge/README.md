@@ -1,4 +1,4 @@
-# EAQS Quick Stack Bridge 1.0.0
+# EAQS Quick Stack Bridge 1.0.1
 
 Local compatibility plugin for Quick Stack Store Sort Trash Restock **1.4.15** and Equipment and Quick Slots **3.1.3**. Original vendor DLLs are unchanged. The bridge applies two Harmony patches in memory.
 
@@ -14,3 +14,5 @@ Build on Windows with `./plugins/EAQSQuickStackBridge/Build.ps1 -GameDirectory '
 The root lock records the local binary hash. `scripts/Build.ps1` includes that binary in a pack rebuild. Recompiling the source requires updating its lock and payload hashes.
 
 Before relying on this in a live world, use a test character: equip armor and quick-slot consumables, fill the extra ordinary row, sort repeatedly with O and the button, and verify positions, quantities and enchantments before and after reconnecting. Also check a full inventory, favorite slots and container sorting. These Unity/gameplay checks have not yet been performed.
+
+Version 1.0.1 waits for both Quick Stack sorting entries before initialization: Quick Stack binds them in Start, after the bridge Awake used to run. The startup regression harness compiles the real plugin source with host doubles; it is not a Unity runtime test.

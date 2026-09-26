@@ -9,6 +9,11 @@ $exe = Join-Path $output 'SlotPolicyTests.exe'
 if ($LASTEXITCODE -ne 0) { throw 'Test compilation failed' }
 & $exe
 if ($LASTEXITCODE -ne 0) { throw 'Slot policy regression failed' }
+$startupExe = Join-Path $output 'StartupTests.exe'
+& (Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe') /nologo /target:exe "/out:$startupExe" (Join-Path $PSScriptRoot 'Plugin.cs') (Join-Path $PSScriptRoot 'SlotPolicy.cs') (Join-Path $PSScriptRoot 'StartupTests.cs')
+if ($LASTEXITCODE -ne 0) { throw 'Startup test compilation failed' }
+& $startupExe
+if ($LASTEXITCODE -ne 0) { throw 'Startup ordering regression failed' }
 Add-Type -Path (Join-Path $root 'Game/BepInEx/core/Mono.Cecil.dll')
 $qs = [Mono.Cecil.AssemblyDefinition]::ReadAssembly((Join-Path $root 'Game/BepInEx/plugins/Goldenrevolver-Quick_Stack_Store_Sort_Trash_Restock/QuickStackStore.dll'))
 $ea = [Mono.Cecil.AssemblyDefinition]::ReadAssembly((Join-Path $root 'Game/BepInEx/plugins/RandyKnapp-EquipmentAndQuickSlots/EquipmentAndQuickSlots.dll'))

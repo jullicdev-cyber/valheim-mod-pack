@@ -1,5 +1,5 @@
 {
-  "packVersion": "1.4.4",
+  "packVersion": "1.4.5",
   "created": "2026-09-25",
   "targetGameVersion": "1.0.16",
   "packages": [
@@ -225,10 +225,10 @@
   "localPlugins": [
     {
       "id": "ValheimModPack-EAQSQuickStackBridge",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "source": "local-plugins/EAQSQuickStackBridge.dll",
       "destination": "BepInEx/plugins/ValheimModPack-EAQSQuickStackBridge/EAQSQuickStackBridge.dll",
-      "sha256": "590f1a2d59922edb623dc9b660e21b9b130b6ce2fa2a386e2d3da5f2194d3233",
+      "sha256": "281783592a2418b8d998039a70c824d6aa1856c7be317511198d3888f024e88b",
       "dependencies": [
         "Goldenrevolver-Quick_Stack_Store_Sort_Trash_Restock-1.4.15",
         "RandyKnapp-EquipmentAndQuickSlots-3.1.3"
