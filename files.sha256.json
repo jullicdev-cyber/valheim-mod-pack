@@ -13,7 +13,7 @@
   },
   {
     "path": "BepInEx/config/Gonfreecss.ResourceDropModifier.cfg",
-    "sha256": "b7a57d05f4cc4d6ebf857d32c90617706815fd786f5bc31032b7d0aee216bf30"
+    "sha256": "44b2c301cf59ce931d3dbb5debabe81e19554f24c76fe9af451f6a397f7c1073"
   },
   {
     "path": "BepInEx/config/goldenrevolver.quick_stack_store.cfg",
@@ -21,7 +21,7 @@
   },
   {
     "path": "BepInEx/config/org.bepinex.plugins.valheim_plus.cfg",
-    "sha256": "a468ab27be8dc6f2d5fdf03a00ab9725a58d68bf9172dd069b23b2d6aa5b21ce"
+    "sha256": "b2a2d30eec614ce5ba44ca07784ae04d3e0bf187b42139d74967475229d9d055"
   },
   {
     "path": "BepInEx/config/randyknapp.mods.equipmentandquickslots.cfg",

@@ -2,7 +2,7 @@
   "resources": "muchmore",
   "resourceMultiplier": 2,
   "portals": "casual",
-  "woodAdditionalMultiplier": 1.5,
-  "woodTotalMultiplier": 3,
+  "woodAdditionalMultiplier": 3,
+  "woodTotalMultiplier": 6,
   "note": "Apply in the world's World Modifiers menu. This file is documentation, not an auto-loaded game config."
 }
