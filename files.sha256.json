@@ -20,6 +20,10 @@
     "sha256": "f674a894740c35b9f2eb2322e444f8ba997815489b5490daa3e2c96ffcc546a6"
   },
   {
+    "path": "BepInEx/config/advize.PlantEverything.cfg",
+    "sha256": "c7b147c688904bf65a04568967d09d1106d5e936883985605250373f90aed923"
+  },
+  {
     "path": "BepInEx/config/goldenrevolver.quick_stack_store.cfg",
     "sha256": "d1e51c3d13eea9e512b33ce8cb5d6b1d97ed03ab3047db3e986f655710ce0a12"
   },
