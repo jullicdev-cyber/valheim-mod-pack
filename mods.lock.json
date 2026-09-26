@@ -1,5 +1,5 @@
 {
-  "packVersion": "1.4.5",
+  "packVersion": "1.4.6",
   "created": "2026-09-25",
   "targetGameVersion": "1.0.16",
   "packages": [
@@ -232,6 +232,16 @@
       "dependencies": [
         "Goldenrevolver-Quick_Stack_Store_Sort_Trash_Restock-1.4.15",
         "RandyKnapp-EquipmentAndQuickSlots-3.1.3"
+      ]
+    },
+    {
+      "id": "ValheimModPack-ConfirmMapPinRemoval",
+      "version": "1.0.0",
+      "source": "local-plugins/ConfirmMapPinRemoval.dll",
+      "destination": "BepInEx/plugins/ValheimModPack-ConfirmMapPinRemoval/ConfirmMapPinRemoval.dll",
+      "sha256": "4559852b14767e500df4e2e030373a58d6dc82628627895fe61db0c8e0d2fcc7",
+      "dependencies": [
+        "denikson-BepInExPack_Valheim-5.4.2351"
       ]
     }
   ]

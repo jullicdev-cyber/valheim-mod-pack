@@ -82,6 +82,11 @@
       "file": "BepInEx/plugins/ValheimModding-YamlDotNet/YamlDotNetDetector.dll"
     },
     {
+      "name": "ConfirmMapPinRemoval",
+      "version": "0.0.0.0",
+      "file": "BepInEx/plugins/ValheimModPack-ConfirmMapPinRemoval/ConfirmMapPinRemoval.dll"
+    },
+    {
       "name": "EAQSQuickStackBridge",
       "version": "0.0.0.0",
       "file": "BepInEx/plugins/ValheimModPack-EAQSQuickStackBridge/EAQSQuickStackBridge.dll"
@@ -366,6 +371,15 @@
       "name": "YamlDotNet Detector",
       "version": "1.0.0",
       "file": "BepInEx/plugins/ValheimModding-YamlDotNet/YamlDotNetDetector.dll",
+      "dependencies": [],
+      "incompatible": [],
+      "processes": []
+    },
+    {
+      "guid": "valheimmodpack.confirmpinremoval",
+      "name": "Confirm Map Pin Removal",
+      "version": "1.0.0",
+      "file": "BepInEx/plugins/ValheimModPack-ConfirmMapPinRemoval/ConfirmMapPinRemoval.dll",
       "dependencies": [],
       "incompatible": [],
       "processes": []
