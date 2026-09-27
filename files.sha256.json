@@ -217,7 +217,7 @@
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-NordicRadio/NordicRadio.dll",
-    "sha256": "fa8a7332ea7dd6c1a856288f7a981d06281f2252e754e3741c2221fc9f6e1174"
+    "sha256": "cf4a00c9616cc7f0e5d29cda4043a0eb2f09cb6a00929f799e7d75d5b3440c7a"
   },
   {
     "path": "BepInEx/plugins/ValheimModding-JsonDotNET/Newtonsoft.Json.dll",

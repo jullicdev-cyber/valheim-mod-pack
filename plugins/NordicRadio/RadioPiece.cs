@@ -4,7 +4,7 @@ namespace ValheimModPack.NordicRadio
 {
     // Only placed, networked instances attach. The hammer ghost and Jotunn's
     // inactive prefab must never request tracks or create a second audio source.
-    public sealed class RadioPiece : MonoBehaviour, Hoverable, Interactable
+    public sealed class RadioPiece : MonoBehaviour, Hoverable, Interactable, IRadioTarget
     {
         private ZNetView view;
         private bool attached;
@@ -18,6 +18,7 @@ namespace ValheimModPack.NordicRadio
         {
             get
             {
+                if (this == null) return false;
                 if (!view) view = GetComponent<ZNetView>();
                 return isActiveAndEnabled && view && view.IsValid();
             }
@@ -75,6 +76,7 @@ namespace ValheimModPack.NordicRadio
 
         public void SetLit(bool on)
         {
+            if (this == null) return;
             // Toggle the dedicated overlay, never change shared material instances.
             // Every placed horn shares immutable model assets with the prefab.
             if (!glow) glow = transform.Find("SkaldModel/PlayingGlow");

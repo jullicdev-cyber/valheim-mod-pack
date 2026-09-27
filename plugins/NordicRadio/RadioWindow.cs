@@ -20,7 +20,7 @@ namespace ValheimModPack.NordicRadio
         private readonly string[] visibleTrackIds = new string[PageSize];
         private GameObject overlay;
         private GameObject panel;
-        private RadioPiece piece;
+        private IRadioTarget piece;
         private Player player;
         private ZNet network;
         private Text currentTitle;
@@ -48,7 +48,7 @@ namespace ValheimModPack.NordicRadio
 
         public bool IsVisible { get { return overlay != null && overlay.activeInHierarchy; } }
 
-        public void Show(RadioPiece target)
+        public void Show(IRadioTarget target)
         {
             if (IsVisible && ReferenceEquals(piece, target)) return;
             Hide();
@@ -77,7 +77,7 @@ namespace ValheimModPack.NordicRadio
                 panel.name = "NordicRadio.WoodPanel";
                 var group = panel.AddComponent<CanvasGroup>();
                 group.interactable = true; group.blocksRaycasts = true;
-                Label(T("Рог скальда", "Skald's Horn"), 0, 302, 490, 40, 30, true);
+                Label(piece.GetHoverName(), 0, 302, 490, 40, 30, true);
                 ButtonAt("X", 278, 302, 42, 38, Hide);
                 currentTitle = Label("", 0, 253, 568, 40, 23, false);
                 statusLabel = Label("", 0, 218, 568, 30, 17, false);
@@ -195,7 +195,7 @@ namespace ValheimModPack.NordicRadio
             return piece != null && piece.IsReady && player != null && ReferenceEquals(player, Player.m_localPlayer)
                 && network != null && ReferenceEquals(network, ZNet.instance) && plugin.Service != null
                 && !player.IsDead() && !player.IsTeleporting() && !player.InCutscene() && !player.IsSleeping()
-                && Vector3.Distance(player.transform.position, piece.transform.position) <= 5f
+                && piece.HasAccess(player)
                 && !UnifiedPopup.IsVisible() && !Menu.IsVisible() && !InventoryGui.IsVisible()
                 && (Minimap.instance == null || Minimap.instance.m_mode != Minimap.MapMode.Large);
         }

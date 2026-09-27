@@ -56,11 +56,54 @@ namespace ValheimModPack.NordicRadioSmoke
                     report += renderer.name + " shader=" + shader + "\n";
                 }
                 report += CheckMusicDucking();
-                string mp3 = Environment.GetEnvironmentVariable("NORDICRADIO_SMOKE_MP3");
-                if (!String.IsNullOrEmpty(mp3)) StartCoroutine(Decode(report, mp3));
-                else Finish(report + "MP3 decode not requested.\n", 0);
+                StartCoroutine(CheckPortableThenDecode(report));
             }
             catch (Exception error) { Finish("FAIL " + error, 2); }
+        }
+        private IEnumerator CheckPortableThenDecode(string report)
+        {
+            float deadline = Time.realtimeSinceStartup + 20;
+            while ((ObjectDB.instance == null || ObjectDB.instance.GetItemPrefab(PortableModel.PrefabName) == null)
+                && Time.realtimeSinceStartup < deadline) yield return null;
+            try
+            {
+                GameObject prefab = ObjectDB.instance == null ? null : ObjectDB.instance.GetItemPrefab(PortableModel.PrefabName);
+                if (!prefab) throw new Exception("Portable idol not registered in native ObjectDB");
+                ItemDrop drop = prefab.GetComponent<ItemDrop>();
+                var shared = drop.m_itemData.m_shared;
+                if (shared.m_itemType != ItemDrop.ItemData.ItemType.Tool || shared.m_buildPieces != null || shared.m_useDurability || shared.m_maxStackSize != 1)
+                    throw new Exception("Portable item type/build/durability/stack configuration");
+                if (shared.m_icons == null || shared.m_icons.Length == 0 || shared.m_icons[0].texture.width != 128)
+                    throw new Exception("Portable item icon");
+                Transform attach = prefab.transform.Find("attach");
+                if (!attach || attach.GetComponentsInChildren<MeshFilter>(true).Length != 5 || attach.GetComponentsInChildren<Collider>(true).Length != 0)
+                    throw new Exception("Portable equipped visual/physics separation");
+                if (prefab.GetComponents<Collider>().Length != 1) throw new Exception("Portable dropped collider");
+                var hammer = PrefabManager.Instance.GetPrefab("Hammer").GetComponent<ItemDrop>().m_itemData.m_shared;
+                if (hammer.m_buildPieces == null || ReferenceEquals(hammer, shared)) throw new Exception("Original hammer was modified");
+                // Fejd registers items but defers recipes until world startup.
+                // Exercise that exact Jotunn registration path in this isolated DB.
+                MethodInfo registerRecipes = typeof(ItemManager).GetMethod("RegisterCustomRecipes", BindingFlags.Instance | BindingFlags.NonPublic);
+                if (registerRecipes == null) throw new Exception("Jotunn recipe registration API changed");
+                registerRecipes.Invoke(ItemManager.Instance, new object[] { ObjectDB.instance });
+                Recipe recipe = ItemManager.Instance.GetItem(PortableModel.PrefabName).Recipe.Recipe;
+                if (recipe.m_minStationLevel != 1 || !recipe.m_craftingStation || recipe.m_craftingStation.name != "forge")
+                    throw new Exception("Portable forge recipe station: " + (recipe.m_craftingStation ? recipe.m_craftingStation.name : "null") + " level=" + recipe.m_minStationLevel);
+                var expected = new System.Collections.Generic.Dictionary<string,int> {
+                    {"Wood",10}, {"FineWood",5}, {"Bronze",2}, {"SurtlingCore",1} };
+                if (recipe.m_resources.Length != expected.Count) throw new Exception("Portable recipe resource count");
+                foreach (var requirement in recipe.m_resources)
+                {
+                    int amount;
+                    if (!requirement.m_resItem || !expected.TryGetValue(requirement.m_resItem.name, out amount) || requirement.m_amount != amount)
+                        throw new Exception("Portable recipe material/amount");
+                }
+                report += "PASS native portable idol: ObjectDB item, forge I recipe Wood10/FineWood5/Bronze2/SurtlingCore1, 128px icon, five equipped meshes, root collider, original Hammer unchanged.\n";
+            }
+            catch (Exception error) { Finish(report + "FAIL portable idol: " + error, 6); yield break; }
+            string mp3 = Environment.GetEnvironmentVariable("NORDICRADIO_SMOKE_MP3");
+            if (!String.IsNullOrEmpty(mp3)) yield return StartCoroutine(Decode(report, mp3));
+            else Finish(report + "MP3 decode not requested.\n", 0);
         }
         private static string CheckMusicDucking()
         {

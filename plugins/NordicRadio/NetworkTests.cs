@@ -29,9 +29,16 @@ internal static class NetworkTests
         byte[] truncated=new byte[encoded.Length-1]; Array.Copy(encoded,truncated,truncated.Length);
         Reject(()=>RadioProtocol.Decode(truncated),"truncated packet");
         Reject(()=>RadioProtocol.Decode(new byte[RadioProtocol.MaxPacket+1]),"packet limit");
-        Reject(()=>RadioProtocol.Decode(new byte[]{1,255}),"unknown message");
-        Reject(()=>RadioProtocol.Decode(new byte[]{2,1}),"protocol version");
-        Reject(()=>RadioProtocol.Decode(new byte[]{1,2,255,255,255,127}),"playlist allocation limit");
+        Reject(()=>RadioProtocol.Decode(new byte[]{2,255}),"unknown message");
+        Reject(()=>RadioProtocol.Decode(new byte[]{1,1}),"protocol version");
+        Reject(()=>RadioProtocol.Decode(new byte[]{2,2,255,255,255,127}),"playlist allocation limit");
+        string token = new string('a',32);
+        var presence = new RadioMessage { Kind=RadioMessageKind.PortablePresence,Owner=1,Object=100,Id=token };
+        Check(RadioProtocol.Decode(RadioProtocol.Encode(presence)).Id==token,"portable presence token roundtrip");
+        presence.Id=""; Check(RadioProtocol.Decode(RadioProtocol.Encode(presence)).Id=="","portable release roundtrip");
+        presence.Id=token.ToUpperInvariant(); Reject(()=>RadioProtocol.Decode(RadioProtocol.Encode(presence)),"portable uppercase token rejected");
+        presence.Id=new string('a',33); Reject(()=>RadioProtocol.Encode(presence),"portable token allocation bounded");
+        presence.Id="../invalid"; Reject(()=>RadioProtocol.Decode(RadioProtocol.Encode(presence)),"portable malformed token rejected");
         library.Tracks.Add(Track(A)); Reject(()=>RadioProtocol.Decode(RadioProtocol.Encode(library)),"duplicate content ids");
         Reject(()=>RadioProtocol.Decode(RadioProtocol.Encode(new RadioMessage{Kind=RadioMessageKind.ChunkRequest,Id=A,Offset=1})),"unaligned offsets");
         Reject(()=>RadioProtocol.Decode(RadioProtocol.Encode(new RadioMessage{Kind=RadioMessageKind.Command,Owner=1,Object=1,Command="volume",Value=Single.NaN})),"nonfinite input");
@@ -120,7 +127,8 @@ internal static class NetworkTests
         for(int i=0;i<8;i++)
         {
             long uid=i+1; var node=new Node { Net=new ZNet {Uid=uid,Host=i==0},Rpc=new ZRoutedRpc(),Player=new Player(),Objects=objects };
-            objects.Objects[new ZDOID(uid,100)]=new ZDO();
+            var characterId = new ZDOID(uid,100);
+            objects.Objects[characterId]=node.Player.Character=new ZDO { m_uid=characterId };
             node.Rpc.Transport=(peer,name,package)=>wire.Enqueue(new Delivery{Sender=uid,Target=peer,Name=name,Package=package});
             string data=Path.Combine(root,"node"+uid); Directory.CreateDirectory(Path.Combine(data,"Music"));
             if(i==0) WriteMp3(Path.Combine(data,"Music","Host song.mp3"),1000,true);
@@ -183,6 +191,7 @@ internal static class NetworkTests
         Select(nodes[1]); nodes[1].Service.Command(radio,"volume","",0.2f); Pump(4);
         Select(host); Check(host.Service.GetState(radio).Volume==original,"wrong prefab command rejected");
         objects.Objects[radio].Prefab="vmp_skald_horn".GetStableHashCode();
+        PortableNetwork(root,host,objects,radio,id);
         double before=host.Service.GetState(radio).Position(host.Net.GetTimeSeconds());
         host.Net.ClockShift=1000; Pump(1); Select(host);
         Check(Math.Abs(host.Service.GetState(radio).Position(host.Net.GetTimeSeconds())-before)<0.1,"sleep time jump preserves song position");
@@ -190,5 +199,94 @@ internal static class NetworkTests
         Check(nodes[1].Rpc.Methods.Count==1,"reconnect reset does not duplicate RPC registration");
         foreach(Node node in nodes) { Select(node); node.Service.Dispose(); }
         nodes.Clear(); wire.Clear();
+    }
+
+    private static void PortableNetwork(string root, Node host, ZDOMan objects, ZDOID radio, string song)
+    {
+        Node owner=nodes[1], listener=nodes[2], attacker=nodes[3];
+        ZDOID portable=new ZDOID(2,100), hostPortable=new ZDOID(1,100);
+        string tokenA=new string('a',32), tokenB=new string('b',32), tokenC=new string('c',32);
+        foreach(Node node in nodes) objects.Objects[node.Player.Character.m_uid].Position=new UnityEngine.Vector3();
+        Select(attacker); attacker.Service.SetPortable(portable,tokenA); attacker.Service.Watch(portable); Pump(4);
+        Select(host); Check(host.Service.GetState(portable)==null,"another player cannot claim a portable source");
+        float fixedVolume=host.Service.GetState(radio).Volume;
+        Select(owner); owner.Service.SetPortable(radio,tokenA); Pump(4);
+        Select(attacker); attacker.Service.Command(radio,"volume","",0.42f); Pump(4);
+        Select(host); Check(host.Service.GetState(radio).Volume==0.42f,"forged portable identity cannot restrict stationary radio ownership");
+        host.Service.Command(radio,"volume","",fixedVolume);
+
+        Select(owner); owner.Service.SetPortable(portable,tokenA); owner.Service.Watch(portable); Pump(4);
+        Select(host); Check(host.Service.GetState(portable)!=null,"owner establishes portable source on its character identity");
+        Select(listener); listener.Service.Watch(portable); Pump(4);
+        Select(owner); owner.Service.Command(portable,"play","",0); Pump(4);
+        Select(listener); Check(listener.Service.GetState(portable).Playing,"nearby listener hears portable state");
+        objects.Objects[portable].Position=new UnityEngine.Vector3(250,0,0);
+        Select(listener); float nearVolume=listener.Service.GetState(portable).Volume;
+        Select(owner); owner.Service.Command(portable,"volume","",0.25f); Pump(4);
+        Select(host); Check(host.Service.GetState(portable).Volume==0.25f,"owner controls moving source using authoritative character position");
+        Select(listener); Check(listener.Service.GetState(portable).Volume==nearVolume,"distant listener receives no moving-source state outside 200m");
+        objects.Objects[portable].Position=new UnityEngine.Vector3(145,0,0);
+        Select(owner); owner.Service.Command(portable,"volume","",0.7f); Pump(4);
+        Select(listener); Check(listener.Service.GetState(portable).Volume==0.7f,"moving source approaching within range resumes shared updates");
+        objects.Objects[portable].Position=new UnityEngine.Vector3();
+        Select(attacker); attacker.Service.Command(portable,"pause","",0); Pump(4);
+        Select(host); Check(host.Service.GetState(portable).Playing,"nearby other player cannot control owner portable");
+        Select(attacker); attacker.Service.SetPortable(portable,""); Pump(4);
+        Select(host); Check(host.Service.GetState(portable).Playing,"forged portable release rejected");
+
+        // A fresh song reaches a listener with only a portable subscription.
+        WriteMp3(Path.Combine(root,"node1","Music","Portable song.mp3"),700,false);
+        Select(host); host.Service.RefreshLibrary(); Pump(80);
+        Select(host); string extra=null;
+        foreach(TrackInfo track in host.Service.Tracks) if(track.Id!=song) extra=track.Id;
+        Check(extra!=null,"additional host track scanned for portable delivery");
+        Select(listener); listener.Service.ResetSession(); Pump(4);
+        Select(listener); listener.Service.Watch(portable);
+        for(int round=0;round<200;round++)
+        {
+            Select(owner); owner.Service.SetPortable(portable,tokenA);
+            Select(listener); listener.Service.Watch(portable); listener.Service.RequestTrack(extra);
+            Pump(1);
+        }
+        Select(listener); string path=listener.Service.GetTrackPath(extra);
+        Check(path!=null && RadioLibrary.HashFile(path)==extra,"host MP3 transferred using portable-only subscription");
+        Select(host); Check(host.Service.GetState(portable).Playing,"owner heartbeat renews portable past original expiry");
+        Select(owner); owner.Service.Command(portable,"volume","",0.4f); Pump(4);
+        Select(listener); Check(listener.Service.GetState(portable).Volume==0.4f,"portable settings use same shared state menu commands");
+
+        Select(host); int revision=host.Service.GetState(portable).Revision;
+        Select(owner); owner.Service.SetPortable(portable,""); Pump(4);
+        Select(host); Check(!host.Service.GetState(portable).Playing && host.Service.GetState(portable).Revision>revision,"release stops playback and advances revision");
+        Select(listener); Check(!listener.Service.GetState(portable).Playing,"release stop reaches existing listeners after lease removal");
+        Select(owner); owner.Service.Command(portable,"play","",0); Pump(4);
+        Select(host); Check(!host.Service.GetState(portable).Playing,"released portable cannot restart without ownership heartbeat");
+        Select(owner); owner.Service.SetPortable(portable,tokenB); Pump(4);
+        Select(host); Check(!host.Service.GetState(portable).Playing,"new inventory item does not automatically restart old music");
+        Select(owner); owner.Service.Command(portable,"play","",0); Pump(4);
+        Select(owner); owner.Service.SetPortable(portable,tokenC); Pump(4);
+        Select(host); Check(!host.Service.GetState(portable).Playing,"changing exact item token stops old playback");
+        Select(owner); owner.Service.Command(portable,"play","",0); Pump(4);
+        Select(listener); listener.Service.Watch(portable); Pump(4);
+        Pump(245);
+        Select(host); Check(!host.Service.GetState(portable).Playing,"portable expires without owner heartbeat within six seconds");
+        Select(listener); Check(!listener.Service.GetState(portable).Playing,"expired source stop is delivered to listeners");
+
+        Select(owner); owner.Service.SetPortable(portable,tokenA); owner.Service.Command(portable,"play","",0); Pump(4);
+        ZNetPeer peer=host.Net.GetPeer(2); host.Net.Peers.Remove(peer); Pump(4);
+        Select(host); Check(!host.Service.GetState(portable).Playing,"disconnect immediately revokes portable lease");
+        host.Net.Peers.Add(peer);
+        Select(owner); owner.Service.SetPortable(portable,tokenB); owner.Service.Command(portable,"play","",0); Pump(4);
+        ZDO character=objects.Objects[portable]; objects.Objects.Remove(portable); Pump(4);
+        Select(host); RadioSnapshot vanished=host.Service.GetState(portable);
+        Check(vanished==null || !vanished.Playing,"missing character ZDO revokes playback");
+        objects.Objects[portable]=character;
+
+        Select(host); host.Service.SetPortable(hostPortable,tokenA); host.Service.Watch(hostPortable); host.Service.Command(hostPortable,"play","",0);
+        Check(host.Service.GetState(hostPortable).Playing,"listen host can operate its own portable source");
+        host.Player.Dead=true; Pump(4);
+        Select(host); Check(!host.Service.GetState(hostPortable).Playing,"host death immediately revokes its portable source");
+        host.Player.Dead=false;
+        host.Service.Command(radio,"play","",0); Pump(4);
+        Select(host); Check(host.Service.GetState(radio).Playing,"stationary horn remains usable after portable lifecycle changes");
     }
 }

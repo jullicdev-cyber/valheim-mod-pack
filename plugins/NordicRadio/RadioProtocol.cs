@@ -44,7 +44,7 @@ namespace ValheimModPack.NordicRadio
         public RadioSnapshot Copy() { return (RadioSnapshot)MemberwiseClone(); }
     }
 
-    internal enum RadioMessageKind : byte { Hello = 1, Library = 2, Watch = 3, State = 4, Command = 5, ChunkRequest = 6, Chunk = 7, Error = 8 }
+    internal enum RadioMessageKind : byte { Hello = 1, Library = 2, Watch = 3, State = 4, Command = 5, ChunkRequest = 6, Chunk = 7, Error = 8, PortablePresence = 9 }
 
     internal sealed class RadioMessage
     {
@@ -63,7 +63,7 @@ namespace ValheimModPack.NordicRadio
     // The wire format is independent of Unity. Every count is bounded before allocation.
     internal static class RadioProtocol
     {
-        public const string RpcName = "VMP_NordicRadio_1";
+        public const string RpcName = "VMP_NordicRadio_2";
         public const float MaxAudioDistance = 150f;
         // Keep a margin around audible sources for playlist/state prefetch while approaching.
         public const float WatchDistance = 200f;
@@ -81,6 +81,13 @@ namespace ValheimModPack.NordicRadio
             return true;
         }
 
+        public static bool ValidPortableToken(string token)
+        {
+            if (token == null || token.Length != 32) return false;
+            foreach (char c in token) if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+            return true;
+        }
+
         public static bool Finite(double value) { return !Double.IsNaN(value) && !Double.IsInfinity(value); }
         public static bool ValidCommand(string value)
         {
@@ -92,7 +99,7 @@ namespace ValheimModPack.NordicRadio
             using (var stream = new MemoryStream())
             using (var writer = new BinaryWriter(stream, Utf8))
             {
-                writer.Write((byte)1);
+                writer.Write((byte)2);
                 writer.Write((byte)message.Kind);
                 switch (message.Kind)
                 {
@@ -107,6 +114,8 @@ namespace ValheimModPack.NordicRadio
                         }
                         break;
                     case RadioMessageKind.Watch: WriteKey(writer, message); break;
+                    case RadioMessageKind.PortablePresence:
+                        WriteKey(writer, message); WriteString(writer, message.Id, 32); break;
                     case RadioMessageKind.State:
                         WriteKey(writer, message);
                         RadioSnapshot state = message.State;
@@ -141,7 +150,7 @@ namespace ValheimModPack.NordicRadio
             using (var stream = new MemoryStream(data, false))
             using (var reader = new BinaryReader(stream, Utf8))
             {
-                if (reader.ReadByte() != 1) throw new InvalidDataException("Protocol version");
+                if (reader.ReadByte() != 2) throw new InvalidDataException("Protocol version");
                 var result = new RadioMessage { Kind = (RadioMessageKind)reader.ReadByte() };
                 switch (result.Kind)
                 {
@@ -159,6 +168,10 @@ namespace ValheimModPack.NordicRadio
                         }
                         break;
                     case RadioMessageKind.Watch: ReadKey(reader, result); break;
+                    case RadioMessageKind.PortablePresence:
+                        ReadKey(reader, result); result.Id = ReadString(reader, 32);
+                        if (result.Id.Length != 0 && !ValidPortableToken(result.Id)) throw new InvalidDataException("Portable item identity");
+                        break;
                     case RadioMessageKind.State:
                         ReadKey(reader, result);
                         result.State = new RadioSnapshot { TrackId = ReadId(reader, true), Playing = reader.ReadBoolean(), StartedAt = reader.ReadDouble(), Offset = reader.ReadSingle(), Volume = reader.ReadSingle(), Repeat = reader.ReadBoolean(), Shuffle = reader.ReadBoolean(), Revision = reader.ReadInt32() };

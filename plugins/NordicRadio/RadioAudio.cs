@@ -8,7 +8,7 @@ namespace ValheimModPack.NordicRadio
     internal sealed class RadioAudio : IDisposable
     {
         private readonly Plugin plugin;
-        private readonly RadioPiece piece;
+        private readonly IRadioTarget piece;
         private GameObject emitter;
         private AudioSource source;
         private RadioGain amplifier;
@@ -24,10 +24,10 @@ namespace ValheimModPack.NordicRadio
             get { return source != null && source.isPlaying && source.enabled && !source.mute
                 ? Mathf.Clamp01(source.volume * plugin.Amplification) : 0; }
         }
-        internal RadioAudio(Plugin plugin, RadioPiece piece) { this.plugin = plugin; this.piece = piece; }
+        internal RadioAudio(Plugin plugin, IRadioTarget piece) { this.plugin = plugin; this.piece = piece; }
         internal void Tick()
         {
-            if (disposed || piece == null) return;
+            if (disposed || piece == null || !piece.IsReady) return;
             try { UpdatePlayback(); }
             catch (Exception error)
             {
@@ -117,7 +117,7 @@ namespace ValheimModPack.NordicRadio
         {
             if (source != null) return;
             emitter = new GameObject("NordicRadio.Sound");
-            emitter.transform.SetParent(piece.transform, false);
+            emitter.transform.SetParent(plugin.transform, false);
             source = emitter.AddComponent<AudioSource>();
             source.playOnAwake = false; source.loop = false;
             source.spatialBlend = 1; source.dopplerLevel = 0; source.spread = 0;

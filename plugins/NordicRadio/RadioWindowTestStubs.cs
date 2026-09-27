@@ -10,10 +10,23 @@ namespace ValheimModPack.NordicRadio
         public RadioService Service;
         public float PersonalVolume;
     }
-    public sealed class RadioPiece : MonoBehaviour
+    public interface IRadioTarget
     {
-        public ZDOID Id;
-        public bool IsReady;
+        ZDOID Id { get; }
+        bool IsReady { get; }
+        Vector3 SoundPosition { get; }
+        bool HasAccess(Player player);
+        string GetHoverName();
+        void SetLit(bool on);
+    }
+    public sealed class RadioPiece : MonoBehaviour, IRadioTarget
+    {
+        public ZDOID Id { get; set; }
+        public bool IsReady { get; set; }
+        public Vector3 SoundPosition { get { return transform.position; } }
+        public bool HasAccess(Player player) { return IsReady && player != null; }
+        public string GetHoverName() { return "Skald's Horn"; }
+        public void SetLit(bool on) { }
     }
     public sealed class TrackInfo
     {

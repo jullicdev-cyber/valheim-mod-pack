@@ -14,15 +14,17 @@ namespace ValheimModPack.NordicRadio
     public sealed class Plugin : BaseUnityPlugin
     {
         public const string Id = "valheimmodpack.nordicradio";
-        public const string Version = "1.0.2";
+        public const string Version = "1.1.0";
         public static Plugin Instance { get; private set; }
         public RadioService Service { get; private set; }
         public string DataRoot { get; private set; }
         private ConfigEntry<float> personalVolume, nearDistance, farDistance, amplification, backgroundMusicVolume;
         private ConfigEntry<int> wood, bronze, leather, core, uploadRate;
-        private readonly Dictionary<RadioPiece, RadioAudio> radios = new Dictionary<RadioPiece, RadioAudio>();
+        private readonly Dictionary<IRadioTarget, RadioAudio> radios = new Dictionary<IRadioTarget, RadioAudio>();
         private RadioWindow window;
         private MusicDucking musicDucking;
+        internal PortableController Portable { get; private set; }
+        internal bool RadioWindowVisible { get { return window != null && window.IsVisible; } }
         private float nextWatch, nextSelection, nextError;
         private bool ready;
         public float PersonalVolume
@@ -65,6 +67,7 @@ namespace ValheimModPack.NordicRadio
                 Service = new RadioService(this, DataRoot, message => Logger.LogInfo(message));
                 window = new RadioWindow(this);
                 musicDucking = new MusicDucking();
+                Portable = new PortableController(this);
                 PrefabManager.OnVanillaPrefabsAvailable += Register;
                 ready = true;
                 Logger.LogInfo("NordicRadio " + Version + " ready. Host MP3 folder: " + Path.Combine(DataRoot, "Music"));
@@ -74,21 +77,21 @@ namespace ValheimModPack.NordicRadio
         private void Register()
         {
             PrefabManager.OnVanillaPrefabsAvailable -= Register;
-            try { HornModel.Register(wood.Value, bronze.Value, leather.Value, core.Value); }
+            try { HornModel.Register(wood.Value, bronze.Value, leather.Value, core.Value); PortableModel.Register(); }
             catch (Exception error) { Logger.LogError("Skald horn registration failed: " + error); }
         }
-        public void Attach(RadioPiece piece)
+        public void Attach(IRadioTarget piece)
         {
             if (!ready || piece == null || !piece.IsReady || radios.ContainsKey(piece)) return;
             radios.Add(piece, new RadioAudio(this, piece));
         }
-        public void Detach(RadioPiece piece)
+        public void Detach(IRadioTarget piece)
         {
             RadioAudio audio;
             if (ReferenceEquals(piece, null) || !radios.TryGetValue(piece, out audio)) return;
             audio.Dispose(); radios.Remove(piece);
         }
-        public void OpenRadio(RadioPiece piece)
+        public void OpenRadio(IRadioTarget piece)
         {
             if (!ready || piece == null || !piece.IsReady || Player.m_localPlayer == null) return;
             try { Service.Watch(piece.Id); window.Show(piece); }
@@ -102,14 +105,15 @@ namespace ValheimModPack.NordicRadio
                 window.Tick();
                 Service.UploadKiBPerSecond = uploadRate.Value;
                 Service.Tick();
-                var dead = new List<RadioPiece>();
+                Portable.Tick();
+                var dead = new List<IRadioTarget>();
                 bool watching = Time.unscaledTime >= nextWatch;
                 bool selecting = Time.unscaledTime >= nextSelection;
                 if (watching) nextWatch = Time.unscaledTime + 2;
                 if (selecting)
                 {
                     nextSelection = Time.unscaledTime + 0.5f;
-                    var candidates = new List<RadioPiece>();
+                    var candidates = new List<IRadioTarget>();
                     foreach (var pair in radios)
                     {
                         pair.Value.Audible = false;
@@ -132,7 +136,7 @@ namespace ValheimModPack.NordicRadio
                 {
                     if (pair.Key == null || !pair.Key.IsReady) { dead.Add(pair.Key); continue; }
                     if (watching && Player.m_localPlayer != null
-                        && Vector3.Distance(Player.m_localPlayer.transform.position, pair.Key.transform.position) <= RadioProtocol.WatchDistance - 5)
+                        && Vector3.Distance(Player.m_localPlayer.transform.position, pair.Key.SoundPosition) <= RadioProtocol.WatchDistance - 5)
                         Service.Watch(pair.Key.Id);
                     pair.Value.Tick();
                     strongestHorn = Mathf.Max(strongestHorn, pair.Value.Audibility);
@@ -158,6 +162,7 @@ namespace ValheimModPack.NordicRadio
         private void OnDisable()
         {
             if (window != null) window.Hide();
+            if (Portable != null) Portable.Reset();
             if (musicDucking != null) musicDucking.Reset();
             foreach (var pair in radios)
             {
@@ -170,6 +175,7 @@ namespace ValheimModPack.NordicRadio
             ready = false;
             PrefabManager.OnVanillaPrefabsAvailable -= Register;
             if (window != null) window.Hide();
+            if (Portable != null) { Portable.Dispose(); Portable = null; }
             if (musicDucking != null) { musicDucking.Dispose(); musicDucking = null; }
             foreach (var audio in radios.Values) audio.Dispose();
             radios.Clear();

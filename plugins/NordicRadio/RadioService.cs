@@ -16,6 +16,7 @@ namespace ValheimModPack.NordicRadio
         private readonly List<TrackInfo> tracks = new List<TrackInfo>();
         private readonly Dictionary<string, LibraryEntry> sources = new Dictionary<string, LibraryEntry>(StringComparer.Ordinal);
         private readonly Dictionary<ZDOID, RadioSnapshot> states = new Dictionary<ZDOID, RadioSnapshot>();
+        private readonly Dictionary<ZDOID, PortableLease> portables = new Dictionary<ZDOID, PortableLease>();
         private readonly Dictionary<ZDOID, double> watched = new Dictionary<ZDOID, double>();
         private readonly Dictionary<long, Dictionary<ZDOID, double>> subscribers = new Dictionary<long, Dictionary<ZDOID, double>>();
         private readonly Dictionary<long, RadioMessage> chunkRequests = new Dictionary<long, RadioMessage>();
@@ -49,7 +50,17 @@ namespace ValheimModPack.NordicRadio
         private Download active;
         private bool checkingCache;
         private string libraryStatus = "";
+        private ZDOID localPortable;
+        private string localPortableToken = "";
+        private double nextPortablePresence;
         private static readonly int PrefabHash = "vmp_skald_horn".GetStableHashCode();
+
+        private sealed class PortableLease
+        {
+            public long Peer;
+            public string Token;
+            public double Expires;
+        }
 
         private sealed class Download : IDisposable
         {
@@ -121,6 +132,7 @@ namespace ValheimModPack.NordicRadio
             {
                 if (needsScan && scanning == 0) RefreshLibrary();
                 CorrectClock(realtime);
+                ExpirePortables(realtime);
                 ServeChunks(realtime);
                 if (realtime >= nextState) { nextState = realtime + 1; AdvanceAndBroadcast(); }
             }
@@ -137,6 +149,7 @@ namespace ValheimModPack.NordicRadio
             generation++;
             if (active != null) { active.Dispose(); active = null; }
             tracks.Clear(); sources.Clear(); states.Clear(); watched.Clear(); subscribers.Clear(); chunkRequests.Clear(); chunkOrder.Clear();
+            portables.Clear(); localPortable = new ZDOID(); localPortableToken = ""; nextPortablePresence = 0;
             greetings.Clear(); peerBudgets.Clear(); downloads.Clear(); waiting.Clear(); wanted.Clear(); prefetched.Clear(); statuses.Clear(); retryAfter.Clear();
             checkingCache = false; receivedLibrary = false; nextHello = 0; nextState = 0; nextMaintenance = 0;
             sessionRpc = null; sessionWorld = 0; sessionServer = 0; libraryStatus = ""; clockSet = false; needsScan = false;
@@ -188,6 +201,25 @@ namespace ValheimModPack.NordicRadio
             if (!watched.ContainsKey(id) && watched.Count >= 64) return;
             watched[id] = now;
             var message = Key(RadioMessageKind.Watch, id);
+            if (IsHost) HandleHost(sessionServer, message); else Send(sessionServer, message);
+        }
+
+        // The caller checks its exact inventory item continuously. This heartbeat
+        // lets the host stop a portable source even if its owner disconnects abruptly.
+        public void SetPortable(ZDOID characterId, string token)
+        {
+            if (disposed || sessionRpc == null || characterId.IsNone()) return;
+            token = token ?? "";
+            if (token.Length != 0 && !RadioProtocol.ValidPortableToken(token)) return;
+            double now = Realtime;
+            if (localPortable.Equals(characterId) && localPortableToken == token && now < nextPortablePresence) return;
+            if (!localPortable.IsNone() && !localPortable.Equals(characterId) && localPortableToken.Length != 0)
+            {
+                var release = Key(RadioMessageKind.PortablePresence, localPortable);
+                if (IsHost) HandleHost(sessionServer, release); else Send(sessionServer, release);
+            }
+            localPortable = characterId; localPortableToken = token; nextPortablePresence = now + 2;
+            var message = Key(RadioMessageKind.PortablePresence, characterId); message.Id = token;
             if (IsHost) HandleHost(sessionServer, message); else Send(sessionServer, message);
         }
 
@@ -294,11 +326,33 @@ namespace ValheimModPack.NordicRadio
             catch (Exception exception) { LogError(exception); }
         }
 
-        private bool ValidateRadio(long sender, ZDOID id, float distance)
+        private bool IsOwnerCharacter(long sender, ZDOID id)
+        {
+            if (ZNet.instance == null || ZDOMan.instance == null || ZDOMan.instance.GetZDO(id) == null) return false;
+            if (sender == sessionServer)
+            {
+                Player player = Player.m_localPlayer;
+                ZNetView view = player == null || player.IsDead() ? null : player.GetComponent<ZNetView>();
+                ZDO character = view == null || !view.IsValid() ? null : view.GetZDO();
+                return character != null && character.m_uid.Equals(id);
+            }
+            ZNetPeer peer = ZNet.instance.GetPeer(sender);
+            return peer != null && peer.IsReady() && !peer.m_characterID.IsNone() && peer.m_characterID.Equals(id);
+        }
+
+        private bool ValidateRadio(long sender, ZDOID id, float distance, bool command = false)
         {
             if (ZDOMan.instance == null || ZNet.instance == null) return false;
             ZDO radio = ZDOMan.instance.GetZDO(id);
-            if (radio == null || radio.GetPrefab() != PrefabHash) return false;
+            if (radio == null) return false;
+            PortableLease portable;
+            bool isPortable = portables.TryGetValue(id, out portable);
+            if (isPortable)
+            {
+                if (portable.Expires <= Realtime || !IsOwnerCharacter(portable.Peer, id)
+                    || (command && sender != portable.Peer)) return false;
+            }
+            else if (radio.GetPrefab() != PrefabHash) return false;
             Vector3 position;
             if (sender == sessionServer)
             {
@@ -316,9 +370,60 @@ namespace ValheimModPack.NordicRadio
             return (radio.GetPosition() - position).sqrMagnitude <= distance * distance;
         }
 
+        private void HandlePortable(long sender, ZDOID id, string token)
+        {
+            if ((token.Length != 0 && !RadioProtocol.ValidPortableToken(token)) || !IsOwnerCharacter(sender, id)) return;
+            PortableLease previous;
+            bool exists = portables.TryGetValue(id, out previous);
+            if (token.Length == 0) { if (exists && previous.Peer == sender) StopPortable(id); return; }
+            if (exists && (previous.Peer != sender || previous.Token != token || previous.Expires <= Realtime))
+            {
+                StopPortable(id); exists = false;
+            }
+            if (!exists)
+            {
+                var stale = new List<ZDOID>();
+                foreach (var pair in portables) if (pair.Value.Peer == sender) stale.Add(pair.Key);
+                foreach (ZDOID other in stale) StopPortable(other);
+                if (portables.Count >= 64) return;
+                portables.Add(id, previous = new PortableLease { Peer = sender, Token = token });
+            }
+            previous.Expires = Realtime + 6;
+        }
+
+        private void StopPortable(ZDOID id)
+        {
+            portables.Remove(id);
+            RadioSnapshot state;
+            if (!states.TryGetValue(id, out state)) return;
+            state.Offset = (float)Math.Min(86400, state.Position(Now)); state.Playing = false;
+            state.Revision = state.Revision == Int32.MaxValue ? 0 : state.Revision + 1;
+            // A stopped source no longer passes ValidateRadio. Existing listeners
+            // still need its final state, including when its character was removed.
+            foreach (var peer in subscribers)
+            {
+                double last; ZNetPeer connected = ZNet.instance == null ? null : ZNet.instance.GetPeer(peer.Key);
+                if (connected != null && connected.IsReady() && peer.Value.TryGetValue(id, out last) && Realtime - last < 12)
+                    SendState(peer.Key, id, state);
+            }
+        }
+
+        private void ExpirePortables(double realtime)
+        {
+            if (portables.Count == 0) return;
+            var expired = new List<ZDOID>();
+            foreach (var pair in portables)
+                if (pair.Value.Expires <= realtime || !IsOwnerCharacter(pair.Value.Peer, pair.Key)) expired.Add(pair.Key);
+            foreach (ZDOID id in expired) StopPortable(id);
+        }
+
         private void HandleHost(long sender, RadioMessage message)
         {
             double realtime = Realtime;
+            if (message.Kind == RadioMessageKind.PortablePresence)
+            {
+                HandlePortable(sender, new ZDOID(message.Owner, message.Object), message.Id); return;
+            }
             if (message.Kind == RadioMessageKind.Hello)
             {
                 double last;
@@ -338,7 +443,8 @@ namespace ValheimModPack.NordicRadio
             }
             if (message.Kind != RadioMessageKind.Watch && message.Kind != RadioMessageKind.Command) return;
             ZDOID id = new ZDOID(message.Owner, message.Object);
-            if (!ValidateRadio(sender, id, message.Kind == RadioMessageKind.Watch ? RadioProtocol.WatchDistance : 8)) return;
+            if (!ValidateRadio(sender, id, message.Kind == RadioMessageKind.Watch ? RadioProtocol.WatchDistance : 8,
+                message.Kind == RadioMessageKind.Command)) return;
             RadioSnapshot state;
             if (!states.TryGetValue(id, out state))
             {

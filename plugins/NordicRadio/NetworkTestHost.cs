@@ -26,6 +26,7 @@ public struct ZDOID : IEquatable<ZDOID>
 }
 public class ZDO
 {
+    public ZDOID m_uid;
     public int Prefab; public UnityEngine.Vector3 Position;
     public int GetPrefab() { return Prefab; }
     public UnityEngine.Vector3 GetPosition() { return Position; }
@@ -39,8 +40,17 @@ public class ZDOMan
 public class Player
 {
     public static Player m_localPlayer;
+    public ZDO Character;
+    public bool Dead;
     public readonly UnityEngine.Transform transform=new UnityEngine.Transform();
-    public bool IsDead() { return false; }
+    public bool IsDead() { return Dead; }
+    public T GetComponent<T>() where T : class { return new ZNetView { Character = Character } as T; }
+}
+public class ZNetView
+{
+    public ZDO Character;
+    public bool IsValid() { return Character != null; }
+    public ZDO GetZDO() { return Character; }
 }
 public class ZNetPeer
 {

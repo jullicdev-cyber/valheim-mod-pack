@@ -486,7 +486,7 @@
                     {
                         "guid":  "valheimmodpack.nordicradio",
                         "name":  "Nordic Radio - Skald\u0027s Horn",
-                        "version":  "1.0.2",
+                        "version":  "1.1.0",
                         "file":  "BepInEx/plugins/ValheimModPack-NordicRadio/NordicRadio.dll",
                         "dependencies":  [
                                              {
