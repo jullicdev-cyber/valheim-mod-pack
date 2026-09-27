@@ -6,3 +6,5 @@ BepInEx/LogOutput.log
 __pycache__/
 local-settings.json
 .updates/
+NordicRadio/Music/
+NordicRadio/Cache/

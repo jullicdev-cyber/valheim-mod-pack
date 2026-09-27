@@ -32,6 +32,10 @@ class InstallTests(unittest.TestCase):
         (self.target / 'BepInEx').mkdir()
         (self.target / 'BepInEx/old-plugin.txt').write_text('old mod')
         (self.target / 'unrelated.txt').write_text('keep')
+        (self.target / 'NordicRadio/Music').mkdir(parents=True)
+        (self.target / 'NordicRadio/Music/скальд.mp3').write_bytes(b'personal music fixture')
+        (self.target / 'NordicRadio/Cache').mkdir()
+        (self.target / 'NordicRadio/Cache/fixture.mp3').write_bytes(b'cached music fixture')
 
     def test_linux_install_and_reinstall(self):
         backup = installer.install(ROOT, self.target)
@@ -46,6 +50,9 @@ class InstallTests(unittest.TestCase):
         self.assertTrue((second / 'BepInEx/core/BepInEx.dll').is_file())
         self.assertEqual((self.target / 'unrelated.txt').read_text(), 'keep')
         self.assertNotIn(b'\r', (self.target / 'start_game_bepinex.sh').read_bytes())
+        for base in (self.target, snapshot):
+            self.assertEqual((base / 'NordicRadio/Music/скальд.mp3').read_bytes(), b'personal music fixture')
+            self.assertEqual((base / 'NordicRadio/Cache/fixture.mp3').read_bytes(), b'cached music fixture')
 
     def test_linux_rollback(self):
         rename = Path.rename
@@ -161,6 +168,9 @@ class InstallTests(unittest.TestCase):
             self.assertEqual((snapshot / 'unrelated.txt').read_text(), 'keep')
             self.assertEqual((snapshot / 'valheim.exe').read_bytes(), b'mock game')
             self.assertFalse((snapshot / 'ValheimModpack-backups').exists())
+            self.assertEqual((snapshot / 'NordicRadio/Music/скальд.mp3').read_bytes(), b'personal music fixture')
+        self.assertEqual((self.target / 'NordicRadio/Music/скальд.mp3').read_bytes(), b'personal music fixture')
+        self.assertEqual((self.target / 'NordicRadio/Cache/fixture.mp3').read_bytes(), b'cached music fixture')
         self.assertEqual((self.target / 'unrelated.txt').read_text(), 'keep')
         invalid = self.target / 'invalid'
         invalid.mkdir()

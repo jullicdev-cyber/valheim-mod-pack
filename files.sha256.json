@@ -36,6 +36,10 @@
     "sha256": "7e8bad635ca7b856f425c49f7388c376ddb51cb74295bf8d9060198083e2e035"
   },
   {
+    "path": "BepInEx/config/valheimmodpack.nordicradio.cfg",
+    "sha256": "b7025b81f0734f33b3da8e93d9d75ba4c9152ee33d4e1d837cd8896e7226886a"
+  },
+  {
     "path": "BepInEx/core/0Harmony.dll",
     "sha256": "1a21cc03424fc82c3dd1346905d16494536b9595ae4162228d99fb7c285c1031"
   },
@@ -210,6 +214,10 @@
   {
     "path": "BepInEx/plugins/ValheimModPack-EAQSQuickStackBridge/EAQSQuickStackBridge.dll",
     "sha256": "281783592a2418b8d998039a70c824d6aa1856c7be317511198d3888f024e88b"
+  },
+  {
+    "path": "BepInEx/plugins/ValheimModPack-NordicRadio/NordicRadio.dll",
+    "sha256": "4b3e1bf3dab27a1cf0db24a24541e169c95570ce023ede8941b3ced5aa589475"
   },
   {
     "path": "BepInEx/plugins/ValheimModding-JsonDotNET/Newtonsoft.Json.dll",
