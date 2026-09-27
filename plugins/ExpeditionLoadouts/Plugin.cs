@@ -9,7 +9,7 @@ using UnityEngine.UI;
 
 namespace ValheimModPack.ExpeditionLoadouts
 {
-    [BepInPlugin(Id, "Expedition Loadouts", "1.0.0")]
+    [BepInPlugin(Id, "Expedition Loadouts", "1.1.0")]
     [BepInDependency("com.jotunn.jotunn", "2.30.2")]
     [BepInDependency("randyknapp.mods.equipmentandquickslots", BepInDependency.DependencyFlags.SoftDependency)]
     [BepInDependency("goldenrevolver.quick_stack_store", BepInDependency.DependencyFlags.SoftDependency)]
@@ -96,11 +96,16 @@ namespace ValheimModPack.ExpeditionLoadouts
                 || (Minimap.instance != null && Minimap.instance.m_mode == Minimap.MapMode.Large)) return false;
             if (EventSystem.current == null || EventSystem.current.currentSelectedGameObject == null) return true;
             var selected = EventSystem.current.currentSelectedGameObject;
+            if (!selected.activeInHierarchy) return true;
             var field = selected.GetComponentInParent<InputField>();
-            if (field != null && field.isFocused) return false;
+            if (field != null && field.isActiveAndEnabled && field.gameObject.activeInHierarchy && field.isFocused) return false;
             foreach (var component in selected.GetComponentsInParent<Component>())
             {
-                if (component == null || component.GetType().Name != "TMP_InputField") continue;
+                var behaviour = component as Behaviour;
+                if (behaviour == null || !behaviour.isActiveAndEnabled || !component.gameObject.activeInHierarchy) continue;
+                Type inputType = component.GetType();
+                while (inputType != null && inputType.Name != "TMP_InputField") inputType = inputType.BaseType;
+                if (inputType == null) continue;
                 var focused = component.GetType().GetProperty("isFocused");
                 if (focused != null && (bool)focused.GetValue(component, null)) return false;
             }

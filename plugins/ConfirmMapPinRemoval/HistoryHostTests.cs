@@ -27,6 +27,9 @@ public static class HistoryHostTests
             var map = new Minimap(); Minimap.instance = map; var owner = new Player(); Player.m_localPlayer = owner; ZNet.instance = new ZNet();
             var pin = Add(map, "Тест", 1); controller.Tick(true); Open(controller);
             var view = PinHistoryWindow.Last; Check(view.IsVisible && view.Rows.Count == 0, "Ctrl+H opens empty history on large map");
+            view.IsVisible = false; controller.Tick(true);
+            Check(!view.OwnsInputBlock, "Controller releases vanished history panel input while map context stays valid");
+            Open(controller); Check(view.IsVisible && view.OwnsInputBlock, "History can reopen after vanished panel cleanup");
             view.Tab(false); Check(view.Rows.Count == 1 && view.Rows[0].Details.Contains("неизвестно") && view.Rows[0].Details.Contains("неизвестен"), "Existing pin never gets fabricated author/date");
             view.Cancel(); Check(!controller.IsOpen, "Close callback closes owned window");
             var created = Add(map, "Новая", 4);

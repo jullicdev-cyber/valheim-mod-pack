@@ -131,6 +131,7 @@ namespace ValheimModPack.PinRemoval
         }
         public void Tick(bool allowOpen)
         {
+            view.CleanupHidden();
             if (!EnsureContext()) { SetLauncherVisible(false); return; }
             bool valid = SafePlayer(owner) && map.m_mode == Minimap.MapMode.Large && !Minimap.InTextInput()
                 && !UnifiedPopup.IsVisible() && !Menu.IsVisible() && !global::Console.IsVisible()

@@ -20,16 +20,23 @@ namespace ValheimModPack.ChestSearch
         private float until;
         private float nextCheck;
         private string chestName;
+        private string itemKey;
 
         public ChestMarker(Plugin plugin) { this.plugin = plugin; }
         public bool Show(SearchResult result)
+        {
+            return Show(result, null);
+        }
+        public bool Show(SearchResult result, string selectedItemKey)
         {
             Clear();
             if (result == null || result.Snapshot == null) return false;
             ChestSnapshot fresh; ReadFailure failure;
             if (!plugin.Reader.TryRead(result.Snapshot.Container, Player.m_localPlayer, plugin.Radius, out fresh, out failure)
-                || fresh.Id != result.Snapshot.Id || fresh.Revision != result.Snapshot.Revision) return false;
+                || fresh.Id != result.Snapshot.Id
+                || (String.IsNullOrEmpty(selectedItemKey) ? fresh.Revision != result.Snapshot.Revision : !SearchService.ContainsItem(fresh, selectedItemKey))) return false;
             target = fresh.Container; id = fresh.Id; player = Player.m_localPlayer; network = ZNet.instance;
+            itemKey = selectedItemKey;
             chestName = SearchText.Safe(result.ChestName, 32);
             until = Time.unscaledTime + plugin.MarkerSeconds;
             try
@@ -101,7 +108,8 @@ namespace ValheimModPack.ChestSearch
             {
                 nextCheck = Time.unscaledTime + 0.25f;
                 ChestSnapshot fresh; ReadFailure failure;
-                if (!plugin.Reader.TryRead(target, player, plugin.Radius, out fresh, out failure) || fresh.Id != id)
+                if (!plugin.Reader.TryRead(target, player, plugin.Radius, out fresh, out failure) || fresh.Id != id
+                    || (!String.IsNullOrEmpty(itemKey) && !SearchService.ContainsItem(fresh, itemKey)))
                 { Clear(); return; }
             }
             if (marker != null) marker.transform.position = target.transform.position;
@@ -126,7 +134,7 @@ namespace ValheimModPack.ChestSearch
             if (labelObject != null) UnityEngine.Object.Destroy(labelObject);
             if (material != null) UnityEngine.Object.Destroy(material);
             marker = null; labelObject = null; material = null; label = null;
-            target = null; player = null; network = null; nextCheck = 0;
+            target = null; player = null; network = null; itemKey = null; nextCheck = 0;
         }
         public void Dispose() { Clear(); }
     }

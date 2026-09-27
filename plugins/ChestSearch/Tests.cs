@@ -100,6 +100,89 @@ internal static class ChestSearchTests
             near.SetRevision(1); first.Inventory.Items[0].m_stack = Int32.MaxValue; first.Inventory.Items[1].m_stack = Int32.MaxValue;
             Check(search.Search(Player.m_localPlayer, "Iron", 30).Quantity == 2L * Int32.MaxValue + 20, "Quantities do not overflow Int32");
             Check(search.Search(Player.m_localPlayer, "", 30).Checked == 0, "Empty input does not scan inventories");
+            Reset();
+            var ironIcon = new Sprite { name = "Iron icon" };
+            var woodIcon = new Sprite { name = "Wood icon" };
+            first = new Container(); first.transform.position = new Vector3(10, 0, 0);
+            var iron = Item("$item_iron", "Iron", 10); iron.m_shared.m_icons = new[] { ironIcon };
+            first.Inventory.Items.Add(iron); first.Inventory.Items.Add(Item("$item_iron", "Iron", 4));
+            var wood = Item("$item_wood", "Wood", 50); wood.m_shared.m_icons = new[] { woodIcon };
+            first.Inventory.Items.Add(wood);
+            near = new Container(); near.transform.position = new Vector3(3, 0, 0);
+            near.Inventory.Items.Add(Item("$item_iron", "Iron", 20));
+            // Two distinct prefabs deliberately share the exact same localized name.
+            near.Inventory.Items.Add(Item("$item_iron", "ModdedIron", 5));
+            secret = new Container { Access = false }; secret.Inventory.Items.Add(Item("$item_iron", "Iron", 999));
+            var busy = new Container { InUse = true }; busy.Inventory.Items.Add(Item("$item_iron", "Iron", 999));
+            var stale = new Container(); stale.SetRevision(0); stale.Inventory.Items.Add(Item("$item_iron", "Iron", 999));
+            search = new SearchService(new NativeChestReader(), new NameIndex(message => { throw new Exception(message); }));
+            result = search.Search(Player.m_localPlayer, "Iron", 30);
+            Check(result.Items.Count == 2 && result.Quantity == 39, "Distinct prefab identities survive identical translated names");
+            var ironGroup = result.Items.Find(item => item.Key == "Iron");
+            var moddedGroup = result.Items.Find(item => item.Key == "ModdedIron");
+            Check(ironGroup.Name == "Железо" && System.Object.ReferenceEquals(ironGroup.Icon, ironIcon), "Item group uses localized name and real item icon");
+            Check(ironGroup.Quantity == 34 && ironGroup.ChestCount == 2 && ironGroup.Chests.Count == 2, "Repeated stacks aggregate once per chest");
+            Check(ironGroup.NearestDistance == 3 && ironGroup.Chests[0].Snapshot.Container == near, "Item nearest distance and chest list remain distance ordered");
+            Check(ironGroup.Chests[1].Quantity == 14 && ironGroup.Chests[1].Kinds == 1, "Per-item chest result excludes unrelated matching items");
+            Check(moddedGroup.Quantity == 5 && moddedGroup.ChestCount == 1 && moddedGroup.Icon == null, "Missing icon does not abort counts or merge identities");
+            Check(result.Results[0].Quantity == 25 && result.Results[0].Kinds == 2 && result.Results[0].ItemSummary.IndexOf("× 5", StringComparison.Ordinal) >= 0,
+                "Compatibility chest result includes separate same-label prefab kinds");
+            Check(result.Pending == 2 && secret.Inventory.Reads == 0 && busy.Inventory.Reads == 0 && stale.Inventory.Reads == 0,
+                "Item groups do not leak denied, busy or stale quantities");
+            var all = search.Search(Player.m_localPlayer, " \t", 30, true);
+            Check(all.Items.Count == 3 && all.Quantity == 89 && all.Checked == 2, "Explicit empty-input mode lists every accessible item group");
+            Check(search.Search(Player.m_localPlayer, "", 30, false).Items.Count == 0, "Explicit false keeps old empty-input behavior");
+            Check(search.Search(Player.m_localPlayer, "Wood", 30, true).Items.Count == 1, "Show-without-input does not disable a nonempty filter");
+            Check(search.Search(Player.m_localPlayer, "", Single.NaN, true).Checked == 0 && search.Search(Player.m_localPlayer, "", 81, true).Checked == 0,
+                "Show-all validates finite bounded radius before scanning");
+            var missingPrefab = Item("$item_iron", "Unknown", 500); missingPrefab.m_dropPrefab = null;
+            var missingShared = Item("$item_iron", "Broken", 500); missingShared.m_shared = null;
+            first.Inventory.Items.Add(missingPrefab); first.Inventory.Items.Add(missingShared); first.Inventory.Items.Add(null);
+            first.Inventory.Items.Add(Item("$item_iron", "Iron", 0)); first.Inventory.Items.Add(Item("$item_iron", "Iron", -5));
+            Check(search.Search(Player.m_localPlayer, "Iron", 30).Quantity == 39, "Malformed and nonpositive stacks do not enter groups");
+            Check(SearchService.ItemKey(missingPrefab) == "" && SearchService.ItemKey(missingShared) == "" && SearchService.ItemKey(iron) == "Iron",
+                "Item identity never falls back to a localized name");
+            var snapshot = ironGroup.Chests[1].Snapshot;
+            Check(SearchService.ContainsItem(snapshot, "Iron") && !SearchService.ContainsItem(snapshot, "iron") && !SearchService.ContainsItem(snapshot, "ModdedIron"),
+                "Marker item membership uses exact prefab identity");
+            iron.m_stack = 0; first.Inventory.Items[1].m_stack = 0;
+            Check(!SearchService.ContainsItem(snapshot, "Iron") && SearchService.ContainsItem(snapshot, "Wood"), "Marker stops after selected item leaves even when chest still contains other items");
+            Check(!SearchService.ContainsItem(snapshot, "") && !SearchService.ContainsItem(null, "Iron"), "Marker membership rejects absent selection and stale snapshot");
+
+            var sorted = new List<ItemSearchResult> {
+                new ItemSearchResult { Key = "B", Name = "Bravo", Quantity = 20, ChestCount = 2, NearestDistance = 5 },
+                new ItemSearchResult { Key = "C", Name = "Charlie", Quantity = 30, ChestCount = 1, NearestDistance = 2 },
+                new ItemSearchResult { Key = "A", Name = "Alpha", Quantity = 10, ChestCount = 3, NearestDistance = 9 }
+            };
+            SearchService.Sort(sorted, ItemSort.Name, false); Check(sorted[0].Key == "A" && sorted[2].Key == "C", "Name ascending");
+            SearchService.Sort(sorted, ItemSort.Name, true); Check(sorted[0].Key == "C" && sorted[2].Key == "A", "Name descending");
+            SearchService.Sort(sorted, ItemSort.Quantity, false); Check(sorted[0].Key == "A" && sorted[2].Key == "C", "Quantity ascending");
+            SearchService.Sort(sorted, ItemSort.Quantity, true); Check(sorted[0].Key == "C" && sorted[2].Key == "A", "Quantity descending");
+            SearchService.Sort(sorted, ItemSort.Distance, false); Check(sorted[0].Key == "C" && sorted[2].Key == "A", "Distance ascending");
+            SearchService.Sort(sorted, ItemSort.Distance, true); Check(sorted[0].Key == "A" && sorted[2].Key == "C", "Distance descending");
+            SearchService.Sort(sorted, ItemSort.ChestCount, false); Check(sorted[0].Key == "C" && sorted[2].Key == "A", "Chest count ascending");
+            SearchService.Sort(sorted, ItemSort.ChestCount, true); Check(sorted[0].Key == "A" && sorted[2].Key == "C", "Chest count descending");
+            sorted = new List<ItemSearchResult> {
+                new ItemSearchResult { Key = "B", Name = "Same", Quantity = Int64.MaxValue },
+                new ItemSearchResult { Key = "A", Name = "Same", Quantity = Int64.MaxValue },
+                new ItemSearchResult { Key = "Z", Name = "Other", Quantity = 1 }
+            };
+            SearchService.Sort(sorted, ItemSort.Quantity, true);
+            Check(sorted[0].Key == "A" && sorted[1].Key == "B" && sorted[2].Key == "Z", "Quantity comparator does not overflow and ties use deterministic prefab key");
+            SearchService.Sort(sorted, ItemSort.Name, false);
+            Check(sorted[0].Key == "Z" && sorted[1].Key == "A", "Name tie order remains deterministic");
+            Check(first.Inventory.Items[2] == wood && wood.m_stack == 50, "Search and result sorting never reorder or mutate underlying inventory");
+
+            Reset(); var enormous = new Container();
+            for (int i = 0; i < 4096; i++) enormous.Inventory.Items.Add(Item("$item_iron", "Unique" + i, 1));
+            var extra = new Container(); extra.transform.position = new Vector3(1, 0, 0); extra.Inventory.Items.Add(Item("$item_iron", "Overflow", 5));
+            result = search.Search(Player.m_localPlayer, "", 30, true);
+            Check(result.Limited && result.Items.Count == 4096 && result.Quantity == 4096, "Distinct item cap bounds malformed inventory result size and signals truncation");
+            Reset();
+            for (int i = 0; i < 260; i++) { var c = new Container(); c.transform.position = new Vector3(i / 10f, 0, 0); c.Inventory.Items.Add(Item("$item_iron", "Iron", 1)); }
+            result = search.Search(Player.m_localPlayer, "", 30, true);
+            Check(result.Limited && result.Results.Count == 256 && result.Items[0].ChestCount == 256 && result.Items[0].Quantity == 256,
+                "Chest result limit applies identically to aggregate totals and marker destinations");
             Check(ForbiddenWrites.Count == 0, "Zero load, save, mutation or ownership calls");
 
             int blocks = 2, acquired = 0, released = 0;

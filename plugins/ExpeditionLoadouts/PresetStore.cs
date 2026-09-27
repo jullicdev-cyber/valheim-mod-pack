@@ -12,8 +12,10 @@ namespace ValheimModPack.ExpeditionLoadouts
     {
         [DataMember] public string Prefab;
         [DataMember] public int Quality;
+        [DataMember] public int Variant;
+        [DataMember] public int WorldLevel;
         [DataMember] public int Count;
-        public PresetItem Copy() { return new PresetItem { Prefab = Prefab, Quality = Quality, Count = Count }; }
+        public PresetItem Copy() { return new PresetItem { Prefab = Prefab, Quality = Quality, Variant = Variant, WorldLevel = WorldLevel, Count = Count }; }
     }
 
     [DataContract]
@@ -33,7 +35,7 @@ namespace ValheimModPack.ExpeditionLoadouts
     [DataContract]
     public sealed class PresetDocument
     {
-        [DataMember] public int Version = 1;
+        [DataMember] public int Version = 2;
         [DataMember] public List<LoadoutPreset> Presets = new List<LoadoutPreset>();
     }
 
@@ -131,7 +133,7 @@ namespace ValheimModPack.ExpeditionLoadouts
 
         private static void Validate(PresetDocument document)
         {
-            if (document == null || document.Version != 1 || document.Presets == null || document.Presets.Count > MaxPresets)
+            if (document == null || (document.Version != 1 && document.Version != 2) || document.Presets == null || document.Presets.Count > MaxPresets)
                 throw new InvalidDataException("Unsupported preset document.");
             var ids = new HashSet<string>(StringComparer.Ordinal);
             foreach (var preset in document.Presets)
@@ -146,7 +148,8 @@ namespace ValheimModPack.ExpeditionLoadouts
                 {
                     if (item == null || String.IsNullOrEmpty(item.Prefab) || item.Prefab.Length > 128
                         || item.Prefab.IndexOfAny(new[] {'\r','\n','\0','/','\\'}) >= 0 || item.Quality < 1 || item.Quality > 100
-                        || item.Count < 1 || item.Count > MaxCount || !items.Add(item.Prefab + "\0" + item.Quality))
+                        || item.Variant < 0 || item.Variant > 4095 || item.WorldLevel < 0 || item.WorldLevel > 1000
+                        || item.Count < 1 || item.Count > MaxCount || !items.Add(item.Prefab + "\0" + item.Quality + "\0" + item.Variant + "\0" + item.WorldLevel))
                         throw new InvalidDataException("Invalid or duplicate preset item.");
                 }
             }

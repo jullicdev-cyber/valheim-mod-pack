@@ -181,15 +181,16 @@ namespace ValheimModPack.PinRemoval
     public sealed class PinHistoryWindow
     {
         public static PinHistoryWindow Last;
-        public bool IsVisible;
+        public bool IsVisible, OwnsInputBlock;
         public IList<HistoryRow> Rows;
         public bool Deleted;
         public Action<bool> Tab;
         public Action<int> Page;
         public Action Cancel;
         public PinHistoryWindow() { Last = this; }
-        public void Show(Action cancel, Action<bool> tab, Action<int> page) { Cancel = cancel; Tab = tab; Page = page; IsVisible = true; }
+        public void Show(Action cancel, Action<bool> tab, Action<int> page) { Cancel = cancel; Tab = tab; Page = page; IsVisible = true; OwnsInputBlock = true; }
         public void Render(IList<HistoryRow> rows, bool deleted, int page, int pages, int count, bool ru) { Rows = rows; Deleted = deleted; }
-        public void Hide() { IsVisible = false; }
+        public void CleanupHidden() { if (!IsVisible && OwnsInputBlock) Hide(); }
+        public void Hide() { IsVisible = false; OwnsInputBlock = false; }
     }
 }

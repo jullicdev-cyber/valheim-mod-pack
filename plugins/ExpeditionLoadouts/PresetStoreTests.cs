@@ -53,6 +53,30 @@ internal static class PresetStoreTests
         string huge = Path.Combine(root, "000000000000000f.json");
         File.WriteAllText(huge, new string(' ', 131073));
         Check(new PresetStore(root, 15).ReadOnly, "oversized file bounded before deserialize");
+        var gear = NewPreset("Equipment"); gear.Items[0] = new PresetItem { Prefab="ShieldBanded", Quality=3, Variant=2, WorldLevel=1, Count=1 };
+        var gearStore = new PresetStore(root, 16); gearStore.Save(gear);
+        var gearRead = new PresetStore(root, 16);
+        Check(gearRead.Presets[0].Items[0].Variant==2 && gearRead.Presets[0].Items[0].WorldLevel==1,
+            "gear variant and world level survive save/reload");
+        Check(gearRead.Presets[0].Copy().Items[0].Variant==2 && gearRead.Presets[0].Copy().Items[0].WorldLevel==1,
+            "draft copy retains full item identity");
+        gear.Items.Add(new PresetItem { Prefab="ShieldBanded",Quality=3,Variant=3,WorldLevel=1,Count=1 });
+        gearStore.Save(gear);
+        Check(gearStore.Presets[0].Items.Count==2,"different variants may be separate targets");
+        invalid=gear.Copy(); invalid.Items[0].Variant=-1; rejected=false;
+        try { gearStore.Save(invalid); } catch(InvalidDataException) { rejected=true; }
+        Check(rejected,"negative variant rejected");
+        invalid=gear.Copy(); invalid.Items[0].WorldLevel=1001; rejected=false;
+        try { gearStore.Save(invalid); } catch(InvalidDataException) { rejected=true; }
+        Check(rejected,"unbounded world level rejected");
+        string legacy = Path.Combine(root,"0000000000000011.json");
+        File.WriteAllText(legacy,"{\"Version\":1,\"Presets\":[{\"Id\":\""+Guid.NewGuid().ToString("N")+"\",\"Name\":\"Legacy\",\"Items\":[{\"Prefab\":\"ArrowWood\",\"Quality\":1,\"Count\":100}]}]}");
+        var legacyStore=new PresetStore(root,17);
+        Check(!legacyStore.ReadOnly&&legacyStore.Presets[0].Items[0].Variant==0&&legacyStore.Presets[0].Items[0].WorldLevel==0,
+            "version one targets migrate to ordinary variant/world zero");
+        legacyStore.Save(legacyStore.Presets[0]);
+        Check(File.ReadAllText(legacy).Contains("\"Version\":2")&&File.Exists(legacy+".bak"),
+            "first write upgrades schema with previous version backup");
         Console.WriteLine("OK: " + count + " preset persistence checks. Test files: " + root); return 0;
     }
 }

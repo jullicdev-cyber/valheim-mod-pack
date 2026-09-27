@@ -18,6 +18,8 @@ namespace ValheimModPack.LoadoutSmoke
     [BepInDependency("valheimmodpack.chestsearch", "1.0.0")]
     [BepInDependency("valheimmodpack.confirmpinremoval", "1.2.0")]
     [BepInDependency("valheimmodpack.eaqsquickstackbridge", "1.1.0")]
+    [BepInDependency("valheimmodpack.interfaceinputfix", "1.0.0")]
+    [BepInDependency("valheimmodpack.renewableresourcetimers", "1.0.0")]
     public sealed class BackendNativeProbe : BaseUnityPlugin
     {
         private static readonly BindingFlags All = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
@@ -68,7 +70,12 @@ namespace ValheimModPack.LoadoutSmoke
                 CheckNativeMoves();
                 CheckDestinationSelection(plugin.Service);
                 CheckOptionalApis();
+                if (GUIManager.CustomGUIFront == null)
+                    typeof(GUIManager).GetMethod("TryCreateGUI", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(GUIManager.Instance, null);
+                Check(GUIManager.CustomGUIFront != null, "Native probe GUI canvas initialized");
                 report += ValheimModPack.ChestSearch.NativeChecks.Run() + "\n";
+                report += ValheimModPack.InterfaceInputFix.NativeChecks.Run() + "\n";
+                report += ValheimModPack.RenewableResourceTimers.NativeChecks.Run() + "\n";
                 string mapProbe = Path.Combine(Root, "PinHistoryNativeChecks.dll");
                 if (!File.Exists(mapProbe)) throw new FileNotFoundException("Map native probe missing", mapProbe);
                 var mapChecks = Assembly.LoadFrom(mapProbe).GetType("ValheimModPack.PinRemoval.NativeChecks", true);
@@ -95,6 +102,15 @@ namespace ValheimModPack.LoadoutSmoke
             source.GetAllItems().Add(stone);
             Check(!destination.MoveItemToThis(source, stone, 10, 2, 1), "Native unlike destination rejects move");
             Check(stone.m_stack == 20 && destination.GetItemAt(2, 1).m_stack == 40, "Native rejected move conserves both inventories");
+            ItemDrop.ItemData sword = Item("SwordBronze", 1, 1, 0);
+            sword.m_quality = 2; sword.m_variant = 0; sword.m_worldLevel = 1;
+            sword.m_durability = 7; sword.m_crafterID = 81234; sword.m_crafterName = "Native fixture";
+            source.GetAllItems().Add(sword);
+            Check(destination.MoveItemToThis(source, sword, 1, 3, 1), "Native non-stackable equipment move succeeded");
+            var movedSword = destination.GetItemAt(3, 1);
+            Check(movedSword != null && movedSword.m_quality == 2 && movedSword.m_worldLevel == 1
+                && movedSword.m_durability == 7 && movedSword.m_crafterID == 81234 && movedSword.m_crafterName == "Native fixture"
+                && !movedSword.m_equipped && !source.GetAllItems().Contains(sword), "Equipment transfer preserves quality, world level, wear and crafter without equipping");
             report += "Actual Inventory.MoveItemToThis: explicit partial/whole movement, original stack reference, removal and occupied-cell rejection verified.\n";
         }
 

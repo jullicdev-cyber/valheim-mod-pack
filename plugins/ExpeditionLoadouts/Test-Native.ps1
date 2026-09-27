@@ -8,11 +8,17 @@ New-Item -ItemType Directory -Force -Path (Join-Path $smoke 'BepInEx/plugins'),(
 Copy-Item -LiteralPath (Join-Path $root 'Game/BepInEx/core') -Destination (Join-Path $smoke 'BepInEx/core') -Recurse
 Copy-Item -LiteralPath (Join-Path $root 'Game/BepInEx/config') -Destination (Join-Path $smoke 'BepInEx/config') -Recurse
 foreach ($path in @('Game/BepInEx/plugins/Jotunn.dll','Game/BepInEx/plugins/ValheimModding-YamlDotNet/YamlDotNet.dll',
+    'Game/BepInEx/plugins/ValheimModding-YamlDotNet/YamlDotNetDetector.dll',
     'Game/BepInEx/plugins/RandyKnapp-EquipmentAndQuickSlots/EquipmentAndQuickSlots.dll',
     'Game/BepInEx/plugins/Goldenrevolver-Quick_Stack_Store_Sort_Trash_Restock/QuickStackStore.dll',
     'Game/BepInEx/plugins/Azumatt-AzuAutoStore/AzuAutoStore.dll','local-plugins/EAQSQuickStackBridge.dll',
-    'local-plugins/ExpeditionLoadouts.dll','local-plugins/ChestSearch.dll','local-plugins/ConfirmMapPinRemoval.dll')) {
+    'local-plugins/ExpeditionLoadouts.dll','local-plugins/ChestSearch.dll','local-plugins/ConfirmMapPinRemoval.dll',
+    'Game/BepInEx/plugins/Advize-PlantEverything/Advize_PlantEverything.dll',
+    'local-plugins/InterfaceInputFix.dll','local-plugins/RenewableResourceTimers.dll')) {
     Copy-Item -LiteralPath (Join-Path $root $path) -Destination (Join-Path $smoke ('BepInEx/plugins/' + (Split-Path $path -Leaf)))
+}
+foreach ($folder in @('XPortal','Vapok-AdventureBackpacks')) {
+    Copy-Item -LiteralPath (Join-Path $root ('Game/BepInEx/plugins/'+$folder)) -Destination (Join-Path $smoke ('BepInEx/plugins/'+$folder)) -Recurse
 }
 @'
 [Logging.Console]
@@ -27,11 +33,14 @@ $mapProbe = Join-Path $smoke 'PinHistoryNativeChecks.dll'
 & (Join-Path $root 'plugins/EAQSQuickStackBridge/Build-NativeChecks.ps1') -GameDirectory $GameDirectory -PluginAssembly (Join-Path $root 'local-plugins/EAQSQuickStackBridge.dll') -OutputDirectory $smoke
 $managed = Join-Path $GameDirectory 'valheim_Data/Managed'
 $refs = @((Join-Path $root 'Game/BepInEx/core/BepInEx.dll'),(Join-Path $root 'Game/BepInEx/plugins/Jotunn.dll'),(Join-Path $root 'local-plugins/ExpeditionLoadouts.dll'),(Join-Path $root 'local-plugins/ChestSearch.dll'))
-$refs += @('assembly_valheim.dll','assembly_guiutils.dll','assembly_utils.dll','SoftReferenceableAssets.dll','UnityEngine.dll','UnityEngine.CoreModule.dll','UnityEngine.UI.dll','UnityEngine.UIModule.dll','netstandard.dll') | ForEach-Object { Join-Path $managed $_ }
+$refs += @('Game/BepInEx/core/0Harmony.dll','local-plugins/InterfaceInputFix.dll','local-plugins/RenewableResourceTimers.dll') | ForEach-Object { Join-Path $root $_ }
+$refs += @('assembly_valheim.dll','assembly_guiutils.dll','assembly_utils.dll','SoftReferenceableAssets.dll','UnityEngine.dll','UnityEngine.CoreModule.dll','UnityEngine.UI.dll','UnityEngine.UIModule.dll','UnityEngine.TextRenderingModule.dll','netstandard.dll') | ForEach-Object { Join-Path $managed $_ }
 $argsList = @('/nologo','/target:library','/codepage:65001',('/out:'+(Join-Path $smoke 'BepInEx/plugins/BackendNativeProbe.dll')),'/reference:System.Runtime.Serialization.dll')
 $argsList += $refs | ForEach-Object { '/reference:'+$_ }
 $argsList += Join-Path $PSScriptRoot 'BackendNativeProbe.cs'
 $argsList += Join-Path $root 'plugins/ChestSearch/NativeChecks.cs'
+$argsList += Join-Path $root 'plugins/InterfaceInputFix/NativeChecks.cs'
+$argsList += Join-Path $root 'plugins/RenewableResourceTimers/NativeChecks.cs'
 & (Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe') @argsList
 if ($LASTEXITCODE -ne 0) { throw 'Native probe compilation failed.' }
 $previousRoot = $env:VMP_QOL_SMOKE_ROOT
@@ -51,7 +60,7 @@ try {
     $result = [IO.File]::ReadAllText($resultFile)
     Write-Output $result
     if (-not $result.StartsWith('PASS') -or $result.Contains('FAIL')) { throw 'Native verification failed.' }
-    foreach ($name in @('ExpeditionLoadouts','ChestSearch','ConfirmMapPinRemoval','EAQSQuickStackBridge')) {
+    foreach ($name in @('ExpeditionLoadouts','ChestSearch','ConfirmMapPinRemoval','EAQSQuickStackBridge','InterfaceInputFix','RenewableResourceTimers')) {
         Write-Output ($name + ' SHA256: ' + (Get-FileHash -LiteralPath (Join-Path $smoke "BepInEx/plugins/$name.dll")).Hash)
     }
 } finally {

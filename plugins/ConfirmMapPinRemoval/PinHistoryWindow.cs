@@ -10,13 +10,17 @@ namespace ValheimModPack.PinRemoval
     {
         private GameObject overlay, content;
         private bool ownsInputBlock;
+        private int generation;
         private Button previous, next, deleted, current;
         private Text footer;
         public bool IsVisible { get { return overlay != null && overlay.activeInHierarchy; } }
         private static readonly Vector2 Center = new Vector2(.5f, .5f);
         public void Show(Action close, Action<bool> tab, Action<int> changePage)
         {
-            if (overlay != null) throw new InvalidOperationException("Map history already open");
+            if (IsVisible) throw new InvalidOperationException("Map history already open");
+            // Unity's destroyed-object comparison can hide a still-owned input
+            // request. Release that request before taking one for a new panel.
+            Hide();
             var front = GUIManager.CustomGUIFront;
             if (front == null) throw new InvalidOperationException("Jotunn canvas is not ready");
             bool ru = Localization.instance.GetSelectedLanguage() == "Russian";
@@ -78,14 +82,20 @@ namespace ValheimModPack.PinRemoval
             text.supportRichText = false; text.raycastTarget = false; text.horizontalOverflow = HorizontalWrapMode.Wrap;
             text.verticalOverflow = VerticalWrapMode.Truncate; text.alignment = TextAnchor.MiddleCenter; return text;
         }
-        private static Button Button(Transform parent, string value, float x, float y, float width, float height, Action click)
+        private Button Button(Transform parent, string value, float x, float y, float width, float height, Action click)
         {
             var button = GUIManager.Instance.CreateButton(value, parent, Center, Center, new Vector2(x, y), width, height).GetComponent<Button>();
             var sound = button.GetComponent<ButtonSfx>(); if (sound != null) sound.m_selectSfxPrefab = null;
-            button.onClick.AddListener(() => { if (click != null) click(); }); return button;
+            int created = generation;
+            button.onClick.AddListener(() => { if (generation == created && IsVisible && click != null) click(); }); return button;
+        }
+        public void CleanupHidden()
+        {
+            if (!IsVisible && (ownsInputBlock || !ReferenceEquals(overlay, null))) Hide();
         }
         public void Hide()
         {
+            ++generation;
             try
             {
                 if (overlay != null)
@@ -93,10 +103,14 @@ namespace ValheimModPack.PinRemoval
                     if (EventSystem.current != null && EventSystem.current.currentSelectedGameObject != null
                         && EventSystem.current.currentSelectedGameObject.transform.IsChildOf(overlay.transform))
                         EventSystem.current.SetSelectedGameObject(null);
-                    overlay.SetActive(false); UnityEngine.Object.Destroy(overlay); overlay = null; content = null;
+                    overlay.SetActive(false); UnityEngine.Object.Destroy(overlay);
                 }
             }
-            finally { if (ownsInputBlock) { ownsInputBlock = false; GUIManager.BlockInput(false); } }
+            finally
+            {
+                overlay = content = null; previous = next = deleted = current = null; footer = null;
+                if (ownsInputBlock) { ownsInputBlock = false; GUIManager.BlockInput(false); }
+            }
         }
     }
 }

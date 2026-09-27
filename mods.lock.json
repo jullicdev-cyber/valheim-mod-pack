@@ -1,5 +1,5 @@
 {
-  "packVersion": "1.8.0",
+  "packVersion": "1.9.0",
   "created": "2026-09-25",
   "targetGameVersion": "1.0.16",
   "packages": [
@@ -237,10 +237,10 @@
     },
     {
       "id": "ValheimModPack-ConfirmMapPinRemoval",
-      "version": "1.3.0",
+      "version": "1.3.1",
       "source": "local-plugins/ConfirmMapPinRemoval.dll",
       "destination": "BepInEx/plugins/ValheimModPack-ConfirmMapPinRemoval/ConfirmMapPinRemoval.dll",
-      "sha256": "f201cf1c4e809b3a72c8aaec8c457230954b891576fe725d196d8b7edb086103",
+      "sha256": "9d67dfc6a7e5bbbccdcb68456cc02cd4d47c5a2b40ec3aa3d38d9979764af4de",
       "dependencies": [
         "denikson-BepInExPack_Valheim-5.4.2351",
         "ValheimModding-Jotunn-2.30.2"
@@ -259,10 +259,10 @@
     },
     {
       "id": "ValheimModPack-ExpeditionLoadouts",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "source": "local-plugins/ExpeditionLoadouts.dll",
       "destination": "BepInEx/plugins/ValheimModPack-ExpeditionLoadouts/ExpeditionLoadouts.dll",
-      "sha256": "500f80edf6cb459dc898ccd86809437adc0cb617afd9351a25693287da2aec21",
+      "sha256": "88f824e6f9bdb36b658a6c6bfdf7a0fdd9a1cc9d87df3dde0f00c86b451b27df",
       "dependencies": [
         "denikson-BepInExPack_Valheim-5.4.2351",
         "ValheimModding-Jotunn-2.30.2"
@@ -270,14 +270,36 @@
     },
     {
       "id": "ValheimModPack-ChestSearch",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "source": "local-plugins/ChestSearch.dll",
       "destination": "BepInEx/plugins/ValheimModPack-ChestSearch/ChestSearch.dll",
-      "sha256": "8dbd83c0465823d37098618e17e1363a827da3f1de0e6503f9498ebfae571dd6",
+      "sha256": "3643d2012d03da95cc0e4a1307fb6a7233d16f1cdd0999c2ea2fc7f447763527",
       "dependencies": [
         "denikson-BepInExPack_Valheim-5.4.2351",
         "ValheimModding-Jotunn-2.30.2"
       ]
+    },
+    {
+      "id": "ValheimModPack-InterfaceInputFix",
+      "source": "local-plugins/InterfaceInputFix.dll",
+      "destination": "BepInEx/plugins/ValheimModPack-InterfaceInputFix/InterfaceInputFix.dll",
+      "dependencies": [
+        "denikson-BepInExPack_Valheim-5.4.2351",
+        "ValheimModding-Jotunn-2.30.2"
+      ],
+      "version": "1.0.0",
+      "sha256": "52e364d5ab35edbc9caa31195f152987661d56f8edf4ad49be5a37aa985e6790"
+    },
+    {
+      "id": "ValheimModPack-RenewableResourceTimers",
+      "source": "local-plugins/RenewableResourceTimers.dll",
+      "destination": "BepInEx/plugins/ValheimModPack-RenewableResourceTimers/RenewableResourceTimers.dll",
+      "dependencies": [
+        "denikson-BepInExPack_Valheim-5.4.2351",
+        "ValheimModding-Jotunn-2.30.2"
+      ],
+      "version": "1.0.0",
+      "sha256": "ce29acd594a726b78c029ed459eb513d0b1733b7041fe08cd956eae7c84d0f55"
     }
   ]
 }

@@ -15,6 +15,8 @@ namespace ValheimModPack.PinRemoval
         { return (int)typeof(GUIManager).GetField("InputBlockRequests", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null); }
         private static GameObject Overlay(object window)
         { return (GameObject)window.GetType().GetField("overlay", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(window); }
+        private static bool OwnsHistoryInput(PinHistoryWindow window)
+        { return (bool)typeof(PinHistoryWindow).GetField("ownsInputBlock", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(window); }
         public static string Run()
         {
             checks = 0;
@@ -58,6 +60,33 @@ namespace ValheimModPack.PinRemoval
                 Check(clicks == 1, "One native recovery button dispatches one action");
                 window.Hide(); window.Hide();
                 Check(!window.IsVisible && !overlay.activeSelf && Blocks() == afterForeign, "Double hide preserves unrelated input request");
+                window.Show(window.Hide, value => { }, value => { });
+                Overlay(window).SetActive(false); window.CleanupHidden();
+                Check(!OwnsHistoryInput(window) && Overlay(window) == null && Blocks() == afterForeign,
+                    "Disabled history panel releases only its own request during cleanup");
+                window.Show(window.Hide, value => { }, value => { });
+                UnityEngine.Object.DestroyImmediate(Overlay(window));
+                Check(!window.IsVisible && OwnsHistoryInput(window), "Destroyed Unity panel leaves a detectable owned request before cleanup");
+                window.CleanupHidden();
+                Check(!OwnsHistoryInput(window) && ReferenceEquals(Overlay(window), null) && Blocks() == afterForeign,
+                    "Destroyed panel cleanup clears managed references and preserves foreign request");
+                window.Show(window.Hide, value => { }, value => { });
+                UnityEngine.Object.DestroyImmediate(Overlay(window));
+                window.Show(window.Hide, value => { }, value => { });
+                Check(window.IsVisible && OwnsHistoryInput(window) && Blocks() == afterForeign + ownDelta,
+                    "Reopen after destroyed panel replaces rather than adds an owned request");
+                window.Hide();
+                int staleClicks = 0;
+                window.Show(() => staleClicks++, value => { }, value => { });
+                var oldButtons = Overlay(window).GetComponentsInChildren<Button>();
+                var oldClose = oldButtons[oldButtons.Length - 1];
+                Overlay(window).SetActive(false);
+                window.Show(window.Hide, value => { }, value => { });
+                oldClose.onClick.Invoke();
+                Check(staleClicks == 0 && window.IsVisible && Blocks() == afterForeign + ownDelta,
+                    "Old disabled-panel callback cannot affect its replacement");
+                window.Hide(); window.CleanupHidden();
+                Check(!OwnsHistoryInput(window) && Blocks() == afterForeign, "Replacement cleanup is idempotent and retains foreign lease");
                 confirmation.Show("Длинная кириллическая метка", () => { }, () => { });
                 Check(confirmation.IsVisible, "Existing confirmation window still opens with actual Jotunn assets");
                 buttons = Overlay(confirmation).GetComponentsInChildren<Button>();

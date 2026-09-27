@@ -161,19 +161,43 @@ namespace ValheimModPack.ExpeditionLoadouts
 
         public static List<SupplyTarget> SnapshotInventory(Player owner)
         {
-            var result = new List<SupplyTarget>();
+            return CaptureInventory(owner).Items;
+        }
+
+        // Reading equipment, hotbar and EAQS slots is safe. Transfer destinations
+        // remain restricted to unprotected ordinary cells by FindDestination.
+        public static InventoryCapture CaptureInventory(Player owner)
+        {
+            var result = new InventoryCapture();
             if (!ValidPlayer(owner)) return result;
             var protection = new InventoryGuard(owner);
             Inventory inventory = owner.GetInventory();
-            int rows = protection.VisibleRows(inventory);
+            protection.VisibleRows(inventory); // Validate the installed EAQS layout before reading its extra row.
             foreach (ItemDrop.ItemData item in inventory.GetAllItems())
             {
-                if (!SupplyItem(item) || item.m_equipped || item.m_gridPos.x < 0 || item.m_gridPos.x >= inventory.GetWidth()
-                    || item.m_gridPos.y < 0 || item.m_gridPos.y >= rows) continue;
-                SupplyTarget found = result.Find(delegate(SupplyTarget t) { return Matches(item, t); });
-                if (found != null) found.Count = (int)Math.Min(TransferPolicy.MaximumTarget, (long)found.Count + item.m_stack);
-                else if (result.Count < TransferPolicy.MaximumTargets)
-                    result.Add(new SupplyTarget { Prefab = item.m_dropPrefab.name, Quality = item.m_quality, Count = Math.Min(TransferPolicy.MaximumTarget, item.m_stack) });
+                if (item == null || item.m_dropPrefab == null || item.m_shared == null || item.m_stack <= 0
+                    || item.m_gridPos.x < 0 || item.m_gridPos.x >= inventory.GetWidth()
+                    || item.m_gridPos.y < 0 || item.m_gridPos.y >= inventory.GetHeight())
+                { ++result.SkippedInvalid; continue; }
+                if (item.m_customData != null && item.m_customData.Count > 0) { ++result.SkippedCustomData; continue; }
+                if (!SupplyDefinition(item)) { ++result.SkippedUnsupported; continue; }
+                var target = new SupplyTarget { Prefab = item.m_dropPrefab.name, Quality = item.m_quality,
+                    Variant = item.m_variant, WorldLevel = item.m_worldLevel, Count = Math.Min(TransferPolicy.MaximumTarget, item.m_stack) };
+                if (!TransferPolicy.ValidTarget(target) || target.Quality > Math.Max(1, item.m_shared.m_maxQuality))
+                { ++result.SkippedInvalid; continue; }
+                SupplyTarget found = result.Items.Find(delegate(SupplyTarget existing) { return SameTarget(existing, target); });
+                if (found != null)
+                {
+                    if ((long)found.Count + item.m_stack > TransferPolicy.MaximumTarget) ++result.SkippedLimit;
+                    found.Count = (int)Math.Min(TransferPolicy.MaximumTarget, (long)found.Count + item.m_stack);
+                }
+                else if (result.Items.Count < TransferPolicy.MaximumTargets)
+                {
+                    result.Items.Add(target);
+                    if (item.m_stack > TransferPolicy.MaximumTarget) ++result.SkippedLimit;
+                }
+                else { ++result.SkippedLimit; continue; }
+                ++result.IncludedSlots;
             }
             return result;
         }
@@ -305,7 +329,8 @@ namespace ValheimModPack.ExpeditionLoadouts
                         {
                             if (existing == null || existing.m_equipped || guard.FavoriteItem(existing) || !SupplyItem(existing)
                                 || existing.m_dropPrefab.name != source.m_dropPrefab.name || existing.m_quality != source.m_quality
-                                || existing.m_variant != source.m_variant || !existing.IsSameType(source)) continue;
+                                || existing.m_variant != source.m_variant || existing.m_worldLevel != source.m_worldLevel
+                                || !existing.IsSameType(source)) continue;
                         }
                         else if (existing != null) continue;
                         int take = TransferPolicy.MoveAmount(deficit, source.m_stack, existing == null ? 0 : existing.m_stack, source.m_shared.m_maxStackSize);
@@ -360,9 +385,10 @@ namespace ValheimModPack.ExpeditionLoadouts
                 GameObject prefab = ObjectDB.instance != null ? ObjectDB.instance.GetItemPrefab(target.Prefab) : null;
                 ItemDrop drop = prefab != null ? prefab.GetComponent<ItemDrop>() : null;
                 if (drop == null || !SupplyDefinition(drop.m_itemData) || target.Quality > Math.Max(1, drop.m_itemData.m_shared.m_maxQuality)) continue;
-                SupplyTarget same = result.Find(delegate(SupplyTarget t) { return t.Prefab == target.Prefab && t.Quality == target.Quality; });
+                SupplyTarget same = result.Find(delegate(SupplyTarget t) { return SameTarget(t, target); });
                 if (same != null) same.Count = Math.Max(same.Count, target.Count);
-                else result.Add(new SupplyTarget { Prefab = target.Prefab, Quality = target.Quality, Count = target.Count });
+                else result.Add(new SupplyTarget { Prefab = target.Prefab, Quality = target.Quality,
+                    Variant = target.Variant, WorldLevel = target.WorldLevel, Count = target.Count });
             }
             return result;
         }
@@ -376,16 +402,52 @@ namespace ValheimModPack.ExpeditionLoadouts
 
         private static bool SupplyDefinition(ItemDrop.ItemData item)
         {
-            if (item == null || item.m_shared == null || item.m_shared.m_maxStackSize <= 1) return false;
+            if (item == null || item.m_shared == null || item.m_shared.m_maxStackSize < 1) return false;
             ItemDrop.ItemData.ItemType type = item.m_shared.m_itemType;
-            return type == ItemDrop.ItemData.ItemType.Material || type == ItemDrop.ItemData.ItemType.Consumable
-                || type == ItemDrop.ItemData.ItemType.Ammo || type == ItemDrop.ItemData.ItemType.AmmoNonEquipable
-                || type == ItemDrop.ItemData.ItemType.Fish;
+            switch (type)
+            {
+                case ItemDrop.ItemData.ItemType.Material:
+                case ItemDrop.ItemData.ItemType.Consumable:
+                case ItemDrop.ItemData.ItemType.Ammo:
+                case ItemDrop.ItemData.ItemType.AmmoNonEquipable:
+                case ItemDrop.ItemData.ItemType.Fish:
+                case ItemDrop.ItemData.ItemType.OneHandedWeapon:
+                case ItemDrop.ItemData.ItemType.TwoHandedWeapon:
+                case ItemDrop.ItemData.ItemType.TwoHandedWeaponLeft:
+                case ItemDrop.ItemData.ItemType.Bow:
+                case ItemDrop.ItemData.ItemType.Shield:
+                case ItemDrop.ItemData.ItemType.Helmet:
+                case ItemDrop.ItemData.ItemType.Chest:
+                case ItemDrop.ItemData.ItemType.Legs:
+                case ItemDrop.ItemData.ItemType.Hands:
+                case ItemDrop.ItemData.ItemType.Shoulder:
+                case ItemDrop.ItemData.ItemType.Tool:
+                case ItemDrop.ItemData.ItemType.Torch:
+                case ItemDrop.ItemData.ItemType.Utility:
+                case ItemDrop.ItemData.ItemType.Trinket:
+                case ItemDrop.ItemData.ItemType.Attach_Atgeir:
+                case ItemDrop.ItemData.ItemType.Trophy:
+                case ItemDrop.ItemData.ItemType.Misc:
+                    return true;
+                default:
+                    return false;
+            }
         }
 
         private static bool Matches(ItemDrop.ItemData item, SupplyTarget target)
         {
-            return item != null && item.m_dropPrefab != null && item.m_dropPrefab.name == target.Prefab && item.m_quality == target.Quality;
+            // Do not count a magic/custom instance as its ordinary counterpart.
+            // Equipped items count as held, but are never transfer sources/destinations.
+            return item != null && item.m_dropPrefab != null && SupplyDefinition(item)
+                && (item.m_customData == null || item.m_customData.Count == 0)
+                && item.m_dropPrefab.name == target.Prefab && item.m_quality == target.Quality
+                && item.m_variant == target.Variant && item.m_worldLevel == target.WorldLevel;
+        }
+
+        private static bool SameTarget(SupplyTarget first, SupplyTarget second)
+        {
+            return first.Prefab == second.Prefab && first.Quality == second.Quality
+                && first.Variant == second.Variant && first.WorldLevel == second.WorldLevel;
         }
 
         private static bool ValidPlayer(Player owner)

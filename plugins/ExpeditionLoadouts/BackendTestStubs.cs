@@ -54,11 +54,16 @@ public class ItemDrop : UnityEngine.Component
     public ItemData m_itemData;
     public class ItemData
     {
-        public enum ItemType { Material, Consumable, Ammo, AmmoNonEquipable, Fish, Tool, OneHandedWeapon }
-        public class SharedData { public string m_name; public int m_maxStackSize=50, m_maxQuality=1; public ItemType m_itemType; }
+        public enum ItemType { None, Material, Consumable, Ammo, AmmoNonEquipable, Fish, Tool, OneHandedWeapon,
+            TwoHandedWeapon, TwoHandedWeaponLeft, Bow, Shield, Helmet, Chest, Legs, Hands, Shoulder, Torch,
+            Utility, Trinket, Attach_Atgeir, Trophy, Misc, Customization }
+        public class SharedData { public string m_name; public int m_maxStackSize=50, m_maxQuality=1; public ItemType m_itemType=ItemType.Material; }
         public SharedData m_shared = new SharedData();
         public UnityEngine.GameObject m_dropPrefab;
-        public int m_stack=1,m_quality=1,m_variant;
+        public int m_stack=1,m_quality=1,m_variant,m_worldLevel;
+        public float m_durability=100;
+        public long m_crafterID;
+        public string m_crafterName;
         public bool m_equipped;
         public Dictionary<string,string> m_customData = new Dictionary<string,string>();
         public Vector2i m_gridPos;

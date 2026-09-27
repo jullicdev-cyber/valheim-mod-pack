@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using BepInEx;
 using BepInEx.Configuration;
 using Jotunn.Managers;
@@ -15,15 +16,18 @@ namespace ValheimModPack.ChestSearch
     public sealed class Plugin : BaseUnityPlugin
     {
         public const string Id = "valheimmodpack.chestsearch";
-        public const string Version = "1.0.0";
+        public const string Version = "1.1.0";
         public NativeChestReader Reader { get; private set; }
         public SearchService Search { get; private set; }
         public string LastQuery = "";
+        public bool ShowWithoutInput;
+        public ItemSort SortOrder = ItemSort.Name;
+        public bool SortDescending;
         private ConfigEntry<KeyboardShortcut> shortcut;
         private ConfigEntry<float> radius, markerSeconds;
         private NameIndex names;
         private SearchWindow window;
-        private ChestMarker marker;
+        private readonly List<ChestMarker> markers = new List<ChestMarker>();
         private Player pendingPlayer;
         private ZNet pendingNetwork;
         private bool waitingForInventory;
@@ -51,10 +55,9 @@ namespace ValheimModPack.ChestSearch
                 names = new NameIndex(message => Logger.LogWarning(message));
                 Search = new SearchService(Reader, names);
                 window = new SearchWindow(this);
-                marker = new ChestMarker(this);
                 Localization.OnLanguageChange += names.Clear;
                 ready = true;
-                Logger.LogInfo("ChestSearch 1.0.0 ready. Ctrl+F in inventory; read-only access, no ownership requests or inventory writes.");
+                Logger.LogInfo("ChestSearch " + Version + " ready. Ctrl+F in inventory; item icons, sorting and explicit multi-chest highlighting.");
             }
             catch (Exception error) { Logger.LogError("ChestSearch initialization failed: " + error); Shutdown(); }
         }
@@ -63,7 +66,7 @@ namespace ValheimModPack.ChestSearch
             if (!ready) return;
             try
             {
-                window.Tick(); marker.Tick();
+                window.Tick(); foreach (var marker in markers) marker.Tick();
                 if (window.IsVisible || pendingPlayer != null || !InventoryGui.IsVisible() || !CanOpen()) return;
                 bool pressed = shortcut.Value.IsDown();
                 if (shortcut.Value.Equals(new KeyboardShortcut(KeyCode.F, KeyCode.LeftControl))
@@ -111,11 +114,15 @@ namespace ValheimModPack.ChestSearch
             {
                 GameObject selected = EventSystem.current.currentSelectedGameObject;
                 var field = selected.GetComponentInParent<InputField>();
-                if (field != null && field.isFocused) return false;
+                if (field != null && field.isActiveAndEnabled && field.gameObject.activeInHierarchy && field.isFocused) return false;
                 // Native Valheim text fields use TMP; avoid a direct optional TMP dependency.
                 foreach (var component in selected.GetComponentsInParent<Component>())
                 {
-                    if (component == null || component.GetType().Name != "TMP_InputField") continue;
+                    if (component == null || !component.gameObject.activeInHierarchy) continue;
+                    Type inputType = component.GetType();
+                    while (inputType != null && inputType.Name != "TMP_InputField") inputType = inputType.BaseType;
+                    if (inputType == null) continue;
+                    var behaviour = component as Behaviour; if (behaviour != null && !behaviour.isActiveAndEnabled) continue;
                     var focused = component.GetType().GetProperty("isFocused");
                     if (focused != null && (bool)focused.GetValue(component, null)) return false;
                 }
@@ -124,10 +131,34 @@ namespace ValheimModPack.ChestSearch
         }
         public bool Locate(SearchResult result)
         {
+            ClearMarkers();
+            var marker = new ChestMarker(this);
             bool found = marker.Show(result);
             if (!found) return false;
+            markers.Add(marker);
             if (window != null) window.Hide();
             return true;
+        }
+        public int LocateAll(ItemSearchResult item)
+        {
+            if (item == null || String.IsNullOrEmpty(item.Key)) return 0;
+            ClearMarkers();
+            // The backend caps searches at 256 chests. Only an explicit click
+            // creates markers; typing, sorting and selecting rows never do.
+            foreach (var chest in item.Chests)
+            {
+                var marker = new ChestMarker(this);
+                if (marker.Show(chest, item.Key)) markers.Add(marker);
+                else marker.Clear();
+            }
+            int count = markers.Count;
+            if (count > 0 && window != null) window.Hide();
+            return count;
+        }
+        public void ClearMarkers()
+        {
+            foreach (var marker in markers) marker.Clear();
+            markers.Clear();
         }
         internal void Report(Exception error)
         {
@@ -139,7 +170,7 @@ namespace ValheimModPack.ChestSearch
         {
             ClearPending();
             if (window != null) window.Hide();
-            if (marker != null) marker.Clear();
+            ClearMarkers();
         }
         private void Shutdown()
         {

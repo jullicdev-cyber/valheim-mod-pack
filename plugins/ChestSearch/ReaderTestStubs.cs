@@ -21,6 +21,7 @@ namespace UnityEngine
     }
     public class GameObject : Component { }
     public class TextAsset : Object { public string text; }
+    public class Sprite : Object { }
     public class Transform { public Vector3 position; }
     public struct Vector3
     {
@@ -53,10 +54,12 @@ public class ItemDrop : UnityEngine.Component
 {
     public class ItemData
     {
-        public class SharedData { public string m_name; }
+        public class SharedData { public string m_name; public UnityEngine.Sprite[] m_icons = new UnityEngine.Sprite[0]; }
         public SharedData m_shared = new SharedData();
         public int m_stack;
         public UnityEngine.GameObject m_dropPrefab;
+        public int m_variant;
+        public UnityEngine.Sprite GetIcon() { return m_shared.m_icons[m_variant]; }
     }
 }
 public class Inventory

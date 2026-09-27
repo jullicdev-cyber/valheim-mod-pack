@@ -31,7 +31,8 @@ namespace ValheimModPack.ExpeditionLoadouts
         {
             return target != null && !String.IsNullOrEmpty(target.Prefab) && target.Prefab.Length <= 128
                 && target.Prefab.IndexOfAny(new[] { '\r', '\n', '\0', '/', '\\' }) < 0
-                && target.Quality > 0 && target.Quality <= 100 && target.Count > 0 && target.Count <= MaximumTarget;
+                && target.Quality > 0 && target.Quality <= 100 && target.Variant >= 0 && target.Variant <= 4095
+                && target.WorldLevel >= 0 && target.WorldLevel <= 1000 && target.Count > 0 && target.Count <= MaximumTarget;
         }
 
         internal static bool StandardChest(string prefab)

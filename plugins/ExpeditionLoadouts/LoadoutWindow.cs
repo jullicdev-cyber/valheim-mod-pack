@@ -43,7 +43,7 @@ namespace ValheimModPack.ExpeditionLoadouts
                 rect.offsetMin = rect.offsetMax = Vector2.zero;
                 overlay.GetComponent<Image>().color = new Color(0, 0, 0, 0.6f);
                 Vector2 center = new Vector2(0.5f, 0.5f);
-                panel = GUIManager.Instance.CreateWoodpanel(overlay.transform, center, center, Vector2.zero, 880, 650, false);
+                panel = GUIManager.Instance.CreateWoodpanel(overlay.transform, center, center, Vector2.zero, 880, 720, false);
                 Label(T("Походные комплекты", "Expedition loadouts"), 0, 278, 740, 45, 30, true);
                 ButtonAt("X", 391, 282, 40, 36, Hide);
                 Label(T("Наборы", "Presets"), -290, 222, 244, 30, 23, true);
@@ -78,7 +78,9 @@ namespace ValheimModPack.ExpeditionLoadouts
                 save = ButtonAt(T("Сохранить", "Save"), 265, -182, 170, 40, Persist);
                 refill = ButtonAt(T("Пополнить из сундуков", "Restock from chests"), 83, -233, 419, 42, Restock);
                 ButtonAt(T("Стоп", "Stop"), 338, -233, 70, 42, () => plugin.Service.Cancel());
-                status = Label("", 0, -286, 795, 36, 17, false);
+                Label(T("Снимок обычных предметов: инвентарь, экипировка и быстрые слоты.\nПополняет основной инвентарь; не переодевает персонажа.",
+                    "Captures ordinary items from inventory, equipment and quick slots.\nRestocks the main inventory; does not change worn equipment."), 0, -279, 795, 44, 16, false);
+                status = Label("", 0, -330, 795, 42, 17, false);
                 if (plugin.Store.Presets.Count > 0) SetDraft(plugin.Store.Presets[0]);
                 Refresh(); inputOwned = true; GUIManager.BlockInput(true); overlay.transform.SetAsLastSibling();
                 if (EventSystem.current != null) EventSystem.current.SetSelectedGameObject(create.gameObject);
@@ -140,12 +142,15 @@ namespace ValheimModPack.ExpeditionLoadouts
         private void Create()
         {
             if (draft != null) Persist();
-            var captured = ChestService.SnapshotInventory(owner);
-            if (captured.Count == 0) { notice = T("Положите еду, боеприпасы или материалы в обычные ячейки.", "Put food, ammunition or materials in ordinary inventory slots."); return; }
+            var capture = ChestService.CaptureInventory(owner);
+            var captured = capture.Items;
+            if (captured.Count == 0) { notice = CaptureNotice(capture); return; }
             var preset = new LoadoutPreset { Id = Guid.NewGuid().ToString("N"), Name = T("Набор ", "Preset ") + (plugin.Store.Presets.Count + 1) };
             foreach (var target in captured) if (preset.Items.Count < PresetStore.MaxItems)
-                preset.Items.Add(new PresetItem { Prefab = target.Prefab, Quality = target.Quality, Count = Math.Min(PresetStore.MaxCount, target.Count) });
+                preset.Items.Add(new PresetItem { Prefab = target.Prefab, Quality = target.Quality, Variant = target.Variant,
+                    WorldLevel = target.WorldLevel, Count = Math.Min(PresetStore.MaxCount, target.Count) });
             plugin.Store.Save(preset); SetDraft(preset); presetPage = (plugin.Store.Presets.Count - 1) / PageSize;
+            notice = CaptureNotice(capture);
         }
         private void Persist()
         {
@@ -171,13 +176,17 @@ namespace ValheimModPack.ExpeditionLoadouts
         private void Merge()
         {
             if (draft == null) return;
-            foreach (var target in ChestService.SnapshotInventory(owner))
+            var capture = ChestService.CaptureInventory(owner);
+            foreach (var target in capture.Items)
             {
-                if (draft.Items.Count >= PresetStore.MaxItems) break;
-                if (draft.Items.Exists(x => x.Prefab == target.Prefab && x.Quality == target.Quality)) continue;
-                draft.Items.Add(new PresetItem { Prefab = target.Prefab, Quality = target.Quality, Count = Math.Min(PresetStore.MaxCount, target.Count) });
+                if (draft.Items.Exists(x => x.Prefab == target.Prefab && x.Quality == target.Quality
+                    && x.Variant == target.Variant && x.WorldLevel == target.WorldLevel)) continue;
+                if (draft.Items.Count >= PresetStore.MaxItems) { ++capture.SkippedLimit; continue; }
+                draft.Items.Add(new PresetItem { Prefab = target.Prefab, Quality = target.Quality,
+                    Variant = target.Variant, WorldLevel = target.WorldLevel, Count = Math.Min(PresetStore.MaxCount, target.Count) });
             }
             Persist();
+            notice = CaptureNotice(capture);
         }
         private void Delete()
         {
@@ -190,7 +199,8 @@ namespace ValheimModPack.ExpeditionLoadouts
         {
             if (draft == null || draft.Items.Count == 0 || plugin.Service.IsBusy) return;
             Persist(); var targets = new List<SupplyTarget>();
-            foreach (var item in draft.Items) targets.Add(new SupplyTarget { Prefab = item.Prefab, Quality = item.Quality, Count = item.Count });
+            foreach (var item in draft.Items) targets.Add(new SupplyTarget { Prefab = item.Prefab, Quality = item.Quality,
+                Variant = item.Variant, WorldLevel = item.WorldLevel, Count = item.Count });
             plugin.Service.Begin(owner, targets, plugin.Radius); notice = "";
         }
         private void Refresh()
@@ -208,7 +218,8 @@ namespace ValheimModPack.ExpeditionLoadouts
                 if (has)
                 {
                     var item = draft.Items[itemIndex];
-                    int owned = ChestService.CountOwned(owner, new SupplyTarget { Prefab = item.Prefab, Quality = item.Quality, Count = item.Count });
+                    int owned = ChestService.CountOwned(owner, new SupplyTarget { Prefab = item.Prefab, Quality = item.Quality,
+                        Variant = item.Variant, WorldLevel = item.WorldLevel, Count = item.Count });
                     items[i].text = ItemName(item) + " — " + owned + " / " + item.Count;
                 }
                 else items[i].text = "";
@@ -224,7 +235,7 @@ namespace ValheimModPack.ExpeditionLoadouts
                 : busy || notice.Length == 0 ? plugin.Service.Status : notice;
             if (String.IsNullOrEmpty(status.text)) status.text = T("Сундуки в радиусе ", "Chests within ") + plugin.Radius.ToString("0", CultureInfo.InvariantCulture) + T(" м. Закрытие окна останавливает пополнение.", " m. Closing this window stops restocking.");
             var rect = overlay.GetComponent<RectTransform>();
-            float scale = Mathf.Min(1, Mathf.Min(rect.rect.width / 900, rect.rect.height / 670));
+            float scale = Mathf.Min(1, Mathf.Min(rect.rect.width / 900, rect.rect.height / 740));
             if (scale > 0.01f) panel.transform.localScale = Vector3.one * scale;
         }
         private static string ItemName(PresetItem item)
@@ -232,7 +243,20 @@ namespace ValheimModPack.ExpeditionLoadouts
             GameObject prefab = ObjectDB.instance != null ? ObjectDB.instance.GetItemPrefab(item.Prefab) : null;
             var drop = prefab != null ? prefab.GetComponent<ItemDrop>() : null;
             string label = drop != null && Localization.instance != null ? Localization.instance.Localize(drop.m_itemData.m_shared.m_name) : item.Prefab;
-            return PresetStore.SafeName(label) + (item.Quality > 1 ? " (" + item.Quality + ")" : "");
+            bool ru = Localization.instance != null && Localization.instance.GetSelectedLanguage() == "Russian";
+            return PresetStore.SafeName(label) + (item.Quality > 1 ? " (" + item.Quality + ")" : "")
+                + (item.Variant > 0 ? (ru ? " · вариант " : " · variant ") + item.Variant : "")
+                + (item.WorldLevel > 0 ? (ru ? " · мир " : " · world ") + item.WorldLevel : "");
+        }
+        private string CaptureNotice(InventoryCapture capture)
+        {
+            string message = T("Снимок: ", "Captured: ") + capture.Items.Count + T(" видов из ", " types from ")
+                + capture.IncludedSlots + T(" ячеек.", " slots.");
+            if (capture.SkippedCustomData > 0) message += T(" Особые данные (в т. ч. Epic Loot) пропущены: ", "Custom-data items (including Epic Loot) skipped: ") + capture.SkippedCustomData + ".";
+            if (capture.SkippedUnsupported > 0) message += T(" Неподдерживаемые: ", "Unsupported: ") + capture.SkippedUnsupported + ".";
+            if (capture.SkippedInvalid > 0) message += T(" Некорректные ячейки/предметы: ", "Invalid items/cells: ") + capture.SkippedInvalid + ".";
+            if (capture.SkippedLimit > 0) message += T(" Ограничены лимитом набора: ", "Limited by preset capacity: ") + capture.SkippedLimit + ".";
+            return message;
         }
         private string T(string ru, string en) { return russian ? ru : en; }
         private Text Label(string value, float x, float y, float width, float height, int size, bool heading)

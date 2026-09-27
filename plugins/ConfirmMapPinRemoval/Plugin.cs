@@ -6,7 +6,7 @@ using HarmonyLib;
 using UnityEngine;
 namespace ValheimModPack.PinRemoval
 {
-    [BepInPlugin(Id, "Confirm Map Pin Removal", "1.3.0")]
+    [BepInPlugin(Id, "Confirm Map Pin Removal", "1.3.1")]
     [BepInDependency("com.jotunn.jotunn", "2.30.2")]
     public sealed class Plugin : BaseUnityPlugin
     {

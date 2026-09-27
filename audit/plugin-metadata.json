@@ -102,9 +102,19 @@
                            "file":  "BepInEx/plugins/ValheimModPack-ExpeditionLoadouts/ExpeditionLoadouts.dll"
                        },
                        {
+                           "name":  "InterfaceInputFix",
+                           "version":  "0.0.0.0",
+                           "file":  "BepInEx/plugins/ValheimModPack-InterfaceInputFix/InterfaceInputFix.dll"
+                       },
+                       {
                            "name":  "NordicRadio",
                            "version":  "0.0.0.0",
                            "file":  "BepInEx/plugins/ValheimModPack-NordicRadio/NordicRadio.dll"
+                       },
+                       {
+                           "name":  "RenewableResourceTimers",
+                           "version":  "0.0.0.0",
+                           "file":  "BepInEx/plugins/ValheimModPack-RenewableResourceTimers/RenewableResourceTimers.dll"
                        },
                        {
                            "name":  "AdventureBackpacks",
@@ -453,7 +463,7 @@
                     {
                         "guid":  "valheimmodpack.chestsearch",
                         "name":  "Chest Search",
-                        "version":  "1.0.0",
+                        "version":  "1.1.0",
                         "file":  "BepInEx/plugins/ValheimModPack-ChestSearch/ChestSearch.dll",
                         "dependencies":  [
                                              {
@@ -472,7 +482,7 @@
                     {
                         "guid":  "valheimmodpack.confirmpinremoval",
                         "name":  "Confirm Map Pin Removal",
-                        "version":  "1.3.0",
+                        "version":  "1.3.1",
                         "file":  "BepInEx/plugins/ValheimModPack-ConfirmMapPinRemoval/ConfirmMapPinRemoval.dll",
                         "dependencies":  [
                                              {
@@ -520,7 +530,7 @@
                     {
                         "guid":  "valheimmodpack.expeditionloadouts",
                         "name":  "Expedition Loadouts",
-                        "version":  "1.0.0",
+                        "version":  "1.1.0",
                         "file":  "BepInEx/plugins/ValheimModPack-ExpeditionLoadouts/ExpeditionLoadouts.dll",
                         "dependencies":  [
                                              {
@@ -529,7 +539,31 @@
                                                  "minimum":  null
                                              },
                                              {
+                                                 "guid":  "com.jotunn.jotunn",
+                                                 "hard":  true,
+                                                 "minimum":  "2.30.2"
+                                             },
+                                             {
                                                  "guid":  "goldenrevolver.quick_stack_store",
+                                                 "hard":  false,
+                                                 "minimum":  null
+                                             }
+                                         ],
+                        "incompatible":  [
+
+                                         ],
+                        "processes":  [
+
+                                      ]
+                    },
+                    {
+                        "guid":  "valheimmodpack.interfaceinputfix",
+                        "name":  "Interface Input Fix",
+                        "version":  "1.0.0",
+                        "file":  "BepInEx/plugins/ValheimModPack-InterfaceInputFix/InterfaceInputFix.dll",
+                        "dependencies":  [
+                                             {
+                                                 "guid":  "vapok.mods.adventurebackpacks",
                                                  "hard":  false,
                                                  "minimum":  null
                                              },
@@ -537,6 +571,11 @@
                                                  "guid":  "com.jotunn.jotunn",
                                                  "hard":  true,
                                                  "minimum":  "2.30.2"
+                                             },
+                                             {
+                                                 "guid":  "yay.spikehimself.xportal",
+                                                 "hard":  false,
+                                                 "minimum":  null
                                              }
                                          ],
                         "incompatible":  [
@@ -556,6 +595,30 @@
                                                  "guid":  "com.jotunn.jotunn",
                                                  "hard":  true,
                                                  "minimum":  "2.30.2"
+                                             }
+                                         ],
+                        "incompatible":  [
+
+                                         ],
+                        "processes":  [
+
+                                      ]
+                    },
+                    {
+                        "guid":  "valheimmodpack.renewableresourcetimers",
+                        "name":  "Renewable Resource Timers",
+                        "version":  "1.0.0",
+                        "file":  "BepInEx/plugins/ValheimModPack-RenewableResourceTimers/RenewableResourceTimers.dll",
+                        "dependencies":  [
+                                             {
+                                                 "guid":  "com.jotunn.jotunn",
+                                                 "hard":  true,
+                                                 "minimum":  "2.30.2"
+                                             },
+                                             {
+                                                 "guid":  "advize.PlantEverything",
+                                                 "hard":  false,
+                                                 "minimum":  null
                                              }
                                          ],
                         "incompatible":  [
