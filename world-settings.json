@@ -4,5 +4,9 @@
   "portals": "casual",
   "woodAdditionalMultiplier": 3,
   "woodTotalMultiplier": 6,
-  "note": "Apply in the world's World Modifiers menu. This file is documentation, not an auto-loaded game config."
+  "note": "Apply in the world's World Modifiers menu. This file is documentation, not an auto-loaded game config.",
+  "stoneAdditionalMultiplier": 3,
+  "stoneTotalMultiplier": 6,
+  "metalAdditionalMultiplier": 4,
+  "metalTotalMultiplier": 8
 }
