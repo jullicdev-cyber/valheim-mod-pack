@@ -14,7 +14,7 @@ namespace ValheimModPack.NordicRadio
     public sealed class Plugin : BaseUnityPlugin
     {
         public const string Id = "valheimmodpack.nordicradio";
-        public const string Version = "1.1.0";
+        public const string Version = "1.1.1";
         public static Plugin Instance { get; private set; }
         public RadioService Service { get; private set; }
         public string DataRoot { get; private set; }
@@ -34,7 +34,7 @@ namespace ValheimModPack.NordicRadio
         }
         public float NearDistance { get { return SafeFloat(nearDistance.Value, 2.5f, 0.5f, 20); } }
         public float FarDistance { get { return SafeFloat(farDistance.Value, 150, NearDistance + 1, RadioProtocol.MaxAudioDistance); } }
-        public float Amplification { get { return SafeFloat(amplification.Value, 1.5f, 1, 6); } }
+        public float Amplification { get { return SafeFloat(amplification.Value, 1, 1, 6); } }
         internal Vector3 ListenerPosition
         {
             get
@@ -54,7 +54,7 @@ namespace ValheimModPack.NordicRadio
                 personalVolume = Config.Bind("Audio", "PersonalVolume", 0.8f, new ConfigDescription("Local radio volume; does not change other players.", new AcceptableValueRange<float>(0, 1)));
                 nearDistance = Config.Bind("Audio", "NearDistance", 2.5f, new ConfigDescription("Full-volume distance in metres; fades progressively beyond this distance.", new AcceptableValueRange<float>(0.5f, 20)));
                 farDistance = Config.Bind("Audio", "FarDistance", 150f, new ConfigDescription("Maximum audible radius in metres; sound stops earlier if Valheim unloads the object. World loading distances are unchanged.", new AcceptableValueRange<float>(5, RadioProtocol.MaxAudioDistance)));
-                amplification = Config.Bind("Audio", "Amplification", 1.5f, new ConfigDescription("Local signal gain before spatial attenuation and game effects volume; peaks are gently limited.", new AcceptableValueRange<float>(1, 6)));
+                amplification = Config.Bind("Audio", "Amplification", 1f, new ConfigDescription("Local signal gain before spatial attenuation and game effects volume. 1 leaves the signal unchanged; higher values amplify and gently limit peaks.", new AcceptableValueRange<float>(1, 6)));
                 backgroundMusicVolume = Config.Bind("Audio", "BackgroundMusicVolume", 0.2f, new ConfigDescription("Fraction of normal Valheim music volume near an audible horn. 1 disables ducking; original music settings are preserved.", new AcceptableValueRange<float>(0, 1)));
                 uploadRate = Config.Bind("Network", "UploadKiBPerSecond", 1024, new ConfigDescription("Host total music upload cap shared by all peers. Lower if gameplay lags while downloading.", new AcceptableValueRange<int>(64, 4096)));
                 wood = Config.Bind("Recipe", "FineWood", 20, new ConfigDescription("Fine wood required (restart game after changing recipe; keep equal on all peers).", new AcceptableValueRange<int>(1, 100)));

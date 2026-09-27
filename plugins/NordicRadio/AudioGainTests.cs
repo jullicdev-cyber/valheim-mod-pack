@@ -21,6 +21,29 @@ internal static class AudioGainTests
         Check(Array.TrueForAll(malformed, x => x == 0), "nonfinite PCM silenced");
         var unity = new AudioGainProcessor(); float[] dry = {0.25f, -0.25f}; unity.Process(dry, 2, Single.NaN, 0);
         Check(dry[0] == 0.25f && dry[1] == -0.25f, "invalid gain falls back to unity without changing ordinary PCM");
+        float[] fullScale = {0, 0.25f, -0.25f, 0.91f, -0.91f, 0.95f, -0.95f, 1, -1, 1.25f, -1.25f, Single.MaxValue, Single.MinValue};
+        float[] original = (float[])fullScale.Clone(); unity.Process(fullScale, 1, 1, 44100);
+        bool transparent = true; for (int i = 0; i < original.Length; i++) transparent &= fullScale[i] == original[i];
+        Check(transparent, "unity gain preserves every finite PCM sample, including full-scale peaks");
+        float[] invalidUnity = {Single.NaN, Single.PositiveInfinity, Single.NegativeInfinity}; unity.Process(invalidUnity, 1, 1, 44100);
+        Check(Array.TrueForAll(invalidUnity, x => x == 0), "unity bypass still silences nonfinite PCM");
+        var returning = new AudioGainProcessor(); Warm(returning, 3);
+        float[] beforeBypass = {1}; returning.Process(beforeBypass, 1, 3, 44100);
+        float[] toUnity = Constant(44100, 1); returning.Process(toUnity, 1, 1, 44100);
+        bool smoothBypass = true; float previous = beforeBypass[0];
+        foreach (float sample in toUnity)
+        {
+            smoothBypass &= sample >= 0 && sample <= 1 && Math.Abs(sample - previous) < 0.0001f;
+            previous = sample;
+        }
+        Check(smoothBypass, "amplified full-scale PCM returns to bypass smoothly without overshoot or a limiter release step");
+        Check(toUnity[toUnity.Length - 1] == 1, "unity transition settles into exact bypass");
+        var extremeTransition = new AudioGainProcessor(); Warm(extremeTransition, 3);
+        float[] extremePair = {Single.MaxValue, Single.MinValue}; extremeTransition.Process(extremePair, 2, 1, 44100);
+        Check(PlaybackMath.Finite(extremePair[0]) && PlaybackMath.Finite(extremePair[1]) && extremePair[0] == -extremePair[1],
+            "unity crossfade keeps extreme finite PCM finite and stereo symmetric");
+        Warm(returning, 3); float[] afterBypass = {0.05f}; returning.Process(afterBypass, 1, 3, 44100);
+        Check(Math.Abs(afterBypass[0] - 0.15) < 0.0001, "amplification can be restored after unity bypass");
         var stereo = new AudioGainProcessor(); float[] pair = Constant(2000, 0.1f); stereo.Process(pair, 2, 3, 44100);
         bool equal = true; for (int i = 0; i < pair.Length; i += 2) equal &= pair[i] == pair[i + 1];
         Check(equal, "stereo gain identical per frame");

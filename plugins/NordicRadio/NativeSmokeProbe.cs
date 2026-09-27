@@ -197,7 +197,7 @@ namespace ValheimModPack.NordicRadioSmoke
             source.volume = 1;
             source.clip = clip;
             var gain = holder.AddComponent<RadioGain>();
-            gain.Gain = 1.5f;
+            gain.Gain = 1f;
             var probe = holder.AddComponent<SilentDspProbe>();
             source.Play();
             float deadline = Time.realtimeSinceStartup + 2;
@@ -212,7 +212,7 @@ namespace ValheimModPack.NordicRadioSmoke
                 const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
                 object processor = typeof(RadioGain).GetField("processor", flags).GetValue(gain);
                 float currentGain = (float)processor.GetType().GetField("currentGain", flags).GetValue(processor);
-                if (currentGain < 1.49f || currentGain > 1.501f) throw new Exception("Native RadioGain did not reach amplification 1.5: " + currentGain);
+                if (currentGain != 1f) throw new Exception("Native RadioGain is not at unity: " + currentGain);
                 report += "PASS native streaming MP3 DSP: " + probe.Callbacks + " callbacks, finite nonzero PCM, gain=" + currentGain + ". Test output was zeroed before speakers.\n";
             }
             catch (Exception error) { failure = "FAIL native streaming DSP: " + error; }
