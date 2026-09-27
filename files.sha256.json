@@ -36,6 +36,10 @@
     "sha256": "824ab25eefc70a921c75afe7d418a3a6460a85b2b098bb7bdb2a52df0d10243a"
   },
   {
+    "path": "BepInEx/config/com.orianaventure.mod.VentureFloatingItems.cfg",
+    "sha256": "88afa34c3ae4a669efbd18ee6561e3ba46b064caa457b781724b8b31396b0108"
+  },
+  {
     "path": "BepInEx/config/goldenrevolver.quick_stack_store.cfg",
     "sha256": "d1e51c3d13eea9e512b33ce8cb5d6b1d97ed03ab3047db3e986f655710ce0a12"
   },
@@ -434,6 +438,10 @@
   {
     "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Ukrainian.json",
     "sha256": "e5a0ba61c4756e32af1b6b05c6ab54d3e36e29ba8f6de4a452d3f5f41e1eed84"
+  },
+  {
+    "path": "BepInEx/plugins/VentureValheim-Venture_Floating_Items/VentureValheim.FloatingItems.dll",
+    "sha256": "d1cd997f647b16327697b42f710453f7e7e8dcf97ed61fd359ddefc764d799df"
   },
   {
     "path": "BepInEx/plugins/XPortal/Translations/Chinese/xportal-translation-chinese.json",

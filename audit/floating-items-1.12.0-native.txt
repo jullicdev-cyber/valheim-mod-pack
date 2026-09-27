@@ -1,0 +1,31 @@
+Valheim mod pack 1.12.0 / Windows Valheim 1.0.16 / 2026-09-27
+Two isolated native processes; no user worlds or characters loaded.
+Actual water physics and multiplayer were not simulated.
+
+PHASE 0 - Initial launch
+PASS: 31 native assertions.
+Recycle N Reclaim 1.4.5 PASS 37: native load, config, localization, Epic Loot detection, Bindrune, 8 backpack exclusions, recipe yield and isolated inventory mutation. Live workstation UI/multiplayer not simulated.
+Venture Floating Items 1.0.1 PASS 27: real vendor load/hook/defaults, seven native item categories, inactive-clone buoyancy and center-of-mass safeguard. Live water and multiplayer not simulated.
+Actual Inventory.MoveItemToThis: explicit partial/whole movement, original stack reference, removal and occupied-cell rejection verified.
+Production destination selection over actual native inventories: fixture EAQS rows 5/6, hotbar, favorite slot, extra row and full-inventory exclusion verified.
+Optional installed EAQS and Quick Stack protection APIs resolve in the real Unity/BepInEx process.
+ChestSearch API PASS; aliases=6050; native item queries=2; accessible fresh loaded chests=0; native UI checks=23; warnings=
+InterfaceInputFix native PASS: 9 assertions; real patched XPortal lifecycle with isolated panel/counter; backpack API and Harmony hook verified (no player inventory mutated).
+Bindrune PASS 128: real discovery/rebind/personal persistence, guarded sorting, actual panel lifecycle; restart=False; registry=154.
+RenewableResourceTimers native PASS 60: real prefabs, inactive clone fields, synchronized config tags and four installed Harmony hooks; live multiplayer timing not simulated.
+PASS: shared metadata parser matches native ZPackage/Utils.Compress and MapTable endpoints. PASS: 40 native map-history/confirmation assertions; input block is a no-op in menu/headless; live gameplay input still needs checking. PASS 35 map preset UI checks (actual Jotunn widgets; gameplay input lock requires main scene).
+PASS: 32 native Azu/Quick Stack bridge assertions: actual Harmony hooks, canonical live sets, both first-reader orders, vendor serialization/trash flags and two reloads. Live K-to-chest gameplay remains an in-game check.
+
+PHASE 1 - Restart and persistence
+PASS: 31 native assertions.
+Recycle N Reclaim 1.4.5 PASS 37: native load, config, localization, Epic Loot detection, Bindrune, 8 backpack exclusions, recipe yield and isolated inventory mutation. Live workstation UI/multiplayer not simulated.
+Venture Floating Items 1.0.1 PASS 27: real vendor load/hook/defaults, seven native item categories, inactive-clone buoyancy and center-of-mass safeguard. Live water and multiplayer not simulated.
+Actual Inventory.MoveItemToThis: explicit partial/whole movement, original stack reference, removal and occupied-cell rejection verified.
+Production destination selection over actual native inventories: fixture EAQS rows 5/6, hotbar, favorite slot, extra row and full-inventory exclusion verified.
+Optional installed EAQS and Quick Stack protection APIs resolve in the real Unity/BepInEx process.
+ChestSearch API PASS; aliases=6050; native item queries=2; accessible fresh loaded chests=0; native UI checks=23; warnings=
+InterfaceInputFix native PASS: 9 assertions; real patched XPortal lifecycle with isolated panel/counter; backpack API and Harmony hook verified (no player inventory mutated).
+Bindrune PASS 119: real discovery/rebind/personal persistence, guarded sorting, actual panel lifecycle; restart=True; registry=154.
+RenewableResourceTimers native PASS 60: real prefabs, inactive clone fields, synchronized config tags and four installed Harmony hooks; live multiplayer timing not simulated.
+PASS: shared metadata parser matches native ZPackage/Utils.Compress and MapTable endpoints. PASS: 40 native map-history/confirmation assertions; input block is a no-op in menu/headless; live gameplay input still needs checking. PASS 35 map preset UI checks (actual Jotunn widgets; gameplay input lock requires main scene).
+PASS: 32 native Azu/Quick Stack bridge assertions: actual Harmony hooks, canonical live sets, both first-reader orders, vendor serialization/trash flags and two reloads. Live K-to-chest gameplay remains an in-game check.

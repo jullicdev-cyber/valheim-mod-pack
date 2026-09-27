@@ -1,5 +1,5 @@
 {
-  "packVersion": "1.11.0",
+  "packVersion": "1.12.0",
   "created": "2026-09-25",
   "targetGameVersion": "1.0.16",
   "packages": [
@@ -245,6 +245,20 @@
       "dependencies": [],
       "sourceSubdirectory": "",
       "destination": "BepInEx/plugins/Azumatt-Recycle_N_Reclaim"
+    },
+    {
+      "id": "VentureValheim-Venture_Floating_Items",
+      "version": "1.0.1",
+      "source": "Thunderstore",
+      "page": "https://thunderstore.io/c/valheim/p/VentureValheim/Venture_Floating_Items/",
+      "downloadUrl": "https://thunderstore.io/package/download/VentureValheim/Venture_Floating_Items/1.0.1/",
+      "sha256": "14e107204e42900d8bf6586827fa1f54fd1de4ff4c01d02c6bdb280258d72b58",
+      "dependencies": [
+        "denikson-BepInExPack_Valheim-5.4.2351",
+        "ValheimModding-Jotunn-2.30.2"
+      ],
+      "sourceSubdirectory": "Plugins",
+      "destination": "BepInEx/plugins/VentureValheim-Venture_Floating_Items"
     }
   ],
   "localPlugins": [

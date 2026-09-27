@@ -23,6 +23,7 @@ namespace ValheimModPack.LoadoutSmoke
     [BepInDependency("valheimmodpack.nordicradio", "1.1.1")]
     [BepInDependency("isimp.Bindrune", "0.5.0")]
     [BepInDependency("Azumatt.Recycle_N_Reclaim", "1.4.5")]
+    [BepInDependency("com.orianaventure.mod.VentureFloatingItems", "1.0.1")]
     public sealed class BackendNativeProbe : BaseUnityPlugin
     {
         private static readonly BindingFlags All = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
@@ -61,6 +62,7 @@ namespace ValheimModPack.LoadoutSmoke
                 var plugin = (ValheimModPack.ExpeditionLoadouts.Plugin)Chainloader.PluginInfos[ValheimModPack.ExpeditionLoadouts.Plugin.Id].Instance;
                 Check(plugin.Service != null, "Native RPC patch initialized");
                 report += RecycleNativeChecks.Run();
+                report += FloatingItemsNativeChecks.Run();
                 object mapPlugin = Chainloader.PluginInfos["valheimmodpack.confirmpinremoval"].Instance;
                 Check(!(bool)mapPlugin.GetType().GetField("failed", All).GetValue(mapPlugin)
                     && mapPlugin.GetType().GetField("history", All).GetValue(mapPlugin) != null, "Map confirmation and history initialized");

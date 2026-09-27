@@ -1,0 +1,10 @@
+{
+  "name": "Venture_Floating_Items",
+  "version_number": "1.0.1",
+  "website_url": "https://github.com/OrianaVenture/VentureValheim",
+  "description": "Makes previously sinkable items float on water, or floating items sinkable. Configurable.",
+  "dependencies": [
+    "denikson-BepInExPack_Valheim-5.4.2351",
+    "ValheimModding-Jotunn-2.30.2"
+  ]
+}
