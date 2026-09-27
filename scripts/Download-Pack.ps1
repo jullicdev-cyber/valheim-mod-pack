@@ -28,6 +28,22 @@ function Expand-PackArchive([string]$Archive, [string]$Destination, [string]$Com
     return Join-Path $Destination $prefix.TrimEnd('/')
 }
 
+function Save-PackArchive([string]$Uri, [string]$OutFile) {
+    $curl = Get-Command curl.exe -CommandType Application -ErrorAction SilentlyContinue
+    if ($curl) {
+        # curl is bundled with current Windows and streams large archives without
+        # Windows PowerShell's slow/buffering Invoke-WebRequest download path.
+        & $curl.Source --fail --location --silent --show-error --connect-timeout 30 --max-time 300 --output $OutFile $Uri
+        if ($LASTEXITCODE -ne 0) { throw "Archive download failed (curl exit $LASTEXITCODE)." }
+    } else {
+        $previousProgress = $ProgressPreference
+        try {
+            $ProgressPreference = 'SilentlyContinue'
+            Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $OutFile -TimeoutSec 300
+        } finally { $ProgressPreference = $previousProgress }
+    }
+}
+
 function Get-LatestPack([string]$PackRoot) {
     $updates = Join-Path $PackRoot '.updates'
     if ((Test-Path -LiteralPath $updates) -and ((Get-Item -LiteralPath $updates).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Update directory must not be a link.' }
@@ -40,7 +56,7 @@ function Get-LatestPack([string]$PackRoot) {
     New-Item -ItemType Directory -Path $job -Force | Out-Null
     $archive = Join-Path $job 'pack.zip'
     Write-Host "Downloading main at $commit ..."
-    Invoke-WebRequest -UseBasicParsing -Uri "https://codeload.github.com/jullicdev-cyber/valheim-mod-pack/zip/$commit" -Headers $headers -OutFile $archive -TimeoutSec 300
+    Save-PackArchive "https://codeload.github.com/jullicdev-cyber/valheim-mod-pack/zip/$commit" $archive
     $pack = Expand-PackArchive $archive (Join-Path $job 'extracted') $commit
     foreach ($name in @('VERSION','mods.lock.json','files.sha256.json','scripts/Install-Windows.ps1')) {
         if (-not (Test-Path -LiteralPath (Join-Path $pack $name) -PathType Leaf)) { throw "Incomplete downloaded pack: $name" }

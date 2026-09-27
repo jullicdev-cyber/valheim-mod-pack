@@ -27,7 +27,7 @@ try { & (Join-Path $Repository 'scripts/Verify.ps1') -PackDirectory (Join-Path $
 Assert $failed 'Bad payload hash accepted.'
 # Exercise the real download workflow with deterministic network responses.
 function Invoke-RestMethod { param($Uri,$Headers,$TimeoutSec); return @{sha=$Commit} }
-function Invoke-WebRequest { param($Uri,$Headers,$OutFile,$TimeoutSec,[switch]$UseBasicParsing); Copy-Item -LiteralPath (Join-Path $Fixture 'good.zip') -Destination $OutFile }
+function Save-PackArchive { param($Uri,$OutFile); Copy-Item -LiteralPath (Join-Path $Fixture 'good.zip') -Destination $OutFile }
 $download = Get-LatestPack $packRoot
 Assert ($download -is [string] -and (Test-Path -LiteralPath (Join-Path $download 'VERSION'))) 'Downloader returned extra pipeline output.'
 Assert (Test-Path -LiteralPath (Join-Path $packRoot '.updates/latest.json')) 'Verified snapshot was not recorded.'
