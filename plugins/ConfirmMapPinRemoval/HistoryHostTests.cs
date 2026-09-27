@@ -71,6 +71,18 @@ public static class HistoryHostTests
             Open(controller); UnifiedPopup.Visible = true; controller.Tick(true); Check(!controller.IsOpen, "Foreign popup closes own window"); UnifiedPopup.Visible = false;
             Open(controller); Input.Down.Add(KeyCode.Escape); controller.Tick(true); Input.Down.Clear(); Check(!controller.IsOpen, "Escape closes history");
             Open(controller); ZInput.Cancel = true; controller.Tick(true); ZInput.Cancel = false; Check(!controller.IsOpen, "Controller B closes history");
+            controller.Close(); var translated = Add(map, "Пещера тролля", 99);
+            Call("RememberQuickPin", null, translated, "default.trollcave");
+            Check((string)Call("PresetFor", null, translated) == "default.trollcave", "Quick placement records a stable preset binding");
+            controller.Remove(map, translated); Open(controller); view.Rows[0].Activate();
+            var livePins = (List<Minimap.PinData>)AccessTools.Field(typeof(Minimap), "m_pins").GetValue(map);
+            translated = livePins.Find(p => p.m_pos.x == 99);
+            Check(translated != null && (string)Call("PresetFor", null, translated) == "default.trollcave", "History restoration retains translated preset binding");
+            Call("RememberRename", null, translated, translated.m_name);
+            Check((string)Call("PresetFor", null, translated) == "", "Explicit same-text rename becomes literal");
+            controller.Close(); controller.Remove(map, translated); Open(controller); view.Rows[0].Activate();
+            translated = livePins.Find(p => p.m_pos.x == 99);
+            Check(translated != null && (string)Call("PresetFor", null, translated) == "", "Restoration retains explicit literal-name override");
             Open(controller); Player.m_localPlayer = null; controller.Tick(true); Check(!controller.IsOpen, "Logout clears window and context");
             Player.m_localPlayer = owner; Open(controller); controller.Dispose(); Check(!controller.IsOpen, "Plugin disposal releases UI");
             Check(errors.Count == 0, "All expected state transitions complete without errors");

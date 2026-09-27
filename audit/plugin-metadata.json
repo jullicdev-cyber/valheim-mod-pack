@@ -472,7 +472,7 @@
                     {
                         "guid":  "valheimmodpack.confirmpinremoval",
                         "name":  "Confirm Map Pin Removal",
-                        "version":  "1.2.0",
+                        "version":  "1.3.0",
                         "file":  "BepInEx/plugins/ValheimModPack-ConfirmMapPinRemoval/ConfirmMapPinRemoval.dll",
                         "dependencies":  [
                                              {

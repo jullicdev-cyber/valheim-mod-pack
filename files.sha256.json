@@ -221,7 +221,7 @@
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-ConfirmMapPinRemoval/ConfirmMapPinRemoval.dll",
-    "sha256": "1151ddde4ab717d6dd37bcdf90235c1867256691b524fe98c764fc92d0ca027c"
+    "sha256": "f201cf1c4e809b3a72c8aaec8c457230954b891576fe725d196d8b7edb086103"
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-EAQSQuickStackBridge/EAQSQuickStackBridge.dll",

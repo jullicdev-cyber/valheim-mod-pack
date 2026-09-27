@@ -1,4 +1,34 @@
-# Confirm Map Pin Removal 1.2.0
+# Confirm Map Pin Removal 1.3.0
+
+## Быстрые метки и пресеты
+
+Мод объединяет быстрые пресеты, историю, переименование и подтверждение удаления меток. Новая DLL заменяет прежнюю версию этого же мода.
+
+- **Ctrl+P** (любой Ctrl) открывает пресеты прямо во время обычной игры. Выберите пресет и нажмите «Поставить на моей позиции» — используется позиция персонажа в момент открытия окна.
+- **Shift+ЛКМ по большой карте** открывает пресеты для точки под курсором. Кнопка размещения явно указывает выбранную точку.
+- Другой способ: выбрать пресет, нажать **«Выбрать точку на карте»**, затем обычной ЛКМ указать место. **Esc** или закрытие карты отменяют размещение. Повторный клик не должен создавать вторую метку.
+- **Alt+ЛКМ по сохранённой метке** открывает быстрое переименование. То же действие доступно в **Ctrl+H → «На карте» → «Название»**. Автор, дата, значок, положение и отметка выполнения сохраняются.
+- На большой карте есть отдельная кнопка «Быстрые метки · Ctrl+P». В чате, консоли, инвентаре и чужих модальных окнах быстрые сочетания не перехватываются.
+
+В списке 25 стандартных вариантов: пещера тролля, медвежья берлога, малина, черника, грибы, подземелье, спавн суртлингов, медь, олово, железо, серебро, морошка, портал, база, погребальные комнаты, затонувший склеп, ледяная пещера, заражённый рудник, дёготь, Хальдор, Хильдир, деревня гоблинов, кабаны, яйцо дракона и лён. Названия следуют терминологии выбранного языка игры.
+
+Поиск принимает текущее название, русские и английские варианты. Несколько слов уточняют результат; регистр и разница е/ё не важны. Пресет можно добавить, изменить или удалить. Удаление, включая стандартный пресет, требует подтверждения в деревянном окне с обычным одиночным звуком кнопки. Уже созданные метки при этом остаются. Доступны пять **обычных выбираемых значков Valheim**: костёр, дом, молот, точка, портал. Специальные служебные значки смерти, кровати и игроков не используются; импорт собственных изображений не добавлен.
+
+### Язык и сохранение названий
+
+20 стандартных названий используют настоящие ключи локализации Valheim. Остальные пять имеют переводы для 35 языков; для Abenaki и неизвестных языков используется английский. Неполные переводы самой игры также могут давать английский вариант. Новые элементы интерфейса полностью переведены на русский и английский; общие кнопки используют переводы игры, остальные фразы на других языках пока английские.
+
+При смене языка **уже поставленные стандартные метки меняют отображаемую подпись**. В файле карты остаётся читаемое название, с которым метка создавалась; технические ключи в неё не записываются. Поэтому игрок без мода видит понятный текст. Переключение языка не перезаписывает все метки, не меняет автора и дату. Ручное переименование отключает автоперевод конкретной метки, даже если подтвердить то же самое название. Изменение только значка пресета сохраняет перевод; изменение его имени делает будущие метки буквальными пользовательскими названиями. Уже поставленные метки от редактирования или удаления пресета не меняются.
+
+При записи/чтении стола картографа обновлённые клиенты передают также привязку стандартной метки. Читатель отображает её на своём языке. Проверяются мир, хеш карты, настоящий автор/координаты/тип и исходное имя; переименованная вручную метка не получает перевод обратно. Для обмена привязками обновление нужно пишущему, читающему и текущему владельцу стола. Старым читателям сохраняется исходный формат сведений о датах; без обновлённого владельца стола остаётся обычный обмен читаемыми названиями.
+
+Пресеты сохраняются в `Valheim/ValheimModpack/MapPinPresets/<ID персонажа>.json` и одинаковы для этого персонажа в разных мирах. Максимум 128 пресетов, название до 96 знаков UTF-16. Запись атомарная, предыдущая версия хранится в `.bak`. Стандартный список создаётся один раз: удалённые варианты не воскресают при перезапуске. Повреждённый, неизвестный или изменённый снаружи файл не перезаписывается. Обновление сборки сохраняет каталог `ValheimModpack` и включает его в полный бэкап.
+
+Архив меток v2 читает прежний формат v1 и при первой записи сохраняет предыдущий файл в `.bak`. Привязки переводов сохраняются в локальной истории при удалении/восстановлении. Для отката DLL к 1.2.0 после появления архива v2 нужно восстановить и прежний архив из резервной копии.
+
+Проверки пресетов: `Test-Presets.ps1`, локализаций: `Test-PinPresetLocalization.ps1`, фактического контроллера с заменами внешних API: `Test-QuickPins.ps1`. `PresetUiNativeChecks.cs` входит только в отдельный нативный пробник и не поставляется внутри DLL мода. Полноценная проверка мыши/клавиатуры и обмена картой между игроками выполняется в игровой сессии.
+
+## Existing confirmation and history
 
 Client-side BepInEx/Harmony mod for the pack's Valheim 1.0.16 and Jotunn 2.30.2. Right-clicking a saved map pin opens a confirmation with the pin name, Cancel and Delete buttons. Russian game language uses «Удаление метки», «Отмена» and «Удалить»; other languages use English.
 
@@ -30,7 +60,7 @@ The patch also covers touch deletion routed through the same method. Other mods'
 
 Build: `./plugins/ConfirmMapPinRemoval/Build.ps1 -GameDirectory '<Valheim folder>'` on Windows. Tests: `./plugins/ConfirmMapPinRemoval/Test.ps1 -GameDirectory '<Valheim folder>'`. Build reads local game assemblies without redistributing them. Jotunn is already included in the pack; XPortal is not a runtime dependency. The managed DLL is included in both Windows and Linux packs; Linux runtime has not been tested.
 
-Automated checks cover confirmation state and label handling (31 assertions), the real Plugin.cs with host doubles (42 assertions), production archive persistence/recovery (41 assertions), the production history controller with host doubles (32 assertions), shared-metadata codec, RPC guards and archive/controller integration (40 assertions), and installed Valheim/Jotunn APIs via Mono.Cecil. The host doubles do not run Unity, Harmony detours or UI rendering. `Build-NativeChecks.ps1 -GameDirectory '<Valheim folder>'` builds the optional `PinHistoryNativeChecks.dll`: its public `ValheimModPack.PinRemoval.NativeChecks.Run()` can be called from an isolated native-engine probe after Jotunn is ready. It first verifies the sidecar parser against actual native ZPackage string/vector encoding and Utils.Compress, then creates both real wooden windows, six history rows, buttons and text, tests a button callback and verifies input-request balance. It explicitly reports if no GUI exists or if input blocking is a no-op in the menu/headless scene; this is not a visual or live-gameplay claim. The optional probe is excluded from the shipped plugin.
+Automated checks cover confirmation state and label handling (31 assertions), the real Plugin.cs with host doubles (42), production archive persistence/recovery (63), the production history controller (36), shared-metadata codec/RPC guards/archive integration (59), preset persistence (49), localization and preset catalogue (253), and the actual quick-pin controller (51): 584 assertions in total. Installed Valheim/Jotunn APIs are checked with Mono.Cecil. Host doubles do not run Unity, Harmony detours or UI rendering. `Build-NativeChecks.ps1 -GameDirectory '<Valheim folder>'` builds the optional `PinHistoryNativeChecks.dll`: its public `ValheimModPack.PinRemoval.NativeChecks.Run()` can be called from an isolated native-engine probe after Jotunn is ready. It verifies the sidecar parser against actual native ZPackage string/vector encoding and Utils.Compress, creates the wooden history/confirmation/preset windows, and checks UI callbacks, pagination, search, editors, confirmation and input-request balance. It explicitly reports if no GUI exists or if input blocking is a no-op in the menu/headless scene; this is not a visual or live-gameplay claim. The optional probe is excluded from the shipped plugin.
 
 In-game acceptance check on a disposable pin: right-click opens the wood panel above the map; Cancel and Escape retain the pin; Delete removes only the selected pin once; moving the pointer does not change the target; blank-map clicks do nothing. Also check a long Cyrillic name, repeated opening, logout with the dialog open, and input after closing. Check that XPortal still opens and closes normally. These require a live game session.
 

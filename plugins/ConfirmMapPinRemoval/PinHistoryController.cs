@@ -70,7 +70,10 @@ namespace ValheimModPack.PinRemoval
                 if (!active.EnsureContext() || !ReferenceEquals(active.map, __instance)) return;
                 foreach (var before in __state)
                     if (before.Key.m_ownerID == 0 && active.CurrentPins.Contains(before.Key))
-                        active.archive.RememberCreation(Snapshot(before.Key), before.Value.CreatorName, before.Value.CreatedUtc);
+                    {
+                        var adopted = Snapshot(before.Key); adopted.PresetKey = before.Value.PresetKey; adopted.BoundName = before.Value.BoundName;
+                        active.archive.RememberCreation(adopted, before.Value.CreatorName, before.Value.CreatedUtc);
+                    }
             }
             catch (Exception error) { active.Fault(error); }
         }
@@ -185,10 +188,11 @@ namespace ValheimModPack.PinRemoval
                 details += "\n" + (deletedTab ? (ru ? "Удалена: " : "Deleted: ") + DateLabel(record.DeletedUtc, ru) + " · " : "")
                     + "X " + record.X.ToString("0", CultureInfo.InvariantCulture) + " / Z " + record.Z.ToString("0", CultureInfo.InvariantCulture);
                 bool present = deletedTab && Exists(record);
-                rows.Add(new HistoryRow { Title = PinLabel.Format(record.Name, ru), Details = details,
-                    ActionLabel = record.RestoredUtc != 0 ? (ru ? "Восстановлена" : "Restored") : present ? (ru ? "Уже на карте" : "On map") : (ru ? "Вернуть" : "Restore"),
-                    Enabled = deletedTab && record.RestoredUtc == 0 && !present,
-                    Activate = () => Restore(sourceArchive, id) });
+                Minimap.PinData current = deletedTab ? null : CurrentPins.Find(pin => Snapshot(pin).Key == record.Key);
+                rows.Add(new HistoryRow { Title = PinLabel.Format(QuickPinController.DisplayRecord(record), ru), Details = details,
+                    ActionLabel = !deletedTab ? (ru ? "Название" : "Rename") : record.RestoredUtc != 0 ? (ru ? "Восстановлена" : "Restored") : present ? (ru ? "Уже на карте" : "On map") : (ru ? "Вернуть" : "Restore"),
+                    Enabled = deletedTab ? record.RestoredUtc == 0 && !present : current != null,
+                    Activate = deletedTab ? (Action)(() => Restore(sourceArchive, id)) : () => QuickPinController.RenameFromHistory(current) });
             }
             view.Render(rows, deletedTab, page, pages, records.Count, ru);
         }
@@ -236,6 +240,26 @@ namespace ValheimModPack.PinRemoval
                 record.Name, true, record.Checked, record.Owner, author);
             if (restored == null) throw new InvalidOperationException("Game refused to restore the pin");
             restored.m_doubleSize = record.DoubleSize; restored.m_animate = record.Animate; restored.m_worldSize = record.WorldSize;
+            var restoredRecord = Snapshot(restored);
+            if (record.Name == record.BoundName) { restoredRecord.PresetKey = record.PresetKey; restoredRecord.BoundName = record.BoundName; }
+            if (record.CreatedUtc > 0) archive.RememberCreation(restoredRecord, record.CreatorName, record.CreatedUtc);
+            else if (record.BoundName.Length != 0 && record.Name == record.BoundName) archive.BindPreset(restoredRecord, record.PresetKey);
+        }
+        internal static void RememberQuickPin(Minimap.PinData pin, string presetKey)
+        {
+            if (active == null || !active.EnsureContext() || !active.CurrentPins.Contains(pin)) throw new InvalidOperationException("Map history context unavailable");
+            PinRecord record = Snapshot(pin); record.PresetKey = presetKey ?? ""; record.BoundName = String.IsNullOrEmpty(presetKey) ? "" : pin.m_name;
+            active.archive.RememberCreation(record, active.owner.GetPlayerName(), DateTime.UtcNow.Ticks);
+        }
+        internal static void RememberRename(Minimap.PinData pin, string name)
+        {
+            if (active == null || !active.EnsureContext() || !active.CurrentPins.Contains(pin)) throw new InvalidOperationException("Map rename context unavailable");
+            PinRecord record = Snapshot(pin); record.Name = name; active.archive.BindPreset(record, "");
+        }
+        internal static string PresetFor(Minimap.PinData pin)
+        {
+            return pin != null && active != null && active.EnsureContext() && active.CurrentPins.Contains(pin)
+                ? active.archive.PresetFor(Snapshot(pin)) : "";
         }
         internal static PinRecord Snapshot(Minimap.PinData pin)
         {
@@ -273,8 +297,11 @@ namespace ValheimModPack.PinRemoval
                 if (!candidates.TryGetValue(SharedPinMetadata.Canonical(local, active.character).Key, out incoming)) continue;
                 // Keep the live pin's local identity (owner 0 for own pins). Never create or rename a map pin here.
                 local.CreatedUtc = incoming.CreatedUtc; local.CreatorName = incoming.CreatorName; matched.Add(local);
+                if (incoming.BoundName == local.Name && !String.IsNullOrEmpty(incoming.PresetKey))
+                { local.PresetKey = incoming.PresetKey; local.BoundName = incoming.BoundName; }
             }
             active.archive.ImportCreationMetadata(matched);
+            QuickPinController.RefreshKnownCaptions();
         }
         internal static bool SafePlayer(Player player)
         { return player != null && !player.IsDead() && !player.IsTeleporting() && !player.IsSleeping() && !player.InCutscene(); }

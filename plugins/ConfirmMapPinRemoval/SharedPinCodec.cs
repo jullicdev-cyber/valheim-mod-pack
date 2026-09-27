@@ -11,10 +11,11 @@ namespace ValheimModPack.PinRemoval
     internal static class SharedPinCodec
     {
         internal const int MaximumRecords = 512, MaximumBytes = 128 * 1024;
-        private const int Magic = 0x53504D31, Format = 1;
+        private const int Magic = 0x53504D31, Format = 2;
         internal sealed class Payload
         {
             internal long World;
+            internal int Version = Format;
             internal byte[] MapHash;
             internal List<PinRecord> Records = new List<PinRecord>();
         }
@@ -24,14 +25,14 @@ namespace ValheimModPack.PinRemoval
             if (a == null || b == null || a.Length != 32 || b.Length != 32) return false;
             int difference = 0; for (int i = 0; i < 32; i++) difference |= a[i] ^ b[i]; return difference == 0;
         }
-        internal static byte[] Encode(Payload value)
+        internal static byte[] Encode(Payload value, bool legacy = false)
         {
             if (value.World == 0 || value.MapHash == null || value.MapHash.Length != 32 || value.Records.Count > MaximumRecords)
                 throw new InvalidDataException("Invalid shared pin metadata header");
             using (var stream = new MemoryStream())
             using (var writer = new BinaryWriter(stream, Encoding.UTF8))
             {
-                writer.Write(Magic); writer.Write(Format); writer.Write(value.World); writer.Write(value.MapHash); writer.Write(value.Records.Count);
+                writer.Write(Magic); writer.Write(legacy ? 1 : Format); writer.Write(value.World); writer.Write(value.MapHash); writer.Write(value.Records.Count);
                 var keys = new HashSet<string>(StringComparer.Ordinal);
                 foreach (PinRecord record in value.Records)
                 {
@@ -39,6 +40,12 @@ namespace ValheimModPack.PinRemoval
                     writer.Write(record.Type); writer.Write(record.Owner); Text(writer, record.Author, 256);
                     writer.Write(record.X); writer.Write(record.Y); writer.Write(record.Z);
                     writer.Write(record.CreatedUtc); Text(writer, record.CreatorName, 128);
+                    if (!legacy)
+                    {
+                        bool sharedBinding = BuiltinPresetKey(record.PresetKey);
+                        Text(writer, sharedBinding ? record.PresetKey : "", 96);
+                        Text(writer, sharedBinding ? record.BoundName : "", 256);
+                    }
                 }
                 writer.Flush(); if (stream.Length > MaximumBytes) throw new InvalidDataException("Shared pin metadata exceeds limit");
                 return stream.ToArray();
@@ -50,8 +57,9 @@ namespace ValheimModPack.PinRemoval
             using (var stream = new MemoryStream(bytes, false))
             using (var reader = new BinaryReader(stream, Encoding.UTF8))
             {
-                if (reader.ReadInt32() != Magic || reader.ReadInt32() != Format) throw new InvalidDataException("Unknown shared pin metadata version");
-                var result = new Payload { World = reader.ReadInt64(), MapHash = reader.ReadBytes(32) };
+                int magic = reader.ReadInt32(), version = reader.ReadInt32();
+                if (magic != Magic || (version != 1 && version != Format)) throw new InvalidDataException("Unknown shared pin metadata version");
+                var result = new Payload { Version = version, World = reader.ReadInt64(), MapHash = reader.ReadBytes(32) };
                 if (result.World == 0 || result.MapHash.Length != 32) throw new InvalidDataException("Invalid shared pin metadata identity");
                 int count = reader.ReadInt32(); if (count < 0 || count > MaximumRecords) throw new InvalidDataException("Shared pin count limit");
                 var keys = new HashSet<string>(StringComparer.Ordinal);
@@ -59,6 +67,11 @@ namespace ValheimModPack.PinRemoval
                 {
                     var record = new PinRecord { Type = reader.ReadInt32(), Owner = reader.ReadInt64(), Author = Text(reader, 256),
                         X = reader.ReadSingle(), Y = reader.ReadSingle(), Z = reader.ReadSingle(), CreatedUtc = reader.ReadInt64(), CreatorName = Text(reader, 128) };
+                    if (version >= 2)
+                    {
+                        record.PresetKey = Text(reader, 96); record.BoundName = Text(reader, 256);
+                        if (record.PresetKey.Length != 0 && !BuiltinPresetKey(record.PresetKey)) throw new InvalidDataException("Only built-in pin labels are shared");
+                    }
                     Validate(record); if (!keys.Add(record.Key)) throw new InvalidDataException("Duplicate shared pin metadata");
                     result.Records.Add(record);
                 }
@@ -71,6 +84,13 @@ namespace ValheimModPack.PinRemoval
             record.Validate();
             if (record.CreatedUtc == 0 || record.Owner == 0 || String.IsNullOrEmpty(record.Author))
                 throw new InvalidDataException("Shared metadata needs an actual author and creation date");
+        }
+        internal static bool BuiltinPresetKey(string value)
+        {
+            if (String.IsNullOrEmpty(value) || value.Length > 96 || !value.StartsWith("default.", StringComparison.Ordinal) || value.Length <= 8) return false;
+            for (int i = 8; i < value.Length; i++)
+            { char c = value[i]; if (!(c >= 'a' && c <= 'z') && !(c >= '0' && c <= '9') && c != '_' && c != '-' && c != '.') return false; }
+            return true;
         }
         private static void Text(BinaryWriter writer, string value, int limit)
         {
@@ -87,6 +107,9 @@ namespace ValheimModPack.PinRemoval
         // Read-only, bounded parser for the current vanilla SharedMap v3. Unknown formats disable metadata only.
         // The map itself continues through the unchanged native MapTable methods.
         internal static HashSet<string> ReadVanillaKeys(byte[] compressed)
+        { return new HashSet<string>(ReadVanillaNames(compressed).Keys, StringComparer.Ordinal); }
+
+        internal static Dictionary<string, string> ReadVanillaNames(byte[] compressed)
         {
             const int maxMapBytes = 20 * 1024 * 1024;
             if (compressed == null || compressed.Length == 0 || compressed.Length > 4 * 1024 * 1024) throw new InvalidDataException("Shared map size");
@@ -108,15 +131,18 @@ namespace ValheimModPack.PinRemoval
                 if (explored < 0 || explored > 16 * 1024 * 1024 || stream.Length - stream.Position < explored + 4L) throw new InvalidDataException("Explored map bounds");
                 stream.Position += explored; // v3 writes one Boolean byte per explored pixel.
                 int count = reader.ReadInt32(); if (count < 0 || count > 10000) throw new InvalidDataException("Native shared pin count");
-                var keys = new HashSet<string>(StringComparer.Ordinal);
+                var names = new Dictionary<string, string>(StringComparer.Ordinal);
                 for (int i = 0; i < count; i++)
                 {
                     var pin = new PinRecord { Owner = reader.ReadInt64(), Name = NativeText(reader, 256),
                         X = reader.ReadSingle(), Y = reader.ReadSingle(), Z = reader.ReadSingle(), Type = reader.ReadInt32(), Checked = reader.ReadBoolean(), Author = NativeText(reader, 256) };
-                    pin.Validate(); keys.Add(pin.Key);
+                    pin.Validate();
+                    string previous;
+                    if (names.TryGetValue(pin.Key, out previous) && previous != pin.Name) names[pin.Key] = null;
+                    else if (!names.ContainsKey(pin.Key)) names.Add(pin.Key, pin.Name);
                 }
                 if (stream.Position != stream.Length) throw new InvalidDataException("Unexpected native shared map bytes");
-                return keys;
+                return names;
             }
         }
         private static string NativeText(BinaryReader reader, int limit)
@@ -138,15 +164,26 @@ namespace ValheimModPack.PinRemoval
             }
             throw new InvalidDataException("Native string size prefix");
         }
-        internal static List<PinRecord> Merge(IEnumerable<PinRecord> previous, IEnumerable<PinRecord> incoming, HashSet<string> present)
+        internal static List<PinRecord> Merge(IEnumerable<PinRecord> previous, IEnumerable<PinRecord> incoming, HashSet<string> present,
+            IDictionary<string, string> names = null)
         {
             var all = new Dictionary<string, PinRecord>(StringComparer.Ordinal);
             foreach (IEnumerable<PinRecord> source in new[] { previous, incoming })
                 foreach (PinRecord record in source)
                 {
-                    PinRecord known;
-                    if (record.CreatedUtc > 0 && present.Contains(record.Key)
-                        && (!all.TryGetValue(record.Key, out known) || record.CreatedUtc > known.CreatedUtc)) all[record.Key] = record.Copy();
+                    if (record.CreatedUtc <= 0 || !present.Contains(record.Key)) continue;
+                    PinRecord candidate = record.Copy(), known;
+                    string nativeName = null;
+                    bool matched = names != null && names.TryGetValue(record.Key, out nativeName) && nativeName != null;
+                    if (!matched || !BuiltinPresetKey(candidate.PresetKey) || candidate.BoundName != nativeName)
+                    { candidate.PresetKey = ""; candidate.BoundName = ""; }
+                    if (matched) candidate.Name = nativeName;
+                    if (!all.TryGetValue(record.Key, out known) || candidate.CreatedUtc > known.CreatedUtc) all[record.Key] = candidate;
+                    else if (candidate.CreatedUtc == known.CreatedUtc && known.PresetKey.Length == 0 && candidate.PresetKey.Length != 0)
+                    {
+                        // A dates-only legacy relay cannot erase a known label; an exact-name v2 record can backfill one.
+                        known.PresetKey = candidate.PresetKey; known.BoundName = candidate.BoundName;
+                    }
                 }
             var result = new List<PinRecord>(all.Values);
             result.Sort((a, b) => b.CreatedUtc.CompareTo(a.CreatedUtc));

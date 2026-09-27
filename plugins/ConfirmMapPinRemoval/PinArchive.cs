@@ -10,6 +10,7 @@ namespace ValheimModPack.PinRemoval
     public sealed class PinRecord
     {
         public string Id = "", Name = "", Author = "", CreatorName = "";
+        public string PresetKey = "", BoundName = "";
         public int Type;
         public float X, Y, Z, WorldSize;
         public long Owner, CreatedUtc, DeletedUtc, RestoredUtc;
@@ -29,8 +30,20 @@ namespace ValheimModPack.PinRemoval
             if (Name == null || Name.Length > 256 || Author == null || Author.Length > 256
                 || CreatorName == null || CreatorName.Length > 128 || Type < 0 || Type > 1024
                 || !Finite(X) || !Finite(Y) || !Finite(Z) || !Finite(WorldSize) || WorldSize < 0
-                || !ValidTime(CreatedUtc) || !ValidTime(DeletedUtc) || !ValidTime(RestoredUtc))
+                || !ValidTime(CreatedUtc) || !ValidTime(DeletedUtc) || !ValidTime(RestoredUtc)
+                || !ValidPresetKey(PresetKey) || BoundName == null || BoundName.Length > 256)
                 throw new InvalidDataException("Invalid map pin history record");
+        }
+        private static bool ValidPresetKey(string value)
+        {
+            if (value == null || value.Length > 96) return false;
+            if (value.Length == 0) return true;
+            Guid guid;
+            if (Guid.TryParseExact(value, "N", out guid)) return guid != Guid.Empty && value == guid.ToString("N");
+            if (!value.StartsWith("default.", StringComparison.Ordinal) || value.Length <= 8) return false;
+            for (int i = 8; i < value.Length; i++)
+            { char c = value[i]; if (!(c >= 'a' && c <= 'z') && !(c >= '0' && c <= '9') && c != '_' && c != '-' && c != '.') return false; }
+            return true;
         }
         private static bool Finite(float value) { return !float.IsNaN(value) && !float.IsInfinity(value) && Math.Abs(value) <= 1000000; }
         private static bool ValidTime(long value) { return value >= 0 && value <= DateTime.MaxValue.Ticks; }
@@ -39,7 +52,7 @@ namespace ValheimModPack.PinRemoval
     public sealed class PinArchive
     {
         public const int MaximumDeleted = 500, MaximumMetadata = 5000, MaximumFileBytes = 4 * 1024 * 1024;
-        private const int Magic = 0x50494E48, Format = 1;
+        private const int Magic = 0x50494E48, Format = 2;
         private readonly string file;
         public readonly long World, Character;
         private readonly List<PinRecord> deleted = new List<PinRecord>();
@@ -55,11 +68,34 @@ namespace ValheimModPack.PinRemoval
         {
             PinRecord known;
             if (metadata.TryGetValue(pin.Key, out known))
-            { pin.CreatedUtc = known.CreatedUtc; pin.CreatorName = known.CreatorName; }
+            {
+                pin.CreatedUtc = known.CreatedUtc; pin.CreatorName = known.CreatorName;
+                pin.PresetKey = known.BoundName == pin.Name ? known.PresetKey : "";
+                // Empty key + matching baseline is an explicit local literal-name override.
+                pin.BoundName = known.BoundName == pin.Name ? known.BoundName : "";
+            }
+        }
+        public string PresetFor(PinRecord current)
+        {
+            if (current == null) return "";
+            PinRecord known;
+            return metadata.TryGetValue(current.Key, out known) && known.BoundName == current.Name ? known.PresetKey : "";
+        }
+        public void BindPreset(PinRecord pin, string presetKey)
+        {
+            if (pin == null) throw new ArgumentNullException("pin");
+            pin = pin.Copy(); Enrich(pin);
+            pin.PresetKey = presetKey ?? "";
+            pin.BoundName = pin.Name;
+            pin.Validate(); SaveMetadata(pin);
         }
         public void RememberCreation(PinRecord pin, string creator, long utc)
         {
             pin = pin.Copy(); pin.CreatorName = creator ?? ""; pin.CreatedUtc = utc; pin.Validate();
+            SaveMetadata(pin);
+        }
+        private void SaveMetadata(PinRecord pin)
+        {
             PinRecord previous; bool existed = metadata.TryGetValue(pin.Key, out previous);
             metadata[pin.Key] = pin;
             PinRecord evicted = null;
@@ -85,9 +121,20 @@ namespace ValheimModPack.PinRemoval
                     PinRecord existing;
                     // Own/adopted pins keep their recorded origin. Shared pins may be recreated at the
                     // same native identity; newer known origins win, and stale relays cannot roll them back.
-                    if (metadata.TryGetValue(record.Key, out existing) && existing.CreatedUtc != 0
-                        && (record.Owner == 0 || record.CreatedUtc <= existing.CreatedUtc)) continue;
-                    metadata[record.Key] = record.Copy(); changed = true;
+                    bool existed = metadata.TryGetValue(record.Key, out existing);
+                    if (existed && existing.CreatedUtc != 0 && (record.Owner == 0 || record.CreatedUtc <= existing.CreatedUtc))
+                    {
+                        bool backfill = record.Owner != 0 && record.CreatedUtc == existing.CreatedUtc
+                            && existing.PresetKey.Length == 0 && existing.BoundName.Length == 0
+                            && existing.Name == record.Name && record.PresetKey.Length != 0 && record.BoundName == record.Name;
+                        if (!backfill) continue;
+                        PinRecord enriched = existing.Copy(); enriched.PresetKey = record.PresetKey; enriched.BoundName = record.BoundName;
+                        metadata[record.Key] = enriched; changed = true; continue;
+                    }
+                    PinRecord replacement = record.Copy();
+                    if (existed && existing.PresetKey.Length == 0 && existing.BoundName.Length != 0 && existing.BoundName == record.Name)
+                    { replacement.PresetKey = ""; replacement.BoundName = existing.BoundName; }
+                    metadata[record.Key] = replacement; changed = true;
                 }
                 while (metadata.Count > MaximumMetadata)
                 {
@@ -157,19 +204,20 @@ namespace ValheimModPack.PinRemoval
             using (var stream = new MemoryStream(bytes, 0, bytes.Length - 32))
             using (var reader = new BinaryReader(stream, Encoding.UTF8))
             {
-                if (reader.ReadInt32() != Magic || reader.ReadInt32() != Format
+                int magic = reader.ReadInt32(), format = reader.ReadInt32();
+                if (magic != Magic || (format != 1 && format != Format)
                     || reader.ReadInt64() != World || reader.ReadInt64() != Character)
                     throw new InvalidDataException("Map history belongs to a different world/character or version");
                 int count = ReadCount(reader, MaximumDeleted); var ids = new HashSet<string>(StringComparer.Ordinal);
                 for (int i = 0; i < count; i++)
                 {
-                    var entry = Read(reader); Guid parsed;
+                    var entry = Read(reader, format); Guid parsed;
                     if (!Guid.TryParseExact(entry.Id, "N", out parsed) || !ids.Add(entry.Id) || entry.DeletedUtc == 0)
                         throw new InvalidDataException("Invalid map deletion ID");
                     deleted.Add(entry);
                 }
                 count = ReadCount(reader, MaximumMetadata);
-                for (int i = 0; i < count; i++) { var entry = Read(reader); metadata.Add(entry.Key, entry); }
+                for (int i = 0; i < count; i++) { var entry = Read(reader, format); metadata.Add(entry.Key, entry); }
                 if (stream.Position != stream.Length) throw new InvalidDataException("Unexpected map history data");
             }
         }
@@ -190,13 +238,15 @@ namespace ValheimModPack.PinRemoval
             writer.Write(entry.Type); writer.Write(entry.X); writer.Write(entry.Y); writer.Write(entry.Z); writer.Write(entry.WorldSize);
             writer.Write(entry.Owner); writer.Write(entry.CreatedUtc); writer.Write(entry.DeletedUtc); writer.Write(entry.RestoredUtc);
             writer.Write(entry.Checked); writer.Write(entry.DoubleSize); writer.Write(entry.Animate);
+            WriteText(writer, entry.PresetKey); WriteText(writer, entry.BoundName);
         }
-        private static PinRecord Read(BinaryReader reader)
+        private static PinRecord Read(BinaryReader reader, int format)
         {
             var entry = new PinRecord { Id = ReadText(reader, 32), Name = ReadText(reader, 256), Author = ReadText(reader, 256), CreatorName = ReadText(reader, 128),
                 Type = reader.ReadInt32(), X = reader.ReadSingle(), Y = reader.ReadSingle(), Z = reader.ReadSingle(), WorldSize = reader.ReadSingle(),
                 Owner = reader.ReadInt64(), CreatedUtc = reader.ReadInt64(), DeletedUtc = reader.ReadInt64(), RestoredUtc = reader.ReadInt64(),
                 Checked = reader.ReadBoolean(), DoubleSize = reader.ReadBoolean(), Animate = reader.ReadBoolean() };
+            if (format >= 2) { entry.PresetKey = ReadText(reader, 96); entry.BoundName = ReadText(reader, 256); }
             entry.Validate(); return entry;
         }
     }

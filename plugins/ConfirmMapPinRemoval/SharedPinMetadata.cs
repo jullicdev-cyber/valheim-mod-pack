@@ -8,7 +8,8 @@ namespace ValheimModPack.PinRemoval
 {
     internal sealed class SharedPinMetadata : IDisposable
     {
-        private const string RpcName = "VMP_PinMetadata_1", DataKey = "vmp_pin_metadata_1";
+        private const string RpcName = "VMP_PinMetadata_2", DataKey = "vmp_pin_metadata_2";
+        private const string LegacyRpcName = "VMP_PinMetadata_1", LegacyDataKey = "vmp_pin_metadata_1";
         private static readonly FieldInfo ViewField = AccessTools.Field(typeof(MapTable), "m_nview");
         private static SharedPinMetadata active;
         private readonly Action<Exception> report;
@@ -20,6 +21,7 @@ namespace ValheimModPack.PinRemoval
             internal long Sender, World;
             internal byte[] Hash;
             internal HashSet<string> Present;
+            internal Dictionary<string, string> Names;
             internal float Received;
         }
         internal SharedPinMetadata(Harmony harmony, Action<Exception> reporter)
@@ -29,7 +31,7 @@ namespace ValheimModPack.PinRemoval
             Patch(harmony, "Start", Type.EmptyTypes, null, "Register");
             Patch(harmony, "OnWrite", new[] { typeof(Switch), typeof(Humanoid), typeof(ItemDrop.ItemData) }, "BeforeWrite", "AfterWrite");
             Patch(harmony, "GetMapData", new[] { typeof(byte[]) }, null, "CaptureWrite");
-            Patch(harmony, "RPC_MapData", new[] { typeof(long), typeof(ZPackage) }, null, "MapReceived");
+            Patch(harmony, "RPC_MapData", new[] { typeof(long), typeof(ZPackage) }, "BeforeMapReceived", "MapReceived");
             Patch(harmony, "OnRead", new[] { typeof(Switch), typeof(Humanoid), typeof(ItemDrop.ItemData), typeof(bool) }, null, "AfterRead");
             active = this;
         }
@@ -48,7 +50,8 @@ namespace ValheimModPack.PinRemoval
             {
                 ZNetView view = View(__instance); if (view == null || !view.IsValid()) return;
                 MapTable table = __instance;
-                view.Register<ZPackage>(RpcName, (sender, package) => service.Receive(table, sender, package));
+                view.Register<ZPackage>(RpcName, (sender, package) => service.Receive(table, sender, package, false));
+                view.Register<ZPackage>(LegacyRpcName, (sender, package) => service.Receive(table, sender, package, true));
             }
             catch (Exception error) { service.report(error); }
         }
@@ -75,7 +78,17 @@ namespace ValheimModPack.PinRemoval
             }
             catch (Exception error) { service.report(error); }
         }
-        private static void MapReceived(MapTable __instance, long __0, ZPackage __1)
+        private static void BeforeMapReceived(MapTable __instance, out SharedPinCodec.Payload __state)
+        {
+            __state = null; if (active == null) return;
+            try
+            {
+                ZNetView view = View(__instance);
+                if (view != null && view.IsValid() && view.IsOwner()) __state = Read(view);
+            }
+            catch (Exception error) { active.report(error); }
+        }
+        private static void MapReceived(MapTable __instance, long __0, ZPackage __1, SharedPinCodec.Payload __state)
         {
             SharedPinMetadata service = active; if (service == null || service.disposed) return;
             try
@@ -84,19 +97,21 @@ namespace ValheimModPack.PinRemoval
                 if (view == null || !view.IsValid() || !view.IsOwner() || ZNet.instance == null) return;
                 byte[] current = view.GetZDO().GetByteArray("data", null);
                 if (current == null || !SharedPinCodec.SameHash(SharedPinCodec.Hash(current), SharedPinCodec.Hash(__1.GetArray()))) return;
+                Dictionary<string, string> names = SharedPinCodec.ReadVanillaNames(current);
                 var receipt = new Receipt { Sender = __0, World = ZNet.instance.GetWorldUID(), Hash = SharedPinCodec.Hash(current),
-                    Present = SharedPinCodec.ReadVanillaKeys(current), Received = Time.realtimeSinceStartup };
+                    Names = names, Present = new HashSet<string>(names.Keys, StringComparer.Ordinal), Received = Time.realtimeSinceStartup };
                 service.Prune();
                 if (service.receipts.Count >= 128 && !service.receipts.ContainsKey(__instance)) return;
                 service.receipts[__instance] = receipt;
                 // Preserve metadata from previous writers only for pins that survived the actual native update.
-                var old = Read(view);
-                var kept = old != null && old.World == receipt.World ? SharedPinCodec.Merge(old.Records, new PinRecord[0], receipt.Present) : new List<PinRecord>();
+                var old = __state;
+                var kept = old != null && old.World == receipt.World
+                    ? SharedPinCodec.Merge(old.Records, new PinRecord[0], receipt.Present, receipt.Names) : new List<PinRecord>();
                 Write(view, new SharedPinCodec.Payload { World = receipt.World, MapHash = receipt.Hash, Records = kept });
             }
             catch (Exception error) { service.report(error); }
         }
-        private void Receive(MapTable table, long sender, ZPackage package)
+        private void Receive(MapTable table, long sender, ZPackage package, bool legacy)
         {
             if (disposed || table == null || package == null || package.Size() > SharedPinCodec.MaximumBytes) return;
             try
@@ -105,13 +120,14 @@ namespace ValheimModPack.PinRemoval
                 if (view == null || !view.IsValid() || !view.IsOwner() || !receipts.TryGetValue(table, out receipt)
                     || sender != receipt.Sender || Time.realtimeSinceStartup - receipt.Received > 15f || ZNet.instance == null) return;
                 var incoming = SharedPinCodec.Decode(package.GetArray());
+                if (legacy && incoming.Version != 1) return;
                 byte[] current = view.GetZDO().GetByteArray("data", null);
                 if (incoming.World != receipt.World || incoming.World != ZNet.instance.GetWorldUID()
                     || !SharedPinCodec.SameHash(incoming.MapHash, receipt.Hash) || current == null
                     || !SharedPinCodec.SameHash(incoming.MapHash, SharedPinCodec.Hash(current))) return;
                 var previous = Read(view);
                 var records = SharedPinCodec.Merge(previous == null ? (IEnumerable<PinRecord>)new PinRecord[0] : previous.Records,
-                    incoming.Records, receipt.Present);
+                    incoming.Records, receipt.Present, receipt.Names);
                 Write(view, new SharedPinCodec.Payload { World = receipt.World, MapHash = receipt.Hash, Records = records });
                 receipts.Remove(table); // One bounded extension per accepted native map write.
             }
@@ -141,11 +157,48 @@ namespace ValheimModPack.PinRemoval
         }
         private static SharedPinCodec.Payload Read(ZNetView view)
         {
-            byte[] bytes = view.GetZDO().GetByteArray(DataKey, null);
-            return bytes == null ? null : SharedPinCodec.Decode(bytes);
+            byte[] current = view.GetZDO().GetByteArray("data", null);
+            if (current == null || ZNet.instance == null) return null;
+            byte[] hash = SharedPinCodec.Hash(current); long world = ZNet.instance.GetWorldUID();
+            // An old table owner only refreshes legacy data. Its new native map must never pick up stale v2 labels.
+            var modern = ReadMatching(view, DataKey, 2, hash, world);
+            var legacy = ReadMatching(view, LegacyDataKey, 1, hash, world);
+            // A dates-only update can also leave identical native map bytes (e.g. a recreated pin at
+            // the exact same position). In that case the legacy provenance, not stale v2 labels, wins.
+            return modern != null && (legacy == null || SameDates(modern, legacy)) ? modern : legacy;
+        }
+        private static bool SameDates(SharedPinCodec.Payload modern, SharedPinCodec.Payload legacy)
+        {
+            if (modern.Records.Count != legacy.Records.Count) return false;
+            var byKey = new Dictionary<string, PinRecord>(StringComparer.Ordinal);
+            foreach (PinRecord record in modern.Records) byKey[record.Key] = record;
+            foreach (PinRecord record in legacy.Records)
+            {
+                PinRecord known;
+                if (!byKey.TryGetValue(record.Key, out known) || known.CreatedUtc != record.CreatedUtc || known.CreatorName != record.CreatorName) return false;
+            }
+            return true;
+        }
+        private static SharedPinCodec.Payload ReadMatching(ZNetView view, string key, int version, byte[] hash, long world)
+        {
+            byte[] bytes = view.GetZDO().GetByteArray(key, null);
+            if (bytes == null) return null;
+            try
+            {
+                var value = SharedPinCodec.Decode(bytes);
+                return value.Version == version && value.World == world && SharedPinCodec.SameHash(value.MapHash, hash) ? value : null;
+            }
+            catch (System.IO.InvalidDataException) { return null; }
+            catch (System.IO.EndOfStreamException) { return null; }
+            catch (System.Text.DecoderFallbackException) { return null; }
         }
         private static void Write(ZNetView view, SharedPinCodec.Payload value)
-        { if (view.IsOwner()) view.GetZDO().Set(DataKey, SharedPinCodec.Encode(value)); }
+        {
+            if (!view.IsOwner()) return;
+            byte[] modern = SharedPinCodec.Encode(value), legacy = SharedPinCodec.Encode(value, true);
+            view.GetZDO().Set(LegacyDataKey, legacy); // Old readers still understand the original dates-only format.
+            view.GetZDO().Set(DataKey, modern);
+        }
         private static ZNetView View(MapTable table) { return table == null ? null : ViewField.GetValue(table) as ZNetView; }
         private void Prune()
         {

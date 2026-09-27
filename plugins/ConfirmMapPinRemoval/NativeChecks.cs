@@ -64,8 +64,10 @@ namespace ValheimModPack.PinRemoval
                 Check(buttons.Length == 2, "Confirmation keeps exactly Cancel and Delete");
                 foreach (var button in buttons) { var sound = button.GetComponent<ButtonSfx>(); Check(sound == null || sound.m_selectSfxPrefab == null, "Confirmation double-sound fix retained"); }
                 confirmation.Hide(); Check(Blocks() == afterForeign, "Confirmation releases only its own input request");
+                string presets = PresetUiNativeChecks.Run();
                 return shared + " PASS: " + checks + " native map-history/confirmation assertions; "
-                    + (ownDelta == 1 ? "live input request increment and release exercised." : "input block is a no-op in menu/headless; live gameplay input still needs checking.");
+                    + (ownDelta == 1 ? "live input request increment and release exercised." : "input block is a no-op in menu/headless; live gameplay input still needs checking.")
+                    + " " + presets;
             }
             finally { window.Hide(); confirmation.Hide(); GUIManager.BlockInput(false); Check(Blocks() == baseline, "Probe restores starting input state"); }
         }

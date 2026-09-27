@@ -89,6 +89,15 @@ public class Minimap
 }
 namespace ValheimModPack.PinRemoval
 {
+    public sealed class QuickPinController : IDisposable
+    {
+        public bool IsBusy;
+        public QuickPinController(HarmonyLib.Harmony harmony, PinHistoryController history, System.Reflection.FieldInfo pins, Action<Exception> report) { }
+        public void Tick(bool allowed) { }
+        public void Close() { IsBusy = false; }
+        public void Dispose() { Close(); }
+        public string DisplayName(Minimap.PinData pin) { return pin.m_name; }
+    }
     public sealed class PinHistoryController : IDisposable
     {
         public bool IsOpen;

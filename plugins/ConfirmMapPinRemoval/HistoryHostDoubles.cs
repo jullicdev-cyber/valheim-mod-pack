@@ -3,6 +3,15 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 namespace BepInEx { public static class Paths { public static string GameRootPath; } }
+namespace ValheimModPack.PinRemoval
+{
+    public static class QuickPinController
+    {
+        public static string DisplayRecord(PinRecord pin) { return pin.Name; }
+        public static void RenameFromHistory(Minimap.PinData pin) { }
+        public static void RefreshKnownCaptions() { }
+    }
+}
 namespace HarmonyLib
 {
     public sealed class HarmonyMethod { public HarmonyMethod(Type type, string name) { } }

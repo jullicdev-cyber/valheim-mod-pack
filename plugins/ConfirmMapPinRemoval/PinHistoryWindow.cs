@@ -63,11 +63,11 @@ namespace ValheimModPack.PinRemoval
             for (int i = 0; i < rows.Count; i++)
             {
                 var row = rows[i]; float y = 197 - i * 76;
-                var name = Text(content.transform, row.Title, deletedTab ? -83 : 0, y, deletedTab ? 560 : 750, 25, 22, true);
+                var name = Text(content.transform, row.Title, -83, y, 560, 25, 22, true);
                 name.alignment = TextAnchor.MiddleLeft;
-                var details = Text(content.transform, row.Details, deletedTab ? -83 : 0, y - 30, deletedTab ? 560 : 750, 46, 16, false);
+                var details = Text(content.transform, row.Details, -83, y - 30, 560, 46, 16, false);
                 details.alignment = TextAnchor.UpperLeft;
-                if (deletedTab) Button(content.transform, row.ActionLabel, 298, y - 12, 145, 40, row.Activate).interactable = row.Enabled;
+                Button(content.transform, row.ActionLabel, 298, y - 12, 145, 40, row.Activate).interactable = row.Enabled;
             }
         }
         private static Text Text(Transform parent, string value, float x, float y, float width, float height, int size, bool title)
