@@ -20,7 +20,7 @@ REPO = 'jullicdev-cyber/valheim-mod-pack'
 def expand_archive(archive, destination, commit):
     if not re.fullmatch(r'[0-9a-f]{40}', commit):
         raise ValueError('Invalid GitHub commit.')
-    destination = Path(destination)
+    destination = Path(destination).resolve()
     if destination.exists():
         raise ValueError('Extraction directory must be new.')
     prefix = 'valheim-mod-pack-' + commit
@@ -35,8 +35,20 @@ def expand_archive(archive, destination, commit):
                 raise ValueError('Unsafe or duplicate archive entry: ' + name)
             seen.add(name.casefold())
         destination.mkdir(parents=True)
-        bundle.extractall(destination)
-    return destination / prefix
+        # Strip GitHub's wrapper directory; this also keeps portable archives
+        # usable from long Windows workspace paths during verification.
+        for item in bundle.infolist():
+            relative = item.filename[len(prefix):].lstrip('/')
+            if not relative:
+                continue
+            target = destination / relative
+            if item.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with bundle.open(item) as source, target.open('xb') as stream:
+                    shutil.copyfileobj(source, stream)
+    return destination
 
 
 def fetch(url):
@@ -58,7 +70,7 @@ def download_pack(root):
     print('Downloading main at', commit)
     with fetch('https://codeload.github.com/' + REPO + '/zip/' + commit) as response, archive.open('wb') as stream:
         shutil.copyfileobj(response, stream)
-    pack = expand_archive(archive, job / 'extracted', commit)
+    pack = expand_archive(archive, job / 'pack', commit)
     if not (pack / 'scripts/install_linux.py').is_file():
         raise ValueError('Downloaded Linux installer is missing.')
     verify_pack(pack)

@@ -19,6 +19,7 @@ import update_linux
 
 SHA = 'a' * 40
 PREFIX = 'valheim-mod-pack-' + SHA + '/'
+PAYLOAD = 'BepInEx/plugins/Goldenrevolver-Quick_Stack_Store_Sort_Trash_Restock/Translations/QuickStackStore.Chinese.json'
 
 
 class UpdateTests(unittest.TestCase):
@@ -36,10 +37,10 @@ class UpdateTests(unittest.TestCase):
         payload = b'new plugin'
         with zipfile.ZipFile(stream, 'w') as bundle:
             files = {
-                'Game/BepInEx/plugin.dll': payload,
+                'Game/' + PAYLOAD: payload,
                 'VERSION': b'1.4.9\n',
                 'mods.lock.json': json.dumps({'packVersion':'1.4.9','packages':[]}).encode(),
-                'files.sha256.json': json.dumps([{'path':'BepInEx/plugin.dll','sha256':hashlib.sha256(b'wrong' if corrupt else payload).hexdigest()}]).encode(),
+                'files.sha256.json': json.dumps([{'path':PAYLOAD,'sha256':hashlib.sha256(b'wrong' if corrupt else payload).hexdigest()}]).encode(),
                 'scripts/install_linux.py': b'# mock installer\n',
                 'scripts/Install-Windows.ps1': b'# mock installer\n',
             }
@@ -86,7 +87,7 @@ class UpdateTests(unittest.TestCase):
         (self.launcher / 'README.md').write_text('local changes')
         with patch.object(update_linux, 'fetch', self.fake_fetch(self.archive())):
             pack = update_linux.download_pack(self.launcher)
-        self.assertEqual((pack / 'Game/BepInEx/plugin.dll').read_bytes(), b'new plugin')
+        self.assertEqual((pack / 'Game' / PAYLOAD).read_bytes(), b'new plugin')
         self.assertEqual((self.launcher / 'README.md').read_text(), 'local changes')
         self.assertEqual(json.loads((self.launcher / '.updates/latest.json').read_text())['commit'], SHA)
         self.assertFalse((self.game / 'BepInEx').exists())
@@ -110,7 +111,7 @@ class UpdateTests(unittest.TestCase):
         link.create_system = 3
         link.external_attr = (stat.S_IFLNK | 0o777) << 16
         for entry in [(PREFIX+'../escape', b'bad'), ('/absolute', b'bad'),
-                      (PREFIX+'Game/BepInEx/plugin.dll', b'duplicate'), (link, b'../../escape')]:
+                      (PREFIX+'Game/'+PAYLOAD, b'duplicate'), (link, b'../../escape')]:
             with self.assertRaises(ValueError):
                 update_linux.expand_archive(io.BytesIO(self.archive(extra=entry)), self.folder / 'extracted', SHA)
             self.assertFalse((self.folder / 'extracted').exists())

@@ -12,12 +12,18 @@ function Expand-PackArchive([string]$Archive, [string]$Destination, [string]$Com
             $name = $entry.FullName
             if (-not $name.StartsWith($prefix, [StringComparison]::Ordinal) -or $name -match '[\\:<>|?*]' -or $name -match '(^|/)\.{1,2}(/|$)') { throw "Unsafe archive entry: $name" }
             if ((($entry.ExternalAttributes -shr 16) -band 0xF000) -eq 0xA000) { throw "Archive link rejected: $name" }
-            $path = [IO.Path]::GetFullPath((Join-Path $Destination $name))
+            $relative = $name.Substring($prefix.Length)
+            if (-not $relative) { continue }
+            $path = [IO.Path]::GetFullPath((Join-Path $Destination $relative))
             if (-not $path.StartsWith($base, [StringComparison]::OrdinalIgnoreCase) -or -not $seen.Add($path)) { throw "Duplicate or escaped archive path: $name" }
         }
         New-Item -ItemType Directory -Path $Destination | Out-Null
         foreach ($entry in $zip.Entries) {
-            $path = Join-Path $Destination $entry.FullName
+            # Omit GitHub's 57-character wrapper directory to stay within Windows
+            # PowerShell 5.1 path limits even with long third-party plugin names.
+            $relative = $entry.FullName.Substring($prefix.Length)
+            if (-not $relative) { continue }
+            $path = Join-Path $Destination $relative
             if ($entry.FullName.EndsWith('/')) { New-Item -ItemType Directory -Path $path -Force | Out-Null }
             else {
                 New-Item -ItemType Directory -Path (Split-Path $path -Parent) -Force | Out-Null
@@ -25,7 +31,7 @@ function Expand-PackArchive([string]$Archive, [string]$Destination, [string]$Com
             }
         }
     } finally { $zip.Dispose() }
-    return Join-Path $Destination $prefix.TrimEnd('/')
+    return [IO.Path]::GetFullPath($Destination)
 }
 
 function Save-PackArchive([string]$Uri, [string]$OutFile) {
@@ -57,7 +63,7 @@ function Get-LatestPack([string]$PackRoot) {
     $archive = Join-Path $job 'pack.zip'
     Write-Host "Downloading main at $commit ..."
     Save-PackArchive "https://codeload.github.com/jullicdev-cyber/valheim-mod-pack/zip/$commit" $archive
-    $pack = Expand-PackArchive $archive (Join-Path $job 'extracted') $commit
+    $pack = Expand-PackArchive $archive (Join-Path $job 'pack') $commit
     foreach ($name in @('VERSION','mods.lock.json','files.sha256.json','scripts/Install-Windows.ps1')) {
         if (-not (Test-Path -LiteralPath (Join-Path $pack $name) -PathType Leaf)) { throw "Incomplete downloaded pack: $name" }
     }
