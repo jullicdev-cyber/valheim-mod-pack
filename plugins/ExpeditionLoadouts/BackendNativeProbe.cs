@@ -21,6 +21,7 @@ namespace ValheimModPack.LoadoutSmoke
     [BepInDependency("valheimmodpack.interfaceinputfix", "1.0.0")]
     [BepInDependency("valheimmodpack.renewableresourcetimers", "1.0.0")]
     [BepInDependency("valheimmodpack.nordicradio", "1.1.1")]
+    [BepInDependency("isimp.Bindrune", "0.5.0")]
     public sealed class BackendNativeProbe : BaseUnityPlugin
     {
         private static readonly BindingFlags All = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
@@ -76,6 +77,7 @@ namespace ValheimModPack.LoadoutSmoke
                 Check(GUIManager.CustomGUIFront != null, "Native probe GUI canvas initialized");
                 report += ValheimModPack.ChestSearch.NativeChecks.Run() + "\n";
                 report += ValheimModPack.InterfaceInputFix.NativeChecks.Run() + "\n";
+                report += ValheimModPack.InterfaceInputFix.BindruneNativeChecks.Run() + "\n";
                 report += ValheimModPack.RenewableResourceTimers.NativeChecks.Run() + "\n";
                 string mapProbe = Path.Combine(Root, "PinHistoryNativeChecks.dll");
                 if (!File.Exists(mapProbe)) throw new FileNotFoundException("Map native probe missing", mapProbe);

@@ -10,7 +10,7 @@ namespace BepInEx
     { public BepInDependency(string id, string version) { } }
     public class BaseUnityPlugin
     {
-        public bool isActiveAndEnabled = true;
+        public bool isActiveAndEnabled = true; public object Config;
         public readonly Log Logger = new Log();
     }
     public class Log
@@ -101,9 +101,17 @@ public class Minimap
 }
 namespace ValheimModPack.PinRemoval
 {
+    internal sealed class MapControls
+    {
+        internal sealed class Entry { internal object Value; }
+        internal Entry History = new Entry(), Quick = new Entry(), Place = new Entry(), Rename = new Entry();
+        internal MapControls(object config) { }
+        internal static bool Down(object key) { return false; }
+        internal static bool Held(object key) { return false; }
+    }
     public sealed class QuickPinController : IDisposable
     {
-        public bool IsBusy;
+        public bool IsBusy; public Func<bool> OpenShortcut, PlaceModifier, RenameModifier;
         public QuickPinController(HarmonyLib.Harmony harmony, PinHistoryController history, System.Reflection.FieldInfo pins, Action<Exception> report) { }
         public void Tick(bool allowed) { }
         public void Close() { IsBusy = false; }
@@ -112,7 +120,7 @@ namespace ValheimModPack.PinRemoval
     }
     public sealed class PinHistoryController : IDisposable
     {
-        public bool IsOpen;
+        public bool IsOpen; public Func<bool> OpenShortcut;
         public PinHistoryController(HarmonyLib.Harmony harmony, System.Reflection.FieldInfo pins, Action<Exception> report) { }
         public void Tick(bool canOpen) { }
         public void Close() { IsOpen = false; }

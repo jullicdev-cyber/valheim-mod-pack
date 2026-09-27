@@ -82,6 +82,7 @@ public static class SharedMetadataTests
         try
         {
             controller=new PinHistoryController(new Harmony(),AccessTools.Field(typeof(Minimap),"m_pins"),errors.Add);
+            controller.OpenShortcut = () => UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.H) && UnityEngine.Input.GetKey(UnityEngine.KeyCode.LeftControl);
             controller.Tick(true);
             var table=Table(native);Send(table,5,metadata);Check(Stored(table).Records.Count==1,"native write grants one matching extension");
             var labels=Table(native);Send(labels,5,Metadata(native,new[]{bound}));

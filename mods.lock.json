@@ -1,5 +1,5 @@
 {
-  "packVersion": "1.9.1",
+  "packVersion": "1.10.0",
   "created": "2026-09-25",
   "targetGameVersion": "1.0.16",
   "packages": [
@@ -220,15 +220,29 @@
       ],
       "sourceSubdirectory": "",
       "destination": "BepInEx/plugins/TastyChickenLegs-AutomaticFuel"
+    },
+    {
+      "id": "isimp-Bindrune",
+      "version": "0.5.0",
+      "source": "Thunderstore",
+      "page": "https://thunderstore.io/c/valheim/p/isimp/Bindrune/",
+      "downloadUrl": "https://thunderstore.io/package/download/isimp/Bindrune/0.5.0/",
+      "sha256": "60c8333110fe4f0d44af3cdda686285d4247c33bd7b469403e87215028a63005",
+      "dependencies": [
+        "denikson-BepInExPack_Valheim-5.4.2350",
+        "ValheimModding-Jotunn-2.30.1"
+      ],
+      "sourceSubdirectory": "",
+      "destination": "BepInEx/plugins/isimp-Bindrune"
     }
   ],
   "localPlugins": [
     {
       "id": "ValheimModPack-EAQSQuickStackBridge",
-      "version": "1.1.1",
+      "version": "1.2.0",
       "source": "local-plugins/EAQSQuickStackBridge.dll",
       "destination": "BepInEx/plugins/ValheimModPack-EAQSQuickStackBridge/EAQSQuickStackBridge.dll",
-      "sha256": "3bf8ac0436de41cdeea7a73e578a9a11486d1aae530a4896eecc9fd0dfb49049",
+      "sha256": "5276ad7f22d5ee390d5750acbb07f99748e64d5aa6013698b4e31543d555f053",
       "dependencies": [
         "Goldenrevolver-Quick_Stack_Store_Sort_Trash_Restock-1.4.15",
         "RandyKnapp-EquipmentAndQuickSlots-3.1.3",
@@ -237,10 +251,10 @@
     },
     {
       "id": "ValheimModPack-ConfirmMapPinRemoval",
-      "version": "1.3.2",
+      "version": "1.4.0",
       "source": "local-plugins/ConfirmMapPinRemoval.dll",
       "destination": "BepInEx/plugins/ValheimModPack-ConfirmMapPinRemoval/ConfirmMapPinRemoval.dll",
-      "sha256": "3717cb32200830888eb1b618ff93b68fb566252cc9f84b22149b8c5de070ba61",
+      "sha256": "4fe34a925bcfdbaf00b21ad09c8c0c09a2aff19eef215eae01b90458b5b8a510",
       "dependencies": [
         "denikson-BepInExPack_Valheim-5.4.2351",
         "ValheimModding-Jotunn-2.30.2"
@@ -259,10 +273,10 @@
     },
     {
       "id": "ValheimModPack-ExpeditionLoadouts",
-      "version": "1.1.1",
+      "version": "1.2.0",
       "source": "local-plugins/ExpeditionLoadouts.dll",
       "destination": "BepInEx/plugins/ValheimModPack-ExpeditionLoadouts/ExpeditionLoadouts.dll",
-      "sha256": "56dc19b1ab006f5378a07c67a1e24bcea55505db07d0e65c5c03ca573556d228",
+      "sha256": "dddedf2d049a607e02cd8bbe0a363bfa11e21feef6ad1143edf16ad7812517b3",
       "dependencies": [
         "denikson-BepInExPack_Valheim-5.4.2351",
         "ValheimModding-Jotunn-2.30.2"
@@ -287,8 +301,8 @@
         "denikson-BepInExPack_Valheim-5.4.2351",
         "ValheimModding-Jotunn-2.30.2"
       ],
-      "version": "1.0.0",
-      "sha256": "52e364d5ab35edbc9caa31195f152987661d56f8edf4ad49be5a37aa985e6790"
+      "version": "1.1.0",
+      "sha256": "3ebf70e9860b7525df9bf9577abf37dc37d42eb4eec4de288ea435fe320bbbb9"
     },
     {
       "id": "ValheimModPack-RenewableResourceTimers",

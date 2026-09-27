@@ -75,6 +75,17 @@ def install(root, target):
                 if personal.is_symlink() or not personal.is_file():
                     raise ValueError('Personal Quick Stack data must be a regular file: ' + personal.name)
                 shutil.copy2(personal, stage / 'BepInEx/config' / personal.name)
+    # These are personal Bindrune state, not shared modpack settings.
+    for relative in ('BepInEx/bindrune.keys', 'BepInEx/bindrune.spare', 'BepInEx/config/Bindrune/situations.txt', 'BepInEx/config/isimp.Bindrune.cfg'):
+        personal = target / relative
+        if personal.is_symlink():
+            raise ValueError('Personal bindings must be a regular file: ' + relative)
+        if personal.exists():
+            if not personal.is_file() or any(parent.is_symlink() for parent in personal.parents if parent != target):
+                raise ValueError('Personal bindings must be an unlinked regular file: ' + relative)
+            destination = stage / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(personal, destination)
     # Upstream shell files may have CRLF in Windows downloads.
     launcher = stage / 'start_game_bepinex.sh'
     launcher.write_bytes(launcher.read_bytes().replace(b'\r\n', b'\n'))

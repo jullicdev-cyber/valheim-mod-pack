@@ -20,7 +20,8 @@ foreach ($mod in $lock.packages) {
     $target = if ($mod.destination) { Join-Path $output $mod.destination } else { $output }
     New-Item -ItemType Directory -Force $target | Out-Null
     foreach ($entry in Get-ChildItem -LiteralPath $source -Force) {
-        if (-not $mod.sourceSubdirectory -and $entry.Name -match '^(manifest\.json|icon\.png|README\.md|CHANGELOG\.md|LICENSE.*)$') { continue }
+        if ($mod.id -eq 'isimp-Bindrune' -and $entry.Name -eq 'docs') { continue }
+        if (-not $mod.sourceSubdirectory -and $entry.Name -match '^(manifest\.json|icon\.png|README\.md|CHANGELOG\.md|for-mod-authors\.md|LICENSE.*)$') { continue }
         Copy-Item -LiteralPath $entry.FullName -Destination $target -Recurse -Force
     }
 }
@@ -34,4 +35,7 @@ foreach ($local in $lock.localPlugins) {
 $config = Join-Path $output 'BepInEx/config'
 New-Item -ItemType Directory -Force $config | Out-Null
 Copy-Item -Path (Join-Path $root 'config/*.cfg') -Destination $config -Force
+if (Test-Path -LiteralPath (Join-Path $root 'config/Bindrune')) {
+    Copy-Item -LiteralPath (Join-Path $root 'config/Bindrune') -Destination (Join-Path $config 'Bindrune') -Recurse
+}
 Write-Output "Built locked pack: $output"

@@ -7,7 +7,7 @@ using System.Reflection;
 using BepInEx.Configuration;
 using BepInEx.Bootstrap;
 
-namespace UnityEngine { public enum KeyCode { None, O } }
+namespace UnityEngine { public enum KeyCode { None, O, U } }
 public struct Vector2i { public int x, y; }
 public class Inventory { public int GetWidth() { return 8; } public int GetHeight() { return 8; } }
 public class Player { public static Player m_localPlayer; public Inventory GetInventory() { return null; } }
@@ -24,14 +24,28 @@ namespace BepInEx.Configuration
 {
     public class ConfigDefinition
     {
-        private readonly string id;
-        public ConfigDefinition(string section,string key) { id=section+"."+key; }
+        private readonly string id; public string Section,Key;
+        public ConfigDefinition(string section,string key) { Section=section; Key=key; id=section+"."+key; }
         public override bool Equals(object o) { return o is ConfigDefinition && ((ConfigDefinition)o).id==id; }
         public override int GetHashCode() { return id.GetHashCode(); }
     }
-    public class ConfigEntryBase { public object BoxedValue; public Type SettingType; }
-    public class ConfigFile : Dictionary<ConfigDefinition,ConfigEntryBase> { public bool SaveOnConfigSet=true; }
-    public struct KeyboardShortcut { public UnityEngine.KeyCode MainKey; public KeyboardShortcut(UnityEngine.KeyCode key) { MainKey=key; } }
+    public class ConfigEntryBase { public object BoxedValue; public Type SettingType; public ConfigFile ConfigFile; public ConfigDefinition Definition; public string GetSerializedValue(){return "";} }
+    public class ConfigEntry<T> : ConfigEntryBase
+    {
+        public event EventHandler SettingChanged;
+        public T Value { get { return (T)BoxedValue; } set { BoxedValue=value; if(SettingChanged!=null)SettingChanged(this,EventArgs.Empty); } }
+    }
+    public class ConfigFile : Dictionary<ConfigDefinition,ConfigEntryBase>
+    {
+        public bool SaveOnConfigSet=true;
+        public ConfigEntry<T> Bind<T>(string section,string key,T value,string description)
+        {
+            var def=new ConfigDefinition(section,key);
+            if(!ContainsKey(def)) Add(def,new ConfigEntry<T> { BoxedValue=value,SettingType=typeof(T) });
+            return (ConfigEntry<T>)this[def];
+        }
+    }
+    public struct KeyboardShortcut { public static KeyboardShortcut Empty; public UnityEngine.KeyCode MainKey; public KeyboardShortcut(UnityEngine.KeyCode key) { MainKey=key; } }
 }
 namespace BepInEx.Bootstrap
 {
@@ -51,7 +65,7 @@ namespace HarmonyLib
     }
     public static class AccessTools
     {
-        public static MethodInfo Method(string s,Type[] types=null) { return typeof(StartupTests).GetMethod(s.Contains("InternalIs") ? "Filter" : "Sort"); }
+        public static MethodInfo Method(Type type,string name) { return type.GetMethod(name); } public static MethodInfo Method(string s,Type[] types=null) { return typeof(StartupTests).GetMethod(s.Contains("InternalIs") ? "Filter" : "Sort"); }
     }
 }
 public static class StartupTests
@@ -76,11 +90,16 @@ public static class StartupTests
         var key=new ConfigEntryBase { SettingType=typeof(KeyboardShortcut),BoxedValue=new KeyboardShortcut(UnityEngine.KeyCode.None) };
         qs.Instance.Config.Add(new ConfigDefinition("4 - Sorting","SortKeybind"),key);
         Check(!start.MoveNext(),"Initialization should complete after config is bound");
-        Check(HarmonyLib.Harmony.Patches==2 && plugin.Logger.Errors==0,"Both protection hooks must install before enabling controls");
+        Check(HarmonyLib.Harmony.Patches==3 && plugin.Logger.Errors==0,"Both protection hooks must install before enabling controls");
         Check((Buttons)display.BoxedValue==Buttons.Both && ((KeyboardShortcut)key.BoxedValue).MainKey==UnityEngine.KeyCode.O,"O and buttons must enable");
         Check(qs.Instance.Config.SaveOnConfigSet,"SaveOnConfigSet must be restored");
+        var custom=(ConfigEntry<KeyboardShortcut>)plugin.Config[new ConfigDefinition("Controls","SortShortcut")];
+        custom.Value=new KeyboardShortcut(UnityEngine.KeyCode.U);
+        Check(((KeyboardShortcut)key.BoxedValue).MainKey==UnityEngine.KeyCode.U,"Rebinding bridge updates the actual sorter immediately");
+        custom.Value=KeyboardShortcut.Empty;
+        Check(((KeyboardShortcut)key.BoxedValue).MainKey==UnityEngine.KeyCode.None,"Unbinding is respected without disabling slot protection");
         typeof(ValheimModPack.Plugin).GetMethod("Initialize",BindingFlags.NonPublic|BindingFlags.Instance).Invoke(plugin,null);
-        Check(HarmonyLib.Harmony.Patches==2,"Repeated initialization must not duplicate inventory protection hooks");
+        Check(HarmonyLib.Harmony.Patches==3,"Repeated initialization must not duplicate inventory protection hooks");
         Check(ValheimModPack.SlotPolicy.IsProtected(0,0,8,Int32.MaxValue,Int32.MaxValue-1,Int32.MaxValue),"Unbounded matching geometry must stop sorting before native cell enumeration");
         typeof(ValheimModPack.Plugin).GetMethod("OnDestroy",BindingFlags.NonPublic|BindingFlags.Instance).Invoke(plugin,null);
         Check((Buttons)display.BoxedValue==Buttons.OnlyContainerButton && HarmonyLib.Harmony.Patches==0,"Shutdown must restore guard");

@@ -216,6 +216,11 @@ namespace ValheimModPack.PinRemoval
                 Player.m_localPlayer=new Player(); Player.m_localPlayer.transform.position=new Vector3(1,2,3);
                 ZNet.instance=new ZNet(); Minimap.instance=new Minimap();
                 Controller=new QuickPinController(Harmony,new PinHistoryController(),typeof(Minimap).GetField("m_pins"),error=>Errors.Add(error));
+                Controller.OpenShortcut = () => Input.GetKeyDown(KeyCode.P)
+                    && (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl))
+                    && !Input.GetKey(KeyCode.LeftAlt) && !Input.GetKey(KeyCode.RightAlt);
+                Controller.PlaceModifier = () => Input.GetKey(KeyCode.LeftShift);
+                Controller.RenameModifier = () => Input.GetKey(KeyCode.LeftAlt);
                 Frame();
             }
             public void Frame(params KeyCode[] keys) { Input.Keys.Clear(); foreach(var key in keys) Input.Keys.Add(key); Time.unscaledTime+=1; Controller.Tick(true); }

@@ -9,7 +9,7 @@ using UnityEngine.UI;
 
 namespace ValheimModPack.ExpeditionLoadouts
 {
-    [BepInPlugin(Id, "Expedition Loadouts", "1.1.1")]
+    [BepInPlugin(Id, "Expedition Loadouts", "1.2.0")]
     [BepInDependency("com.jotunn.jotunn", "2.30.2")]
     [BepInDependency("randyknapp.mods.equipmentandquickslots", BepInDependency.DependencyFlags.SoftDependency)]
     [BepInDependency("goldenrevolver.quick_stack_store", BepInDependency.DependencyFlags.SoftDependency)]
@@ -20,6 +20,19 @@ namespace ValheimModPack.ExpeditionLoadouts
         public ChestService Service { get; private set; }
         public PresetStore Store { get; private set; }
         private ConfigEntry<KeyboardShortcut> shortcut;
+        private ConfigEntry<KeyboardShortcut> largeStep;
+        internal string LargeStepLabel { get { return largeStep.Value.ToString(); } }
+        internal bool LargeStepHeld
+        {
+            get
+            {
+                var key = largeStep.Value;
+                // Preserve either Shift for the default while allowing full rebinding.
+                return key.IsPressed() || (key.Equals(new KeyboardShortcut(KeyCode.LeftShift))
+                    && Input.GetKey(KeyCode.RightShift) && !Input.GetKey(KeyCode.LeftControl) && !Input.GetKey(KeyCode.RightControl)
+                    && !Input.GetKey(KeyCode.LeftAlt) && !Input.GetKey(KeyCode.RightAlt));
+            }
+        }
         private ConfigEntry<float> radius;
         private LoadoutWindow window;
         private Player owner;
@@ -34,6 +47,8 @@ namespace ValheimModPack.ExpeditionLoadouts
         {
             shortcut = Config.Bind("Controls", "OpenShortcut", new KeyboardShortcut(KeyCode.L, KeyCode.LeftControl),
                 "Open expedition loadouts while the inventory is open.");
+            largeStep = Config.Bind("Controls", "LargeAmountModifier", new KeyboardShortcut(KeyCode.LeftShift),
+                "Hold while clicking +/- to change the target by 10 / Удерживать при нажатии +/- для шага 10.");
             radius = Config.Bind("Storage", "Radius", 10f, new ConfigDescription("Radius of loaded accessible chests, in metres.", new AcceptableValueRange<float>(1, 30)));
             directory = Path.Combine(Directory.GetParent(BepInEx.Paths.BepInExRootPath).FullName, "ValheimModpack/ExpeditionLoadouts");
             try

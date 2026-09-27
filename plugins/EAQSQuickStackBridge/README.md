@@ -1,4 +1,6 @@
-# EAQS Quick Stack Bridge 1.1.1
+# EAQS Quick Stack Bridge 1.2.0
+
+Version 1.2.0 exposes `Controls/SortShortcut` (default O) for live rebinding in Bindrune. Change this entry, not Quick Stack's `SortKeybind`. A narrow serialization hook keeps Quick Stack's on-disk sorting controls guarded even when another config entry is saved; only the validated bridge enables sorting in memory. Native tests verify persistence, rebinding and the guard together.
 
 Local compatibility plugin for Quick Stack Store Sort Trash Restock **1.4.15**, Equipment and Quick Slots **3.1.3**, and optional AzuAutoStore **3.1.6**. Original vendor DLLs are unchanged. The bridge applies Harmony patches in memory.
 

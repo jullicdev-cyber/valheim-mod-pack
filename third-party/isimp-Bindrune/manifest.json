@@ -1,0 +1,10 @@
+{
+  "name": "Bindrune",
+  "version_number": "0.5.0",
+  "website_url": "https://github.com/isimp/Bindrune",
+  "description": "Every keybind from the game and your mods in one panel, with clashes explained and rebinding from the same place. Hotbar slots can be bound to any key, with or without a modifier.",
+  "dependencies": [
+    "denikson-BepInExPack_Valheim-5.4.2350",
+    "ValheimModding-Jotunn-2.30.1"
+  ]
+}

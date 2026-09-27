@@ -47,7 +47,14 @@ class InstallTests(unittest.TestCase):
         (self.target / 'ValheimModpack/MapPinHistory').mkdir()
         (self.target / 'ValheimModpack/MapPinHistory/world-character.bin').write_bytes(b'personal map history fixture')
 
+        for relative in ('BepInEx/bindrune.keys', 'BepInEx/bindrune.spare', 'BepInEx/config/Bindrune/situations.txt', 'BepInEx/config/isimp.Bindrune.cfg'):
+            path = self.target / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b'personal Bindrune fixture')
+
     def assert_personal_data(self, location):
+        for relative in ('BepInEx/bindrune.keys', 'BepInEx/bindrune.spare', 'BepInEx/config/Bindrune/situations.txt', 'BepInEx/config/isimp.Bindrune.cfg'):
+            self.assertEqual((location / relative).read_bytes(), b'personal Bindrune fixture')
         for name, content in [('123', b'personal favorite slots fixture'), ('-456', b'personal favorite item types fixture')]:
             self.assertEqual((location / ('BepInEx/config/QuickStackStore_player_' + name + '.dat')).read_bytes(), content)
         self.assertEqual((location / 'ValheimModpack/ExpeditionLoadouts/character.json').read_bytes(), b'personal loadout fixture')

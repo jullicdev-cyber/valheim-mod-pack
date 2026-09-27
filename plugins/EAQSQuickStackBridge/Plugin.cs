@@ -7,7 +7,7 @@ using HarmonyLib;
 
 namespace ValheimModPack
 {
-    [BepInPlugin(Id, "EAQS Quick Stack Bridge", "1.1.1")]
+    [BepInPlugin(Id, "EAQS Quick Stack Bridge", "1.2.0")]
     [BepInDependency(QuickStack, "1.4.15")]
     [BepInDependency(Eaqs, "3.1.3")]
     [BepInDependency("Azumatt.AzuAutoStore", BepInDependency.DependencyFlags.SoftDependency)]
@@ -19,6 +19,7 @@ namespace ValheimModPack
         private Harmony harmony;
         private AutoStoreFavorites autoStore;
         private bool initialized;
+        private ConfigEntry<KeyboardShortcut> sortShortcut;
 
         private void Awake()
         {
@@ -54,6 +55,12 @@ namespace ValheimModPack
             if (initialized) return;
             try
             {
+                if (sortShortcut == null)
+                {
+                    sortShortcut = Config.Bind("Controls", "SortShortcut", new KeyboardShortcut(UnityEngine.KeyCode.O),
+                        "Sort ordinary inventory slots with EAQS protection / Сортировка с защитой ячеек экипировки. Change this entry, not Quick Stack SortKeybind.");
+                    sortShortcut.SettingChanged += (sender, args) => { if (initialized) SetSortingControls(true); };
+                }
                 // Defaults on disk stay disabled, so removing this bridge restores the guard.
                 SetSortingControls(false);
                 if (Chainloader.PluginInfos[QuickStack].Metadata.Version != new System.Version("1.4.15")
@@ -67,10 +74,12 @@ namespace ValheimModPack
                 harmony = new Harmony(Id);
                 harmony.Patch(target, postfix: new HarmonyMethod(typeof(Plugin), "ProtectSlots"));
                 harmony.Patch(sort, prefix: new HarmonyMethod(typeof(Plugin), "ValidatePlayerInventory"));
+                harmony.Patch(AccessTools.Method(typeof(ConfigEntryBase), "GetSerializedValue"),
+                    prefix: new HarmonyMethod(typeof(Plugin), "GuardSavedSorting"));
                 SetSortingControls(true);
                 if (autoStore != null) autoStore.Initialize();
                 initialized = true;
-                Logger.LogInfo("EAQS slot protection active; inventory sorting enabled with O and buttons. Disk config remains guarded.");
+                Logger.LogInfo("EAQS slot protection active; sorting uses Controls/SortShortcut. Quick Stack disk defaults remain guarded.");
             }
             catch (Exception error)
             {
@@ -92,6 +101,17 @@ namespace ValheimModPack
             catch { __result = true; }
         }
 
+        private static bool GuardSavedSorting(ConfigEntryBase __instance, ref string __result)
+        {
+            if (__instance == null || !Chainloader.PluginInfos.ContainsKey(QuickStack)) return true;
+            var info = Chainloader.PluginInfos[QuickStack];
+            if (!ReferenceEquals(__instance.ConfigFile, info.Instance.Config)
+                || __instance.Definition.Section != "4 - Sorting") return true;
+            if (__instance.Definition.Key == "SortKeybind") { __result = "None"; return false; }
+            if (__instance.Definition.Key == "DisplaySortButtons") { __result = "OnlyContainerButton"; return false; }
+            return true;
+        }
+
         private static bool ValidatePlayerInventory(Inventory __0)
         {
             try
@@ -104,7 +124,7 @@ namespace ValheimModPack
             catch { return false; }
         }
 
-        private static void SetSortingControls(bool enabled)
+        private void SetSortingControls(bool enabled)
         {
             if (!SortingControlsReady()) return;
             ConfigFile cfg = Chainloader.PluginInfos[QuickStack].Instance.Config;
@@ -115,7 +135,7 @@ namespace ValheimModPack
                 var display = cfg[new ConfigDefinition("4 - Sorting", "DisplaySortButtons")];
                 display.BoxedValue = Enum.Parse(display.SettingType, enabled ? "Both" : "OnlyContainerButton");
                 var key = cfg[new ConfigDefinition("4 - Sorting", "SortKeybind")];
-                key.BoxedValue = new KeyboardShortcut(enabled ? UnityEngine.KeyCode.O : UnityEngine.KeyCode.None);
+                key.BoxedValue = enabled && sortShortcut != null ? sortShortcut.Value : KeyboardShortcut.Empty;
             }
             finally { cfg.SaveOnConfigSet = previous; }
         }

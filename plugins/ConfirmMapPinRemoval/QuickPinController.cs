@@ -34,6 +34,7 @@ namespace ValheimModPack.PinRemoval
         private GameObject launcher;
         public bool IsOpen { get { return window.IsVisible; } }
         public bool IsBusy { get { return IsOpen || armed != null; } }
+        public Func<bool> OpenShortcut, PlaceModifier, RenameModifier;
 
         public QuickPinController(Harmony harmony, PinHistoryController history, FieldInfo pins, Action<Exception> report)
         {
@@ -130,9 +131,7 @@ namespace ValheimModPack.PinRemoval
             window.Tick();
             if (armed != null && (map.m_mode != Minimap.MapMode.Large || Input.GetKeyDown(KeyCode.Escape))) armed = null;
             SetLauncher(map.m_mode == Minimap.MapMode.Large && !IsBusy && CanStart());
-            if (!IsBusy && CanStart() && Input.GetKeyDown(KeyCode.P)
-                && (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl))
-                && !Input.GetKey(KeyCode.LeftAlt) && !Input.GetKey(KeyCode.RightAlt)) OpenAt(owner.transform.position, false);
+            if (!IsBusy && CanStart() && OpenShortcut != null && OpenShortcut()) OpenAt(owner.transform.position, false);
         }
         private string PlaceLabel { get { return text.Get(targetIsMap ? "place_point" : "place_here"); } }
         private List<Minimap.PinData> CurrentPins { get { return (List<Minimap.PinData>)pins.GetValue(map); } }
@@ -141,7 +140,7 @@ namespace ValheimModPack.PinRemoval
             if (!visible) { if (launcher != null) launcher.SetActive(false); return; }
             if (launcher == null && GUIManager.CustomGUIFront != null)
             {
-                launcher = GUIManager.Instance.CreateButton(text.Get("quick_pins") + " · Ctrl+P", GUIManager.CustomGUIFront.transform,
+                launcher = GUIManager.Instance.CreateButton(text.Get("quick_pins"), GUIManager.CustomGUIFront.transform,
                     new Vector2(1, 1), new Vector2(1, 1), new Vector2(-160, -115), 270, 44);
                 launcher.name = "ConfirmMapPinRemoval.QuickPinsLauncher";
                 var sound = launcher.GetComponent<ButtonSfx>(); if (sound != null) sound.m_selectSfxPrefab = null;
@@ -293,12 +292,12 @@ namespace ValheimModPack.PinRemoval
                     string selected = self.armed; self.armed = null;
                     self.Place(selected, (Vector3)self.worldPoint.Invoke(__instance, new object[] { ZInput.pointerPosition })); return false;
                 }
-                if (Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt))
+                if (active.RenameModifier != null && active.RenameModifier())
                 {
                     var pin = self.closest.Invoke(__instance, null) as Minimap.PinData;
                     if (pin != null && pin.m_save) { self.Rename(pin); return false; }
                 }
-                if (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift))
+                if (active.PlaceModifier != null && active.PlaceModifier())
                 {
                     self.OpenAt((Vector3)self.worldPoint.Invoke(__instance, new object[] { ZInput.pointerPosition }), true); return false;
                 }

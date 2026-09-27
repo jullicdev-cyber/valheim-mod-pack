@@ -32,6 +32,7 @@ namespace ValheimModPack.PinRemoval
         private GameObject launcher;
         private bool canOpen;
         public bool IsOpen { get { return view.IsVisible; } }
+        public Func<bool> OpenShortcut;
         public PinHistoryController(Harmony harmony, FieldInfo pins, Action<Exception> report)
         {
             this.pins = pins; this.report = report; active = this;
@@ -143,8 +144,7 @@ namespace ValheimModPack.PinRemoval
             {
                 if (Input.GetKeyDown(KeyCode.Escape) || ZInput.GetButtonDown("JoyButtonB")) Close();
             }
-            else if (canOpen && Input.GetKeyDown(KeyCode.H)
-                && (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl))) Open();
+            else if (canOpen && OpenShortcut != null && OpenShortcut()) Open();
         }
         private void SetLauncherVisible(bool visible)
         {
@@ -152,7 +152,7 @@ namespace ValheimModPack.PinRemoval
             if (launcher == null)
             {
                 if (GUIManager.CustomGUIFront == null) return;
-                launcher = GUIManager.Instance.CreateButton(Russian ? "Метки · Ctrl+H" : "Map pins · Ctrl+H",
+                launcher = GUIManager.Instance.CreateButton(Russian ? "Метки" : "Map pins",
                     GUIManager.CustomGUIFront.transform, new Vector2(1, 1), new Vector2(1, 1), new Vector2(-160, -65), 270, 44);
                 launcher.name = "ConfirmMapPinRemoval.HistoryLauncher";
                 var sound = launcher.GetComponent<ButtonSfx>(); if (sound != null) sound.m_selectSfxPrefab = null;

@@ -6,7 +6,7 @@ using HarmonyLib;
 using UnityEngine;
 namespace ValheimModPack.PinRemoval
 {
-    [BepInPlugin(Id, "Confirm Map Pin Removal", "1.3.2")]
+    [BepInPlugin(Id, "Confirm Map Pin Removal", "1.4.0")]
     [BepInDependency("com.jotunn.jotunn", "2.30.2")]
     public sealed class Plugin : BaseUnityPlugin
     {
@@ -44,6 +44,11 @@ namespace ValheimModPack.PinRemoval
                 harmony.Patch(shutdown, prefix: new HarmonyMethod(typeof(Plugin), "BeforePlayerDestroyed"));
                 history = new PinHistoryController(harmony, pins, error => Logger.LogError(error));
                 quick = new QuickPinController(harmony, history, pins, error => Logger.LogError(error));
+                var controls = new MapControls(Config);
+                history.OpenShortcut = () => MapControls.Down(controls.History.Value);
+                quick.OpenShortcut = () => MapControls.Down(controls.Quick.Value);
+                quick.PlaceModifier = () => MapControls.Held(controls.Place.Value);
+                quick.RenameModifier = () => MapControls.Held(controls.Rename.Value);
                 Logger.LogInfo("Map pin confirmation and history ready. Open the large map and choose Map pins, or press Ctrl+H.");
                 Logger.LogInfo("Quick presets: Ctrl+P in gameplay, Shift+click on map, Alt+click a saved pin to rename.");
             }

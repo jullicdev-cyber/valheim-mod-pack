@@ -61,7 +61,7 @@ namespace ValheimModPack.ExpeditionLoadouts
                 name = GUIManager.Instance.CreateInputField(panel.transform, center, center, new Vector2(90, 222),
                     InputField.ContentType.Standard, T("Название набора", "Preset name"), 20, 446, 38).GetComponent<InputField>();
                 name.characterLimit = 60; name.textComponent.supportRichText = false;
-                Label(T("Предмет — есть / нужно     (Shift: шаг 10)", "Item — held / target     (Shift: step 10)"), 135, 178, 550, 28, 17, false);
+                Label(T("Предмет — есть / нужно     (" + plugin.LargeStepLabel + ": шаг 10)", "Item — held / target     (" + plugin.LargeStepLabel + ": step 10)"), 135, 178, 550, 28, 17, false);
                 for (int i = 0; i < PageSize; i++)
                 {
                     int slot = i; float y = 134 - i * 42;
@@ -164,7 +164,7 @@ namespace ValheimModPack.ExpeditionLoadouts
         {
             int index = itemPage * PageSize + slot;
             if (draft == null || index >= draft.Items.Count) return;
-            if (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) change *= 10;
+            if (plugin.LargeStepHeld) change *= 10;
             draft.Items[index].Count = Mathf.Clamp(draft.Items[index].Count + change, 1, PresetStore.MaxCount); Persist();
         }
         private void RemoveItem(int slot)

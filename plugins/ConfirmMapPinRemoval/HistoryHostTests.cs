@@ -23,6 +23,7 @@ public static class HistoryHostTests
         try
         {
             controller = new PinHistoryController(new Harmony(), AccessTools.Field(typeof(Minimap), "m_pins"), errors.Add);
+            controller.OpenShortcut = () => Input.GetKeyDown(KeyCode.H) && Input.GetKey(KeyCode.LeftControl);
             controller.Tick(true); Check(!controller.IsOpen, "No history without world/player");
             var map = new Minimap(); Minimap.instance = map; var owner = new Player(); Player.m_localPlayer = owner; ZNet.instance = new ZNet();
             var pin = Add(map, "Тест", 1); controller.Tick(true); Open(controller);

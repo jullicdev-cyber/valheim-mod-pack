@@ -74,6 +74,16 @@ try {
             }
         }
     }
+    # Bindrune keeps personal key overrides outside config; replacing BepInEx must retain them.
+    foreach ($relative in @('BepInEx/bindrune.keys', 'BepInEx/bindrune.spare', 'BepInEx/config/Bindrune/situations.txt', 'BepInEx/config/isimp.Bindrune.cfg')) {
+        $personalPath = Join-Path $target $relative
+        if (-not (Test-Path -LiteralPath $personalPath)) { continue }
+        $personalEntry = Get-Item -LiteralPath $personalPath -Force
+        if ($personalEntry.PSIsContainer -or ($personalEntry.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Personal bindings must be a regular file: $relative" }
+        $personalParent = Split-Path (Join-Path $stage $relative) -Parent
+        New-Item -ItemType Directory -Force -Path $personalParent | Out-Null
+        Copy-Item -LiteralPath $personalPath -Destination (Join-Path $stage $relative)
+    }
     if (Get-Process -Name valheim,valheim_server -ErrorAction SilentlyContinue) { throw 'Game started during backup; installation stopped.' }
     $saved = @()
     $installed = @()

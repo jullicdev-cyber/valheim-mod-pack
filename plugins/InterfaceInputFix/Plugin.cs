@@ -15,10 +15,11 @@ namespace ValheimModPack.InterfaceInputFix
     [BepInDependency("com.jotunn.jotunn", "2.30.2")]
     [BepInDependency("yay.spikehimself.xportal", BepInDependency.DependencyFlags.SoftDependency)]
     [BepInDependency("vapok.mods.adventurebackpacks", BepInDependency.DependencyFlags.SoftDependency)]
+    [BepInDependency("isimp.Bindrune", BepInDependency.DependencyFlags.SoftDependency)]
     [NetworkCompatibility(CompatibilityLevel.NotEnforced, VersionStrictness.None)]
     public sealed class Plugin : BaseUnityPlugin
     {
-        public const string Id = "valheimmodpack.interfaceinputfix", Version = "1.0.0";
+        public const string Id = "valheimmodpack.interfaceinputfix", Version = "1.1.0";
         private static Plugin active;
         private Harmony harmony;
         private InputLease portalLease;
@@ -41,6 +42,7 @@ namespace ValheimModPack.InterfaceInputFix
             try { PatchPortal(); }
             catch (Exception e) { harmony.UnpatchSelf(); PortalPatched = false; Logger.LogError("XPortal compatibility disabled: " + e); }
             try { PatchBackpack(); } catch (Exception e) { Logger.LogError("Backpack compatibility disabled: " + e); }
+            try { BindruneCompat.Install(e => Logger.LogError(e)); } catch (Exception e) { Logger.LogError("Bindrune compatibility disabled: " + e); }
             Logger.LogInfo("Interface fixes ready: XPortal=" + PortalPatched + ", AdventureBackpacks=" + BackpackPatched);
         }
         private Type SupportedType(string guid, string version, string name)
@@ -174,6 +176,7 @@ namespace ValheimModPack.InterfaceInputFix
         {
             try
             {
+                BindruneCompat.Tick();
                 if (PortalPatched && portalLease.Held)
                 {
                     var panel = GetPanel();
@@ -198,7 +201,7 @@ namespace ValheimModPack.InterfaceInputFix
         }
         private void OnDestroy()
         {
-            try { if (portalLease != null) ClosePortal(); }
+            try { BindruneCompat.Dispose(); if (portalLease != null) ClosePortal(); }
             finally { if (harmony != null) harmony.UnpatchSelf(); if (ReferenceEquals(active, this)) active = null; }
         }
     }
