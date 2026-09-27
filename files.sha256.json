@@ -8,6 +8,14 @@
     "sha256": "6aa985fa58371c03b01fc68c112005fe7d0b0150eadb4675a245a11622a2a772"
   },
   {
+    "path": "BepInEx/config/Azumatt.Recycle_N_Reclaim.cfg",
+    "sha256": "1a9bc67878931c998feb37b4592e82eacad85c8808f93fc45d9a64269eb57afa"
+  },
+  {
+    "path": "BepInEx/config/Azumatt.Recycle_N_Reclaim_ExcludeLists.yml",
+    "sha256": "781f7a0ca0e358b3b0f0d8c05c8b116b4a5d2e1f66309bdf3c4758aa0e06585d"
+  },
+  {
     "path": "BepInEx/config/BepInEx.cfg",
     "sha256": "3d460196bb8f993fc71048efc6d1bbc21b5364eefac778df61955138c83cc677"
   },
@@ -150,6 +158,10 @@
   {
     "path": "BepInEx/plugins/Azumatt-AzuCraftyBoxes/AzuCraftyBoxes.dll",
     "sha256": "468859fe8ec604796f3b474e02b3503f76cb6dd545b92b39c5febc62ee95c9bb"
+  },
+  {
+    "path": "BepInEx/plugins/Azumatt-Recycle_N_Reclaim/Recycle_N_Reclaim.dll",
+    "sha256": "362e0a417c28cf4ac1afe6db8a6fe35ea8daf7ff6dc5b71690b06b177c9d21fc"
   },
   {
     "path": "BepInEx/plugins/EpicLoot/EpicLoot.dll",

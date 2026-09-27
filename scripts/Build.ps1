@@ -35,6 +35,9 @@ foreach ($local in $lock.localPlugins) {
 $config = Join-Path $output 'BepInEx/config'
 New-Item -ItemType Directory -Force $config | Out-Null
 Copy-Item -Path (Join-Path $root 'config/*.cfg') -Destination $config -Force
+Get-ChildItem -LiteralPath (Join-Path $root 'config') -Filter '*.yml' -File | ForEach-Object {
+    Copy-Item -LiteralPath $_.FullName -Destination $config -Force
+}
 if (Test-Path -LiteralPath (Join-Path $root 'config/Bindrune')) {
     Copy-Item -LiteralPath (Join-Path $root 'config/Bindrune') -Destination (Join-Path $config 'Bindrune') -Recurse
 }

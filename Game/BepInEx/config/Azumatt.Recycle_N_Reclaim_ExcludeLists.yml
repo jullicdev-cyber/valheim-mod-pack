@@ -1,0 +1,23 @@
+# Do not destroy a backpack item and its serialized contents through reclaim.
+# These are the prefab names in the pinned Adventure Backpacks 2.1.13.
+groups:
+  PackBackpacks:
+    - BackpackMeadows
+    - BackpackBlackForest
+    - BackpackSwamp
+    - BackpackMountains
+    - BackpackPlains
+    - BackpackMistlands
+    - BackpackNecromancy
+    - CapeIronBackpack
+    - CapeSilverBackpack
+inventory:
+  exclude:
+    - PackBackpacks
+  includeOverride: []
+reclaiming:
+  exclude:
+    - PackBackpacks
+  includeOverride: []
+  recycleRates: {}
+containers: {}

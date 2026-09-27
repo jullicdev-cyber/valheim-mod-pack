@@ -46,6 +46,7 @@ $mapProbe = Join-Path $smoke 'PinHistoryNativeChecks.dll'
 $managed = Join-Path $GameDirectory 'valheim_Data/Managed'
 $refs = @((Join-Path $root 'Game/BepInEx/core/BepInEx.dll'),(Join-Path $root 'Game/BepInEx/plugins/Jotunn.dll'),(Join-Path $root 'local-plugins/ExpeditionLoadouts.dll'),(Join-Path $root 'local-plugins/ChestSearch.dll'))
 $refs += @('Game/BepInEx/core/0Harmony.dll','local-plugins/InterfaceInputFix.dll','local-plugins/RenewableResourceTimers.dll','Game/BepInEx/plugins/isimp-Bindrune/Bindrune.dll') | ForEach-Object { Join-Path $root $_ }
+$refs += Join-Path $root 'Game/BepInEx/plugins/Azumatt-Recycle_N_Reclaim/Recycle_N_Reclaim.dll'
 $refs += @('assembly_valheim.dll','assembly_guiutils.dll','assembly_utils.dll','SoftReferenceableAssets.dll','UnityEngine.dll','UnityEngine.CoreModule.dll','UnityEngine.UI.dll','UnityEngine.InputLegacyModule.dll','UnityEngine.UIModule.dll','UnityEngine.TextRenderingModule.dll','netstandard.dll') | ForEach-Object { Join-Path $managed $_ }
 $argsList = @('/nologo','/target:library','/codepage:65001',('/out:'+(Join-Path $smoke 'BepInEx/plugins/BackendNativeProbe.dll')),'/reference:System.Runtime.Serialization.dll')
 $argsList += $refs | ForEach-Object { '/reference:'+$_ }
@@ -54,6 +55,7 @@ $argsList += Join-Path $root 'plugins/ChestSearch/NativeChecks.cs'
 $argsList += Join-Path $root 'plugins/InterfaceInputFix/NativeChecks.cs'
 $argsList += Join-Path $root 'plugins/InterfaceInputFix/BindruneNativeChecks.cs'
 $argsList += Join-Path $root 'plugins/RenewableResourceTimers/NativeChecks.cs'
+$argsList += Join-Path $root 'scripts/RecycleNativeChecks.cs'
 & (Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe') @argsList
 if ($LASTEXITCODE -ne 0) { throw 'Native probe compilation failed.' }
 $previousRoot = $env:VMP_QOL_SMOKE_ROOT
