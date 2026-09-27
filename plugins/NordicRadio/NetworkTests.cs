@@ -135,10 +135,20 @@ internal static class NetworkTests
         Pump(120);
         Select(host); Check(host.Service.Tracks.Count==1,"host asynchronous scan");
         string id=host.Service.Tracks[0].Id;
+        objects.Objects[new ZDOID(7,100)].Position=new UnityEngine.Vector3(115,0,0);
+        objects.Objects[new ZDOID(8,100)].Position=new UnityEngine.Vector3(151,0,0);
         foreach(Node node in nodes) { Select(node); node.Service.Watch(radio); }
         Pump(8);
+        Select(nodes[6]); Check(nodes[6].Service.GetState(radio)!=null,"listener beyond old 100m radius receives state");
+        Select(nodes[7]); Check(nodes[7].Service.GetState(radio)==null,"watch outside 150m rejected");
         Select(nodes[1]); nodes[1].Service.Command(radio,"play","",0); Pump(4);
         Select(host); Check(host.Service.GetState(radio).Playing,"client command accepted nearby");
+        Select(nodes[6]); Check(nodes[6].Service.GetState(radio).Playing,"listener at 115m receives live state changes");
+        Select(nodes[7]); Check(nodes[7].Service.GetState(radio)==null,"unsubscribed far client receives no state broadcast");
+        objects.Objects[new ZDOID(8,100)].Position=new UnityEngine.Vector3(149,0,0);
+        Pump(60);
+        Select(nodes[7]); nodes[7].Service.Watch(radio); Pump(4);
+        Select(nodes[7]); Check(nodes[7].Service.GetState(radio)!=null && nodes[7].Service.GetState(radio).Playing,"approaching listener receives currently playing state within 150m");
         Select(nodes[1]);
         RadioSnapshot genuine=nodes[1].Service.GetState(radio);
         var forged=new RadioMessage { Kind=RadioMessageKind.State,Owner=1,Object=1,State=new RadioSnapshot{Volume=0.1f,Revision=genuine.Revision+1} };
@@ -158,7 +168,13 @@ internal static class NetworkTests
             Select(nodes[i]); string path=nodes[i].Service.GetTrackPath(id);
             Check(path!=null && RadioLibrary.HashFile(path)==id,"validated MP3 delivery to client "+i);
         }
+        Pump(240); // Cross a maintenance pass without refreshing these still-valid subscriptions.
+        Select(host); host.Service.Command(radio,"volume","",0.65f); Pump(4);
+        Select(nodes[6]); Check(nodes[6].Service.GetState(radio).Volume==0.65f,"115m listener remains subscribed after maintenance");
+        Select(nodes[7]); Check(nodes[7].Service.GetState(radio).Volume==0.65f,"149m listener remains subscribed after maintenance");
         Select(host); float original=host.Service.GetState(radio).Volume;
+        Select(nodes[6]); nodes[6].Service.Command(radio,"volume","",0.1f); Pump(4);
+        Select(host); Check(host.Service.GetState(radio).Volume==original,"extended listening radius does not permit remote control at 115m");
         objects.Objects[new ZDOID(2,100)].Position=new UnityEngine.Vector3(200,0,0);
         Select(nodes[1]); nodes[1].Service.Command(radio,"volume","",0.1f); Pump(4);
         Select(host); Check(host.Service.GetState(radio).Volume==original,"distant command rejected");

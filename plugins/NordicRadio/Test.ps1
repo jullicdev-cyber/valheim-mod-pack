@@ -10,6 +10,12 @@ $exe = Join-Path $out 'PlaybackTests.exe'
 if ($LASTEXITCODE -ne 0) { throw 'Playback tests compilation failed' }
 & $exe
 if ($LASTEXITCODE -ne 0) { throw 'Playback timeline tests failed' }
+$gainExe = Join-Path $out 'AudioGainTests.exe'
+& $compiler /nologo /codepage:65001 /target:exe "/out:$gainExe" (Join-Path $PSScriptRoot 'PlaybackMath.cs') (Join-Path $PSScriptRoot 'AudioGainProcessor.cs') (Join-Path $PSScriptRoot 'AudioGainTests.cs')
+if ($LASTEXITCODE -ne 0) { throw 'Audio gain tests compilation failed' }
+& $gainExe
+if ($LASTEXITCODE -ne 0) { throw 'Audio gain tests failed' }
+& (Join-Path $PSScriptRoot 'Test-MusicDucking.ps1') -GameDirectory $GameDirectory
 & (Join-Path $PSScriptRoot 'Test-Network.ps1')
 & (Join-Path $PSScriptRoot 'Build.ps1') -GameDirectory $GameDirectory -OutputFile (Join-Path $out 'NordicRadio.dll')
 & (Join-Path $PSScriptRoot 'Test-UI.ps1') -GameDirectory $GameDirectory

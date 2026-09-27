@@ -338,7 +338,7 @@ namespace ValheimModPack.NordicRadio
             }
             if (message.Kind != RadioMessageKind.Watch && message.Kind != RadioMessageKind.Command) return;
             ZDOID id = new ZDOID(message.Owner, message.Object);
-            if (!ValidateRadio(sender, id, message.Kind == RadioMessageKind.Watch ? 100 : 8)) return;
+            if (!ValidateRadio(sender, id, message.Kind == RadioMessageKind.Watch ? RadioProtocol.WatchDistance : 8)) return;
             RadioSnapshot state;
             if (!states.TryGetValue(id, out state))
             {
@@ -366,7 +366,7 @@ namespace ValheimModPack.NordicRadio
         {
             Dictionary<ZDOID, double> subscription;
             if (!subscribers.TryGetValue(peer, out subscription)) return false;
-            foreach (var pair in subscription) if (Realtime - pair.Value <= 12 && ValidateRadio(peer, pair.Key, 100)) return true;
+            foreach (var pair in subscription) if (Realtime - pair.Value <= 12 && ValidateRadio(peer, pair.Key, RadioProtocol.WatchDistance)) return true;
             return false;
         }
 
@@ -401,7 +401,7 @@ namespace ValheimModPack.NordicRadio
             foreach (var peer in subscribers)
             {
                 double last;
-                if (peer.Value.TryGetValue(id, out last) && Realtime - last < 12 && ValidateRadio(peer.Key, id, 100)) SendState(peer.Key, id, state);
+                if (peer.Value.TryGetValue(id, out last) && Realtime - last < 12 && ValidateRadio(peer.Key, id, RadioProtocol.WatchDistance)) SendState(peer.Key, id, state);
             }
         }
 
@@ -582,7 +582,7 @@ namespace ValheimModPack.NordicRadio
                 {
                     if (ZNet.instance.GetPeer(peer.Key) == null) { gone.Add(peer.Key); continue; }
                     stale.Clear();
-                    foreach (var pair in peer.Value) if (realtime - pair.Value > 12 || !ValidateRadio(peer.Key, pair.Key, 100)) stale.Add(pair.Key);
+                    foreach (var pair in peer.Value) if (realtime - pair.Value > 12 || !ValidateRadio(peer.Key, pair.Key, RadioProtocol.WatchDistance)) stale.Add(pair.Key);
                     foreach (ZDOID id in stale) peer.Value.Remove(id);
                     if (peer.Value.Count == 0) gone.Add(peer.Key);
                 }

@@ -11,6 +11,7 @@ namespace ValheimModPack.NordicRadio
         private readonly RadioPiece piece;
         private GameObject emitter;
         private AudioSource source;
+        private RadioGain amplifier;
         private AudioClip clip;
         private UnityWebRequest request;
         private string track = "";
@@ -18,6 +19,11 @@ namespace ValheimModPack.NordicRadio
         private float nextRetry, nextDrift, requestStarted;
         private bool disposed;
         public bool Audible;
+        internal float Audibility
+        {
+            get { return source != null && source.isPlaying && source.enabled && !source.mute
+                ? Mathf.Clamp01(source.volume * plugin.Amplification) : 0; }
+        }
         internal RadioAudio(Plugin plugin, RadioPiece piece) { this.plugin = plugin; this.piece = piece; }
         internal void Tick()
         {
@@ -37,7 +43,7 @@ namespace ValheimModPack.NordicRadio
             piece.SetLit(playing);
             bool wanted = playing && Audible && Player.m_localPlayer != null && ZNet.instance != null
                 && plugin.PersonalVolume > 0
-                && Vector3.Distance(Player.m_localPlayer.transform.position, piece.SoundPosition) < plugin.FarDistance;
+                && Vector3.Distance(plugin.ListenerPosition, piece.SoundPosition) < plugin.FarDistance;
             if (!wanted)
             {
                 if (request != null) CancelRequest();
@@ -59,6 +65,7 @@ namespace ValheimModPack.NordicRadio
                 Stop(); track = state.TrackId;
             }
             EnsureSource();
+            amplifier.Gain = plugin.Amplification;
             source.minDistance = plugin.NearDistance; source.maxDistance = plugin.FarDistance;
             emitter.transform.position = piece.SoundPosition;
             if (clip == null && request == null)
@@ -103,10 +110,7 @@ namespace ValheimModPack.NordicRadio
             }
             // Explicit distance gain gives a finite, configurable radius. Unity
             // still supplies stereo direction, but does not attenuate it twice.
-            Vector3 listenerPosition = Player.m_localPlayer.transform.position;
-            var listener = AudioMan.instance != null ? AudioMan.instance.GetActiveAudioListener() : null;
-            if (listener != null) listenerPosition = listener.transform.position;
-            float gain = PlaybackMath.Attenuation(Vector3.Distance(listenerPosition, piece.SoundPosition), plugin.NearDistance, plugin.FarDistance);
+            float gain = PlaybackMath.Attenuation(Vector3.Distance(plugin.ListenerPosition, piece.SoundPosition), plugin.NearDistance, plugin.FarDistance);
             source.volume = Mathf.MoveTowards(source.volume, Mathf.Clamp01(state.Volume) * plugin.PersonalVolume * gain, Time.unscaledDeltaTime * 2);
         }
         private void EnsureSource()
@@ -118,6 +122,8 @@ namespace ValheimModPack.NordicRadio
             source.playOnAwake = false; source.loop = false;
             source.spatialBlend = 1; source.dopplerLevel = 0; source.spread = 0;
             source.priority = 128; source.volume = 0;
+            amplifier = emitter.AddComponent<RadioGain>();
+            amplifier.Gain = plugin.Amplification;
             source.rolloffMode = AudioRolloffMode.Custom;
             source.SetCustomCurve(AudioSourceCurveType.CustomRolloff, AnimationCurve.Linear(0, 1, 1, 1));
             if (AudioMan.instance != null) source.outputAudioMixerGroup = AudioMan.instance.m_ambientMixer;
@@ -139,7 +145,7 @@ namespace ValheimModPack.NordicRadio
             if (disposed) return;
             disposed = true; Stop();
             if (emitter != null) UnityEngine.Object.Destroy(emitter);
-            emitter = null; source = null;
+            emitter = null; source = null; amplifier = null;
         }
     }
 }

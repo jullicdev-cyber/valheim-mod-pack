@@ -28,6 +28,13 @@ internal static class PlaybackTests
         Check(PlaybackMath.Attenuation(5, 2.5, 35) > PlaybackMath.Attenuation(15, 2.5, 35), "distance reduces volume");
         Check(PlaybackMath.Attenuation(Double.NaN, 2.5, 35) == 0, "invalid distance silenced");
         Check(PlaybackMath.Attenuation(3, 5, 5) == 0, "invalid radius silenced");
+        Check(PlaybackMath.Attenuation(2.5, 2.5, 100) == 1 && PlaybackMath.Attenuation(5, 2.5, 100) < 0.5f, "original nearby distance effect preserved");
+        Check(PlaybackMath.Attenuation(35, 2.5, 100) > 0 && PlaybackMath.Attenuation(95, 2.5, 100) > 0, "new radius audible beyond old boundary");
+        Check(PlaybackMath.Attenuation(100, 2.5, 100) == 0 && PlaybackMath.Attenuation(120, 2.5, 100) == 0, "silence at and beyond 100 metres");
+        Check(PlaybackMath.Attenuation(99.999, 2.5, 100) < 0.00001 && PlaybackMath.Attenuation(2.501, 2.5, 100) > 0.999, "continuous near and far transitions");
+        bool decreases = true;
+        for (int metre = 3; metre <= 100; metre++) decreases &= PlaybackMath.Attenuation(metre, 2.5, 100) < PlaybackMath.Attenuation(metre - 1, 2.5, 100);
+        Check(decreases, "extended range still strictly fades with distance");
         Console.WriteLine("OK: " + count + " playback timeline checks.");
         return 0;
     }

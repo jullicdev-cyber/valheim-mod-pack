@@ -14,31 +14,46 @@ namespace ValheimModPack.NordicRadio
     public sealed class Plugin : BaseUnityPlugin
     {
         public const string Id = "valheimmodpack.nordicradio";
-        public const string Version = "1.0.0";
+        public const string Version = "1.0.1";
         public static Plugin Instance { get; private set; }
         public RadioService Service { get; private set; }
         public string DataRoot { get; private set; }
-        private ConfigEntry<float> personalVolume, nearDistance, farDistance;
+        private ConfigEntry<float> personalVolume, nearDistance, farDistance, amplification, backgroundMusicVolume;
         private ConfigEntry<int> wood, bronze, leather, core, uploadRate;
         private readonly Dictionary<RadioPiece, RadioAudio> radios = new Dictionary<RadioPiece, RadioAudio>();
         private RadioWindow window;
+        private MusicDucking musicDucking;
         private float nextWatch, nextSelection, nextError;
         private bool ready;
         public float PersonalVolume
         {
-            get { return Mathf.Clamp01(personalVolume.Value); }
+            get { return SafeFloat(personalVolume.Value, 0.8f, 0, 1); }
             set { personalVolume.Value = Single.IsNaN(value) ? 0 : Mathf.Clamp01(value); }
         }
-        public float NearDistance { get { return Mathf.Clamp(nearDistance.Value, 0.5f, 10); } }
-        public float FarDistance { get { return Mathf.Clamp(farDistance.Value, NearDistance + 1, 80); } }
+        public float NearDistance { get { return SafeFloat(nearDistance.Value, 2.5f, 0.5f, 20); } }
+        public float FarDistance { get { return SafeFloat(farDistance.Value, 100, NearDistance + 1, RadioProtocol.MaxAudioDistance); } }
+        public float Amplification { get { return SafeFloat(amplification.Value, 3, 1, 6); } }
+        internal Vector3 ListenerPosition
+        {
+            get
+            {
+                var listener = AudioMan.instance != null ? AudioMan.instance.GetActiveAudioListener() : null;
+                if (listener != null) return listener.transform.position;
+                return Player.m_localPlayer != null ? Player.m_localPlayer.transform.position : Vector3.zero;
+            }
+        }
+        private static float SafeFloat(float value, float fallback, float min, float max)
+        { return PlaybackMath.Finite(value) ? Mathf.Clamp(value, min, max) : fallback; }
         private void Awake()
         {
             Instance = this;
             try
             {
                 personalVolume = Config.Bind("Audio", "PersonalVolume", 0.8f, new ConfigDescription("Local radio volume; does not change other players.", new AcceptableValueRange<float>(0, 1)));
-                nearDistance = Config.Bind("Audio", "NearDistance", 2.5f, new ConfigDescription("Full-volume distance in metres.", new AcceptableValueRange<float>(0.5f, 10)));
-                farDistance = Config.Bind("Audio", "FarDistance", 35f, new ConfigDescription("Silence outside this radius in metres.", new AcceptableValueRange<float>(5, 80)));
+                nearDistance = Config.Bind("Audio", "NearDistance", 2.5f, new ConfigDescription("Full-volume distance in metres; fades progressively beyond this distance.", new AcceptableValueRange<float>(0.5f, 20)));
+                farDistance = Config.Bind("Audio", "FarDistance", 100f, new ConfigDescription("Silence outside this radius in metres. Only loaded world objects can emit sound.", new AcceptableValueRange<float>(5, RadioProtocol.MaxAudioDistance)));
+                amplification = Config.Bind("Audio", "Amplification", 3f, new ConfigDescription("Local signal gain before spatial attenuation and game effects volume; peaks are gently limited.", new AcceptableValueRange<float>(1, 6)));
+                backgroundMusicVolume = Config.Bind("Audio", "BackgroundMusicVolume", 0.2f, new ConfigDescription("Fraction of normal Valheim music volume near an audible horn. 1 disables ducking; original music settings are preserved.", new AcceptableValueRange<float>(0, 1)));
                 uploadRate = Config.Bind("Network", "UploadKiBPerSecond", 1024, new ConfigDescription("Host total music upload cap shared by all peers. Lower if gameplay lags while downloading.", new AcceptableValueRange<int>(64, 4096)));
                 wood = Config.Bind("Recipe", "FineWood", 20, new ConfigDescription("Fine wood required (restart game after changing recipe; keep equal on all peers).", new AcceptableValueRange<int>(1, 100)));
                 bronze = Config.Bind("Recipe", "Bronze", 5, new ConfigDescription("Bronze required.", new AcceptableValueRange<int>(1, 100)));
@@ -49,9 +64,10 @@ namespace ValheimModPack.NordicRadio
                 Directory.CreateDirectory(Path.Combine(DataRoot, "Cache"));
                 Service = new RadioService(this, DataRoot, message => Logger.LogInfo(message));
                 window = new RadioWindow(this);
+                musicDucking = new MusicDucking();
                 PrefabManager.OnVanillaPrefabsAvailable += Register;
                 ready = true;
-                Logger.LogInfo("NordicRadio 1.0.0 ready. Host MP3 folder: " + Path.Combine(DataRoot, "Music"));
+                Logger.LogInfo("NordicRadio " + Version + " ready. Host MP3 folder: " + Path.Combine(DataRoot, "Music"));
             }
             catch (Exception error) { Logger.LogError("NordicRadio initialization failed: " + error); Shutdown(); }
         }
@@ -98,7 +114,7 @@ namespace ValheimModPack.NordicRadio
                     {
                         pair.Value.Audible = false;
                         if (pair.Key != null && pair.Key.IsReady && Player.m_localPlayer != null
-                            && Vector3.Distance(Player.m_localPlayer.transform.position, pair.Key.SoundPosition) <= FarDistance + 2)
+                            && Vector3.Distance(ListenerPosition, pair.Key.SoundPosition) <= FarDistance + 2)
                         {
                             var state = Service.GetState(pair.Key.Id);
                             if (state != null && state.Playing) candidates.Add(pair.Key);
@@ -106,22 +122,34 @@ namespace ValheimModPack.NordicRadio
                     }
                     if (Player.m_localPlayer != null)
                     {
-                        Vector3 position = Player.m_localPlayer.transform.position;
+                        Vector3 position = ListenerPosition;
                         candidates.Sort((a,b) => (a.SoundPosition-position).sqrMagnitude.CompareTo((b.SoundPosition-position).sqrMagnitude));
                         for (int i = 0; i < Math.Min(8, candidates.Count); i++) radios[candidates[i]].Audible = true;
                     }
                 }
+                float strongestHorn = 0;
                 foreach (var pair in radios)
                 {
                     if (pair.Key == null || !pair.Key.IsReady) { dead.Add(pair.Key); continue; }
                     if (watching && Player.m_localPlayer != null
-                        && Vector3.Distance(Player.m_localPlayer.transform.position, pair.Key.transform.position) <= 95)
+                        && Vector3.Distance(Player.m_localPlayer.transform.position, pair.Key.transform.position) <= RadioProtocol.WatchDistance - 5)
                         Service.Watch(pair.Key.Id);
                     pair.Value.Tick();
+                    strongestHorn = Mathf.Max(strongestHorn, pair.Value.Audibility);
                 }
                 foreach (var piece in dead) Detach(piece);
+                if (Player.m_localPlayer == null || ZNet.instance == null) musicDucking.Reset();
+                else
+                {
+                    // The horn belongs to the effects bus; a muted effects slider
+                    // must not suppress music that the listener still wants to hear.
+                    float effects = AudioMan.instance != null ? AudioMan.GetSFXVolume() : 1;
+                    strongestHorn *= Mathf.Sqrt(SafeFloat(effects, 0, 0, 1));
+                    if (AudioListener.volume <= 0) strongestHorn = 0;
+                    musicDucking.Update(strongestHorn, SafeFloat(backgroundMusicVolume.Value, 0.2f, 0, 1), Time.unscaledDeltaTime);
+                }
             }
-            catch (Exception error) { window.Hide(); Report(error); }
+            catch (Exception error) { window.Hide(); if (musicDucking != null) musicDucking.Reset(); Report(error); }
         }
         internal void Report(Exception error)
         {
@@ -130,6 +158,7 @@ namespace ValheimModPack.NordicRadio
         private void OnDisable()
         {
             if (window != null) window.Hide();
+            if (musicDucking != null) musicDucking.Reset();
             foreach (var pair in radios)
             {
                 pair.Value.Stop();
@@ -141,6 +170,7 @@ namespace ValheimModPack.NordicRadio
             ready = false;
             PrefabManager.OnVanillaPrefabsAvailable -= Register;
             if (window != null) window.Hide();
+            if (musicDucking != null) { musicDucking.Dispose(); musicDucking = null; }
             foreach (var audio in radios.Values) audio.Dispose();
             radios.Clear();
             if (Service != null) Service.Dispose();

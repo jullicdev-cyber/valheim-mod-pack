@@ -2,6 +2,7 @@
 using System;
 using System.Collections;
 using System.IO;
+using System.Reflection;
 using BepInEx;
 using Jotunn.Managers;
 using UnityEngine;
@@ -54,29 +55,127 @@ namespace ValheimModPack.NordicRadioSmoke
                     if (shader != "Custom/Piece") throw new Exception("Unexpected furniture shader " + shader);
                     report += renderer.name + " shader=" + shader + "\n";
                 }
+                report += CheckMusicDucking();
                 string mp3 = Environment.GetEnvironmentVariable("NORDICRADIO_SMOKE_MP3");
                 if (!String.IsNullOrEmpty(mp3)) StartCoroutine(Decode(report, mp3));
                 else Finish(report + "MP3 decode not requested.\n", 0);
             }
             catch (Exception error) { Finish("FAIL " + error, 2); }
         }
+        private static string CheckMusicDucking()
+        {
+            MusicMan manager = MusicMan.instance;
+            if (!manager) throw new Exception("Native MusicMan instance unavailable for ducking test");
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
+            FieldInfo controllerField = typeof(Plugin).GetField("musicDucking", flags);
+            object controller = controllerField == null ? null : controllerField.GetValue(Plugin.Instance);
+            if (controller == null) throw new Exception("Music ducking controller is not installed");
+            MethodInfo update = controller.GetType().GetMethod("Update", flags);
+            MethodInfo reset = controller.GetType().GetMethod("Reset", flags);
+            MethodInfo nativeUpdate = typeof(MusicMan).GetMethod("UpdateMusic", flags);
+            string[] fieldNames = { "m_musicSource", "m_queuedMusic", "m_currentMusic", "m_stopMusic", "m_resetMusicTimer" };
+            var fields = new FieldInfo[fieldNames.Length];
+            var saved = new object[fieldNames.Length];
+            for (int i = 0; i < fields.Length; i++)
+            {
+                fields[i] = typeof(MusicMan).GetField(fieldNames[i], flags);
+                if (fields[i] == null) throw new Exception("MusicMan test contract changed: " + fieldNames[i]);
+                saved[i] = fields[i].GetValue(manager);
+            }
+            bool originalDebug = Terminal.m_showTests;
+            var holder = new GameObject("NordicRadio.SilentMusicSmokeTest");
+            var dummy = holder.AddComponent<AudioSource>();
+            dummy.playOnAwake = false;
+            dummy.volume = 0.6f;
+            try
+            {
+                reset.Invoke(controller, null);
+                fields[0].SetValue(manager, dummy);
+                fields[1].SetValue(manager, null);
+                fields[2].SetValue(manager, null);
+                fields[3].SetValue(manager, false);
+                fields[4].SetValue(manager, 0f);
+                Terminal.m_showTests = false;
+                // No queued/current clip and a stopped dummy source exercise
+                // the native branch without a volume write, the compounding risk.
+                nativeUpdate.Invoke(manager, new object[] { 0.016f });
+                Close(dummy.volume, 0.6f, "initial baseline");
+                for (int i = 0; i < 5; i++) update.Invoke(controller, new object[] { 1f, 0.2f, 0.1f });
+                Close(dummy.volume, 0.12f, "twenty percent duck");
+                for (int i = 0; i < 100; i++)
+                {
+                    nativeUpdate.Invoke(manager, new object[] { 0.016f });
+                    update.Invoke(controller, new object[] { 1f, 0.2f, 0.016f });
+                }
+                Close(dummy.volume, 0.12f, "no repeated multiplication");
+                dummy.volume = 0.35f;
+                nativeUpdate.Invoke(manager, new object[] { 0.016f });
+                Close(dummy.volume, 0.07f, "fresh external volume");
+                reset.Invoke(controller, null);
+                Close(dummy.volume, 0.35f, "reset restoration");
+                if (dummy.isPlaying || dummy.clip != null) throw new Exception("Ducking test unexpectedly played audio");
+                return "PASS native MusicMan Harmony dispatch: duck to 20%, 100 updates without compounding, changed baseline, restoration. No audio played or preferences changed.\n";
+            }
+            finally
+            {
+                reset.Invoke(controller, null);
+                for (int i = 0; i < fields.Length; i++) fields[i].SetValue(manager, saved[i]);
+                Terminal.m_showTests = originalDebug;
+                UnityEngine.Object.Destroy(holder);
+            }
+        }
+        private static void Close(float actual, float expected, string name)
+        {
+            if (Single.IsNaN(actual) || Math.Abs(actual - expected) > 0.0001f)
+                throw new Exception("Native music ducking " + name + ": expected " + expected + ", got " + actual);
+        }
         private IEnumerator Decode(string report, string path)
         {
+            AudioClip clip;
             UnityWebRequest request = UnityWebRequestMultimedia.GetAudioClip(new Uri(path).AbsoluteUri, AudioType.MPEG);
             ((DownloadHandlerAudioClip)request.downloadHandler).streamAudio = true;
             using (request)
             {
                 yield return request.SendWebRequest();
-                if (request.isNetworkError || request.isHttpError)
+                if (request.result != UnityWebRequest.Result.Success)
                 { Finish(report + "FAIL MP3 decoder: " + request.error, 4); yield break; }
-                AudioClip clip = DownloadHandlerAudioClip.GetContent(request);
+                clip = DownloadHandlerAudioClip.GetContent(request);
                 if (!clip || clip.length <= 0 || clip.samples <= 0 || clip.channels <= 0)
                 { Finish(report + "FAIL MP3 decoder returned an empty clip", 4); yield break; }
                 report += "PASS MP3 decoder: " + clip.length + " seconds, " + clip.samples + " samples, "
-                    + clip.channels + " channels. No audio was played.\n";
-                UnityEngine.Object.Destroy(clip);
+                    + clip.channels + " channels.\n";
             }
-            Finish(report, 0);
+            // Exercise the real streaming source -> RadioGain -> next filter
+            // chain. The last test-only filter zeros every sample before output.
+            var holder = new GameObject("NordicRadio.SilentDspSmokeTest");
+            var source = holder.AddComponent<AudioSource>();
+            source.playOnAwake = false;
+            source.spatialBlend = 0;
+            source.volume = 1;
+            source.clip = clip;
+            var gain = holder.AddComponent<RadioGain>();
+            gain.Gain = 3;
+            var probe = holder.AddComponent<SilentDspProbe>();
+            source.Play();
+            float deadline = Time.realtimeSinceStartup + 2;
+            float earliest = Time.realtimeSinceStartup + 0.3f;
+            while (Time.realtimeSinceStartup < deadline && (Time.realtimeSinceStartup < earliest || probe.Callbacks < 8 || probe.Peak <= 0)) yield return null;
+            source.Stop();
+            string failure = null;
+            try
+            {
+                if (probe.Callbacks < 1 || probe.Peak <= 0 || probe.Invalid)
+                    throw new Exception("No finite nonzero PCM reached the last filter (callbacks=" + probe.Callbacks + ", peak=" + probe.Peak + "). The audio device may be unavailable.");
+                const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+                object processor = typeof(RadioGain).GetField("processor", flags).GetValue(gain);
+                float currentGain = (float)processor.GetType().GetField("currentGain", flags).GetValue(processor);
+                if (currentGain < 2.9f || currentGain > 3.001f) throw new Exception("Native RadioGain did not reach amplification 3: " + currentGain);
+                report += "PASS native streaming MP3 DSP: " + probe.Callbacks + " callbacks, finite nonzero PCM, gain=" + currentGain + ". Test output was zeroed before speakers.\n";
+            }
+            catch (Exception error) { failure = "FAIL native streaming DSP: " + error; }
+            UnityEngine.Object.Destroy(holder);
+            UnityEngine.Object.Destroy(clip);
+            Finish(report + (failure ?? ""), failure == null ? 0 : 5);
         }
         private void Update()
         {
@@ -90,6 +189,26 @@ namespace ValheimModPack.NordicRadioSmoke
             Logger.LogInfo(message);
             File.WriteAllText(Path.Combine(Root, "result.txt"), message);
             Application.Quit(code);
+        }
+    }
+
+    public sealed class SilentDspProbe : MonoBehaviour
+    {
+        internal volatile int Callbacks;
+        internal volatile bool Invalid;
+        internal volatile float Peak;
+        private void OnAudioFilterRead(float[] data, int channels)
+        {
+            float peak = 0;
+            for (int i = 0; i < data.Length; i++)
+            {
+                float value = data[i];
+                if (Single.IsNaN(value) || Single.IsInfinity(value)) Invalid = true;
+                else peak = Math.Max(peak, Math.Abs(value));
+                data[i] = 0;
+            }
+            Peak = Math.Max(Peak, peak);
+            Callbacks++;
         }
     }
 }

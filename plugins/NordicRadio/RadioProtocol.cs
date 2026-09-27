@@ -64,6 +64,9 @@ namespace ValheimModPack.NordicRadio
     internal static class RadioProtocol
     {
         public const string RpcName = "VMP_NordicRadio_1";
+        public const float MaxAudioDistance = 120f;
+        // Keep a margin around audible sources for playlist/state prefetch while approaching.
+        public const float WatchDistance = 150f;
         public const int MaxTracks = 256;
         public const int ChunkSize = 24 * 1024;
         public const int MaxPacket = 128 * 1024;
