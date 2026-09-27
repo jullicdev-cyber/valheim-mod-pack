@@ -6,6 +6,8 @@ The interface has Russian and English captions. Filenames are rendered with rich
 
 The window owns exactly one Jotunn input-block request and releases that request when closed, invalidated, disabled or when a UI callback fails. It does not reset other mods' input blocks. Every button callback carries its window generation, so destroyed-window callbacks cannot control a later window. Escape and gamepad B close it; loss of the original player/world, death, teleporting, sleeping, distance over five metres, a native popup, the inventory, or the large map invalidate the context. Focus navigation stays inside enabled radio buttons. Selection sound is disabled on these buttons so pointer focus plus click does not play two button sounds.
 
+The 1.1.2 review found that a portable's deferred opening could steal focus from text input opened during the inventory transition. Opening now checks Jotunn's combined text-input guard before acquiring its own lease; an already-open window checks the actual native text panel, chat and console instead, so its own Jotunn lock cannot make it close itself. Escape/B also discard a pending opening. Six regressions execute the production portable controller with boundary doubles; they do not simulate native Unity event dispatch.
+
 Validation performed during development:
 
 - C# 5 compilation against the installed game's managed assemblies and the pack's Jotunn 2.30.2, with small stubs for the other new radio classes.

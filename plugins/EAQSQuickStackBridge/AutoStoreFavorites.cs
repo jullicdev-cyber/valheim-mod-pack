@@ -18,11 +18,12 @@ namespace ValheimModPack
         private Harmony guards, filters;
         private MethodInfo getConfig, isFavorite;
         private FavoriteStateLink stateLink;
-        private bool present, ready, warned, reported;
+        private bool present, ready, warned, reported, disposed;
         internal bool Ready { get { return ready; } }
         internal AutoStoreFavorites(Action<string> info, Action<Exception> report) { this.info = info; this.report = report; }
         internal void InstallGuards()
         {
+            if (disposed || guards != null) return;
             if (!Chainloader.PluginInfos.ContainsKey(Azu)) return;
             present = true; active = this; ready = false;
             guards = new Harmony(Plugin.Id + ".azustore-guard");
@@ -47,7 +48,7 @@ namespace ValheimModPack
         }
         internal void Initialize()
         {
-            if (!present || reported) return;
+            if (disposed || !present || reported || ready) return;
             try
             {
                 RequireVersion(Azu, "3.1.6"); RequireVersion(Quick, "1.4.15"); RequireVersion(Eaqs, "3.1.3");
@@ -201,6 +202,8 @@ namespace ValheimModPack
         }
         public void Dispose()
         {
+            if (disposed) return;
+            disposed = true;
             ready = false;
             if (filters != null) filters.UnpatchSelf();
             if (guards != null) guards.UnpatchSelf();

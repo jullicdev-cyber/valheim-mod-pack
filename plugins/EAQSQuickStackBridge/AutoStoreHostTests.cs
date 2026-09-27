@@ -164,6 +164,8 @@ public static class AutoStoreHostTests
             bridge.InstallGuards(); Check(Harmony.Patches.Count == 3 && !bridge.Ready, "Awake installs three guards before config initialization");
             Check(!Call("BeforeUpdate") && !Call("BeforeStore"), "K and single inventory store blocked before filter readiness");
             bridge.Initialize(); Check(bridge.Ready && Harmony.Patches.Count == 11, "Four precise filters and four state-sharing hooks install before enabling store dispatch");
+            bridge.InstallGuards(); bridge.Initialize();
+            Check(bridge.Ready && Harmony.Patches.Count == 11, "Repeated initialization keeps one active state link and one copy of every hook");
             Check(Call("BeforeUpdate") && !Call("BeforeStore"), "Ready Update runs, manual store still requires a local player");
             var owner = new Player(); Player.m_localPlayer = owner;
             Check(Call("BeforeStore"), "Consistent live player may use original store implementation");
@@ -176,6 +178,8 @@ public static class AutoStoreHostTests
             config.Types.Add(plain.m_shared.m_name); Check(Filter(plain, false), "Favorite item type protects moved item");
             var stack = Item(5, 3, plain.m_shared.m_name); Check(Filter(stack, false), "Favorite type protects every matching stack");
             config.Types.Clear(); Check(!Filter(stack, false), "Unfavoriting applies immediately without reload");
+            bridge.InstallGuards(); bridge.Initialize();
+            Check(bridge.Ready && Harmony.Patches.Count == 11 && ReferenceEquals(config, QuickStackStore.UserConfig.GetPlayerConfig(owner.Id)), "Repeated initialization preserves existing live favorite binding");
             stack.m_equipped = true; Check(Filter(stack, false), "Equipped item remains protected even in an ordinary cell"); stack.m_equipped = false;
             stack.m_gridPos.y = 5; Check(Filter(stack, false), "EAQS extra equipment/quick row protected");
             stack.m_gridPos.x = 7; Check(Filter(stack, false), "Unused hidden cells protected as well");
@@ -195,6 +199,8 @@ public static class AutoStoreHostTests
             Check(owner.Warnings == 1 && errors.Count == 1, "Failure warns once and logs once");
             Call("BeforeUpdate"); Call("BeforeStore"); Check(owner.Warnings == 1 && errors.Count == 1, "Failure does not spam warnings");
             Check(Filter(stack, false) && !Filter(dropped, false), "Failed guard blocks local inventory only; ground flow remains unchanged");
+            bridge.Dispose(); bridge.InstallGuards(); bridge.Initialize();
+            Check(!bridge.Ready && Harmony.Patches.Count == 0, "Disposed bridge cannot reinstall stale guards or bindings");
         }
         Check(Harmony.Patches.Count == 0, "Disposal removes only owned hooks");
         Reset(); errors.Clear(); AddPlugin(AutoStoreFavorites.Azu, "3.1.7"); Player.m_localPlayer = new Player();

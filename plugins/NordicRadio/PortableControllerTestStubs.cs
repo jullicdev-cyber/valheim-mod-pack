@@ -17,6 +17,8 @@ namespace UnityEngine
     public sealed class Transform { public Vector3 position; }
     public sealed class GameObject { public string name; public GameObject(string name) { this.name = name; } }
     public static class Time { public static int frameCount; public static float unscaledTime; }
+    public enum KeyCode { Escape }
+    public static class Input { public static bool Escape; public static bool GetKeyDown(KeyCode key) { return Escape; } }
 }
 
 namespace HarmonyLib
@@ -132,6 +134,10 @@ public sealed class InventoryGui
 }
 public static class Menu { public static bool Visible; public static bool IsVisible() { return Visible; } }
 public static class UnifiedPopup { public static bool Visible; public static bool IsVisible() { return Visible; } }
+public static class TextInput { public static bool Visible; public static bool IsVisible() { return Visible; } }
+public static class Console { public static bool Visible; public static bool IsVisible() { return Visible; } }
+public sealed class Chat { public static Chat instance; public bool Focus; public bool HasFocus() { return Focus; } }
+public static class ZInput { public static bool Cancel; public static bool GetButtonDown(string name) { return Cancel && name == "JoyButtonB"; } }
 public sealed class Localization
 {
     public static Localization instance;

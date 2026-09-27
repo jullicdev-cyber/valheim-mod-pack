@@ -72,12 +72,24 @@ internal static class BackendTests
 
         Reset();chest=Chest("Wood",40);
         using(var service=new ChestService(null)){service.Begin(player,Want("Wood",20),10);Reply(chest,true);chest.SetInUse(true);Next(service);Check(Count("Wood")==0&&chest.IsInUse(),"concurrent opener untouched");}
+        Reset();chest=Chest("Wood",40);
+        using(var service=new ChestService(null)){service.Begin(player,Want("Wood",20),10);Reply(chest,true);chest.View.Data.Owner=3;Next(service);Check(Count("Wood")==0&&chest.Saves==0,"ownership lost after grant never writes or transfers");Time.realtimeSinceStartup=9;service.Tick();Next(service);Check(!service.IsBusy,"lost ownership request eventually times out");}
+        Reset();chest=Chest("Wood",40);
+        using(var service=new ChestService(null)){service.Begin(player,Want("Wood",20),10);Reply(chest,true);chest.transform.position=new Vector3(Single.NaN,0,0);Next(service);Check(Count("Wood")==0&&chest.Saves==0,"nonfinite distance rejected again after ownership grant");}
 
         Reset();chest=Chest("Wood",40);
         using(var service=new ChestService(null)){service.Begin(player,Want("Wood",20),10);chest.transform.position=new Vector3(11,0,0);Reply(chest,true);Next(service);Next(service);Check(Count("Wood")==0,"distance rechecked");}
 
         Reset();chest=Chest("Wood",40);PrivateArea.Access=false;
         using(var service=new ChestService(null)){service.Begin(player,Want("Wood",20),10);Check(chest.View.Requests==0&&Count("Wood")==0,"ward privacy");}
+        Reset();chest=Chest("Wood",40);PrivateArea.Access=false;chest.m_checkGuardStone=false;
+        using(var service=new ChestService(null)){service.Begin(player,Want("Wood",20),10);Check(chest.View.Requests==0,"disabled vendor ward flag cannot bypass ward privacy");}
+        Reset();chest=Chest("Wood",40,Single.NaN);
+        using(var service=new ChestService(null)){service.Begin(player,Want("Wood",20),10);Check(chest.View.Requests==0,"NaN chest position is not inside radius");}
+        Reset();chest=Chest("Wood",40);player.transform.position=new Vector3(Single.NaN,0,0);
+        using(var service=new ChestService(null)){service.Begin(player,Want("Wood",20),10);Check(chest.View.Requests==0,"NaN player position cannot bypass radius");}
+        Reset();chest=Chest("Wood",40);player.Id=0;
+        using(var service=new ChestService(null)){Check(!service.Begin(player,Want("Wood",20),10)&&chest.View.Requests==0,"uninitialized player identity cannot start transfer");}
         Reset();chest=Chest("Wood",40);chest.Access=false;
         using(var service=new ChestService(null)){service.Begin(player,Want("Wood",20),10);Check(chest.View.Requests==0,"personal privacy");}
 
@@ -131,11 +143,19 @@ internal static class BackendTests
 
         Reset();chest=Chest("Wood",40);EquipmentAndQuickSlots.API.Height=7;
         using(var service=new ChestService(null)){Check(!service.Begin(player,Want("Wood",20),10)&&chest.View.Requests==0,"EAQS mismatch fail closed");}
+        Reset();chest=Chest("Wood",40);player.Inventory.Height=1000000;EquipmentAndQuickSlots.API.Height=1000000;EquipmentAndQuickSlots.API.Rows=999999;
+        using(var service=new ChestService(null)){Check(!service.Begin(player,Want("Wood",20),10)&&chest.View.Requests==0,"unbounded but matching dimensions rejected before scanning cells");}
+        Reset();chest=Chest("Wood",40);player.Inventory.Width=Int32.MaxValue;
+        using(var service=new ChestService(null)){Check(!service.Begin(player,Want("Wood",20),10)&&chest.View.Requests==0,"unbounded width rejected before scanning cells");}
+        Reset();chest=Chest("Wood",40);chest.View.Data.DataRevision=0;
+        using(var service=new ChestService(null)){service.Begin(player,Want("Wood",20),10);Check(chest.View.Requests==0,"zero replica revision is not a fresh chest");}
 
         Reset();chest=Chest("Wood",40);chest.FailRefresh=true;
         using(var service=new ChestService(null)){service.Begin(player,Want("Wood",20),10);Check(chest.View.Requests==0,"stale replica not requested");}
         Reset();chest=Chest("Wood",40);
         using(var service=new ChestService(null)){service.Begin(player,Want("Wood",40),10);Reply(chest,true);Next(service);Check(Count("Wood")==40&&chest.GetInventory().Items.Count==0&&service.TotalAdded==40,"whole native source removed and counted");}
+        Reset();chest=Chest("Wood",Int32.MaxValue);chest.GetInventory().Items[0].m_shared.m_maxStackSize=Int32.MaxValue;
+        using(var service=new ChestService(null)){service.Begin(player,Want("Wood",9999),10);Reply(chest,true);Next(service);Check(Count("Wood")==9999&&chest.GetInventory().Items[0].m_stack==Int32.MaxValue-9999&&service.TotalAdded==9999,"maximum integer source stack preserves exact bounded deficit without overflow");}
         Reset();chest=Chest("Wood",40);
         using(var service=new ChestService(null)){service.Begin(player,Want("Wood",20),10);service.Cancel();Player.m_localPlayer=null;service.Tick();Check(Reply(chest,false),"world exit clears retired request references");}
 

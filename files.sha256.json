@@ -221,19 +221,19 @@
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-ConfirmMapPinRemoval/ConfirmMapPinRemoval.dll",
-    "sha256": "9d67dfc6a7e5bbbccdcb68456cc02cd4d47c5a2b40ec3aa3d38d9979764af4de"
+    "sha256": "3717cb32200830888eb1b618ff93b68fb566252cc9f84b22149b8c5de070ba61"
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-EAQSQuickStackBridge/EAQSQuickStackBridge.dll",
-    "sha256": "e7e2689c33d1bf90f107d5b837d78fae1465b47ec15d68c66d840b9bcfa3c1ef"
+    "sha256": "3bf8ac0436de41cdeea7a73e578a9a11486d1aae530a4896eecc9fd0dfb49049"
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-ExpeditionLoadouts/ExpeditionLoadouts.dll",
-    "sha256": "88f824e6f9bdb36b658a6c6bfdf7a0fdd9a1cc9d87df3dde0f00c86b451b27df"
+    "sha256": "56dc19b1ab006f5378a07c67a1e24bcea55505db07d0e65c5c03ca573556d228"
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-NordicRadio/NordicRadio.dll",
-    "sha256": "108c0a2fbf7bf9abf2027d1ed158820a9b1e3b21dac6fce5b670286b941b7624"
+    "sha256": "e91712472435268e4be3772e928c96597a27841ccb3c0a786966323a4f75bea4"
   },
   {
     "path": "BepInEx/plugins/ValheimModding-JsonDotNET/Newtonsoft.Json.dll",

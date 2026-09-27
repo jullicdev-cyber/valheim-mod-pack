@@ -30,7 +30,7 @@ namespace ValheimModPack.BridgeSmoke
             string boundary = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
             Check(Path.GetFullPath(Paths.ConfigPath).StartsWith(boundary, StringComparison.OrdinalIgnoreCase), "Fixture writes stay inside isolated config directory");
             Check(Player.m_localPlayer == null, "Probe only runs without a live player");
-            Check(Chainloader.PluginInfos.ContainsKey(Plugin.Id) && Chainloader.PluginInfos[Plugin.Id].Metadata.Version == new System.Version("1.1.0"), "Bridge 1.1.0 loaded");
+            Check(Chainloader.PluginInfos.ContainsKey(Plugin.Id) && Chainloader.PluginInfos[Plugin.Id].Metadata.Version == new System.Version("1.1.1"), "Bridge 1.1.1 loaded");
             Check(Chainloader.PluginInfos.ContainsKey("Azumatt.AzuAutoStore") && Chainloader.PluginInfos["Azumatt.AzuAutoStore"].Metadata.Version == new System.Version("3.1.6"), "Azu 3.1.6 loaded");
             object bridge = Chainloader.PluginInfos[Plugin.Id].Instance;
             object state = typeof(Plugin).GetField("autoStore", All).GetValue(bridge);

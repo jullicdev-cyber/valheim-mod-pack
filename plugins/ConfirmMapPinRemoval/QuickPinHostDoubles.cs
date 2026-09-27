@@ -11,6 +11,11 @@ namespace UnityEngine
         public GameObject gameObject;
         public Transform transform { get { return gameObject.transform; } }
     }
+    public class Behaviour : Component
+    {
+        public bool enabled = true;
+        public bool isActiveAndEnabled { get { return enabled && gameObject != null && gameObject.activeInHierarchy; } }
+    }
     public class GameObject : Object
     {
         public string name; public bool activeInHierarchy = true; public Transform transform;
@@ -43,7 +48,7 @@ namespace UnityEngine
 }
 namespace UnityEngine.UI
 {
-    public class InputField : UnityEngine.Component { public bool isFocused; }
+    public class InputField : UnityEngine.Behaviour { public bool isFocused; }
     public class Text : UnityEngine.Component { public string text; public bool richText; }
     public class Button : UnityEngine.Component { public readonly ClickEvent onClick = new ClickEvent(); }
     public class ClickEvent { private Action action; public void AddListener(Action value) { action += value; } public void Invoke() { if (action != null) action(); } }
@@ -80,7 +85,8 @@ namespace Jotunn.Managers
 namespace BepInEx { public static class Paths { public static string GameRootPath; } }
 namespace Splatform { public struct PlatformUserID { public static readonly PlatformUserID None = new PlatformUserID(); } }
 public sealed class ButtonSfx : UnityEngine.Component { public UnityEngine.GameObject m_selectSfxPrefab; }
-public sealed class TMP_InputField : UnityEngine.Component { public bool isFocused { get; set; } }
+public class TMP_InputField : UnityEngine.Behaviour { public bool isFocused { get; set; } }
+public sealed class GuiInputField : TMP_InputField { }
 public static class MessageHud { public enum MessageType { Center } }
 public sealed class Player
 {

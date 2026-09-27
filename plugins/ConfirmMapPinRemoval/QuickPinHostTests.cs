@@ -57,6 +57,17 @@ namespace ValheimModPack.PinRemoval
                 var modern = new GameObject(); modern.AddComponent<TMP_InputField>().isFocused=true;
                 EventSystem.current.currentSelectedGameObject=modern; fixture.Frame(KeyCode.LeftControl, KeyCode.P);
                 Check(!fixture.Controller.IsOpen, "global launcher ignores focused TMP input");
+                var derived = new GameObject(); derived.AddComponent<GuiInputField>().isFocused=true;
+                EventSystem.current.currentSelectedGameObject=derived; fixture.Frame(KeyCode.LeftControl, KeyCode.P);
+                Check(!fixture.Controller.IsOpen, "global launcher ignores focused native TMP subclass");
+                derived.activeInHierarchy=false; fixture.Frame(KeyCode.LeftControl, KeyCode.P);
+                Check(fixture.Controller.IsOpen, "stale focus on inactive field does not trap the global shortcut"); fixture.Controller.Close();
+                legacy.GetComponent<InputField>().enabled=false; EventSystem.current.currentSelectedGameObject=legacy;
+                fixture.Frame(KeyCode.LeftControl, KeyCode.P);
+                Check(fixture.Controller.IsOpen, "stale focus on disabled legacy field does not trap the global shortcut"); fixture.Controller.Close();
+                modern.GetComponent<TMP_InputField>().enabled=false; EventSystem.current.currentSelectedGameObject=modern;
+                fixture.Frame(KeyCode.LeftControl, KeyCode.P);
+                Check(fixture.Controller.IsOpen, "stale focus on disabled TMP field does not trap the global shortcut"); fixture.Controller.Close();
                 EventSystem.current.currentSelectedGameObject=null; fixture.Frame(KeyCode.LeftControl, KeyCode.LeftAlt, KeyCode.P);
                 Check(!fixture.Controller.IsOpen, "Ctrl+Alt+P does not launch");
                 fixture.Frame(KeyCode.RightControl, KeyCode.P);

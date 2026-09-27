@@ -77,6 +77,40 @@ internal static class PresetStoreTests
         legacyStore.Save(legacyStore.Presets[0]);
         Check(File.ReadAllText(legacy).Contains("\"Version\":2")&&File.Exists(legacy+".bak"),
             "first write upgrades schema with previous version backup");
+        var originalWriter = new PresetStore(root, 18); originalWriter.Save(NewPreset("Initial"));
+        var staleWriter = new PresetStore(root, 18);
+        originalWriter.Save(NewPreset("Fresh update"));
+        string concurrentPath = Path.Combine(root, "0000000000000012.json");
+        byte[] authoritative = File.ReadAllBytes(concurrentPath), backup = File.ReadAllBytes(concurrentPath + ".bak");
+        rejected = false; try { staleWriter.Save(NewPreset("Stale overwrite")); } catch (IOException) { rejected = true; }
+        Check(rejected && staleWriter.ReadOnly && staleWriter.Presets.Count == 1, "stale writer refuses to overwrite another writer's saved presets");
+        Check(Convert.ToBase64String(authoritative) == Convert.ToBase64String(File.ReadAllBytes(concurrentPath))
+            && Convert.ToBase64String(backup) == Convert.ToBase64String(File.ReadAllBytes(concurrentPath + ".bak")), "external update and previous backup preserved byte-for-byte");
+        var freshWriter = new PresetStore(root, 19); var otherWriter = new PresetStore(root, 19);
+        otherWriter.Save(NewPreset("New character data"));
+        rejected = false; try { freshWriter.Save(NewPreset("Empty snapshot")); } catch (IOException) { rejected = true; }
+        Check(rejected && freshWriter.ReadOnly && new PresetStore(root, 19).Presets[0].Name == "New character data", "a concurrently created first file is preserved");
+        var removalWriter = new PresetStore(root, 20); removalWriter.Save(NewPreset("Before external removal"));
+        File.Delete(Path.Combine(root, "0000000000000014.json"));
+        rejected = false; try { removalWriter.Save(NewPreset("Restore stale data")); } catch (IOException) { rejected = true; }
+        Check(rejected && removalWriter.ReadOnly && !File.Exists(Path.Combine(root, "0000000000000014.json")), "external deletion is not silently undone");
+        var invalidExternal = new PresetStore(root, 21); invalidExternal.Save(NewPreset("Before corruption"));
+        string invalidPath = Path.Combine(root, "0000000000000015.json"); File.WriteAllText(invalidPath, "broken externally");
+        rejected = false; try { invalidExternal.Remove(invalidExternal.Presets[0].Id); } catch (IOException) { rejected = true; }
+        Check(rejected && invalidExternal.ReadOnly && File.ReadAllText(invalidPath) == "broken externally", "delete refuses to overwrite externally damaged data");
+        Check(Directory.GetFiles(root, "*.tmp-*").Length == 0, "failed optimistic writes clean temporary files");
+        var blockedWriter = new PresetStore(root, 22); var blockedPlan = NewPreset("Before I/O failure"); blockedWriter.Save(blockedPlan);
+        string blockedPath = Path.Combine(root, "0000000000000016.json"); byte[] beforeBlocked = File.ReadAllBytes(blockedPath);
+        blockedPlan.Name = "After retry";
+        using (var locked = new FileStream(blockedPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            rejected = false; try { blockedWriter.Save(blockedPlan); } catch (IOException) { rejected = true; }
+            Check(rejected && blockedWriter.Presets[0].Name == "Before I/O failure", "replacement I/O failure does not commit in-memory draft");
+            Check(Convert.ToBase64String(beforeBlocked) == Convert.ToBase64String(File.ReadAllBytes(blockedPath)), "replacement I/O failure preserves original file");
+        }
+        blockedWriter.Save(blockedPlan);
+        Check(new PresetStore(root, 22).Presets[0].Name == "After retry", "retry after transient I/O failure remains possible");
+        Check(Directory.GetFiles(root, "*.tmp-*").Length == 0, "replacement failure and retry leave no temp files");
         Console.WriteLine("OK: " + count + " preset persistence checks. Test files: " + root); return 0;
     }
 }

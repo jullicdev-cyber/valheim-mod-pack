@@ -52,6 +52,9 @@ namespace ValheimModPack.NordicRadio
         {
             if (IsVisible && ReferenceEquals(piece, target)) return;
             Hide();
+            // This check belongs before our lease. Once open, Jotunn reports
+            // our own BlockInput through TextInput.IsVisible as well.
+            if (TextInput.IsVisible()) return;
             piece = target;
             player = Player.m_localPlayer;
             network = ZNet.instance;
@@ -197,6 +200,8 @@ namespace ValheimModPack.NordicRadio
                 && !player.IsDead() && !player.IsTeleporting() && !player.InCutscene() && !player.IsSleeping()
                 && piece.HasAccess(player)
                 && !UnifiedPopup.IsVisible() && !Menu.IsVisible() && !InventoryGui.IsVisible()
+                && !global::Console.IsVisible() && (Chat.instance == null || !Chat.instance.HasFocus())
+                && (TextInput.instance == null || TextInput.instance.m_panel == null || !TextInput.instance.m_panel.activeInHierarchy)
                 && (Minimap.instance == null || Minimap.instance.m_mode != Minimap.MapMode.Large);
         }
 

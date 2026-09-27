@@ -49,6 +49,20 @@ public static class HostTests
         Check(map.Contains(b), "Externally destroyed UI cannot confirm");
         map.FailSelection = true; Click(map);
         Check(!view.IsVisible && map.Contains(b) && plugin.Logger.Errors.Count == 1, "Selection error blocks removal"); map.FailSelection = false;
+        Click(map); Chat.instance = new Chat { Focus = true }; view.Yes();
+        Check(!view.IsVisible && map.Contains(b), "Confirmation rejects newly focused chat before next Update"); Chat.instance = null;
+        Click(map); global::Console.Visible = true; Call("Update", plugin); view.Yes();
+        Check(!view.IsVisible && map.Contains(b), "Console opening cancels pending deletion"); global::Console.Visible = false;
+        Click(map); InventoryGui.Visible = true; Call("Update", plugin); view.Yes();
+        Check(!view.IsVisible && map.Contains(b), "Inventory opening cancels pending deletion"); InventoryGui.Visible = false;
+        Click(map); ++ZNet.instance.World; view.Yes();
+        Check(!view.IsVisible && map.Contains(b), "Changed world UID rejects deletion even if player and map objects were reused");
+        Click(map); ZNet.instance = new ZNet { World = ZNet.instance.World }; view.Yes();
+        Check(!view.IsVisible && map.Contains(b), "Replaced network session rejects deletion in an identically numbered world");
+        Click(map); ++player.Id; view.Yes();
+        Check(!view.IsVisible && map.Contains(b), "Changed character ID rejects deletion even if player object was reused");
+        TextInput.ForeignVisible = true; Click(map);
+        Check(!view.IsVisible, "Foreign Jotunn input window blocks opening deletion prompt"); TextInput.ForeignVisible = false;
         Click(map); Call("OnDisable", plugin); view.Yes();
         Check(!view.IsVisible && map.Contains(b), "Disabling cancels request");
         plugin.isActiveAndEnabled = false; Click(map); Check(!view.IsVisible, "Disabled plugin cannot open UI");
@@ -60,6 +74,6 @@ public static class HostTests
         Call("Update", plugin); Call("Update", plugin);
         Check(player.Warnings == 1 && plugin.Logger.Errors.Count == 1, "Startup failure reported once");
         Call("OnDestroy", plugin); AccessTools.MissingMethod = null;
-        Console.WriteLine("OK: " + checks + " real-plugin integration assertions with host doubles. Unity rendering not tested.");
+        System.Console.WriteLine("OK: " + checks + " real-plugin integration assertions with host doubles. Unity rendering not tested.");
     }
 }

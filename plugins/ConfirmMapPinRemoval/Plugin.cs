@@ -6,7 +6,7 @@ using HarmonyLib;
 using UnityEngine;
 namespace ValheimModPack.PinRemoval
 {
-    [BepInPlugin(Id, "Confirm Map Pin Removal", "1.3.1")]
+    [BepInPlugin(Id, "Confirm Map Pin Removal", "1.3.2")]
     [BepInDependency("com.jotunn.jotunn", "2.30.2")]
     public sealed class Plugin : BaseUnityPlugin
     {
@@ -58,19 +58,32 @@ namespace ValheimModPack.PinRemoval
                     || plugin.dialog.IsOpen || (plugin.history != null && plugin.history.IsOpen)
                     || (plugin.quick != null && plugin.quick.IsBusy) || UnifiedPopup.IsVisible()) return false;
                 var player = Player.m_localPlayer;
-                if (!PinHistoryController.SafePlayer(player) || Menu.IsVisible() || __instance.m_mode != Minimap.MapMode.Large) return false;
+                var network = ZNet.instance;
+                if (!RemovalContext(__instance, player) || TextInput.IsVisible() || network == null) return false;
+                long world = network.GetWorldUID(), character = player.GetPlayerID();
+                if (world == 0 || character == 0) return false;
                 var pin = (Minimap.PinData)plugin.closest.Invoke(__instance, null);
                 if (pin == null || !pin.m_save) return false;
                 plugin.hideNameInput.Invoke(__instance, new object[] { false });
                 plugin.dialog.Open(pin, plugin.quick == null ? pin.m_name : plugin.quick.DisplayName(pin),
-                    candidate => __instance != null && ReferenceEquals(Minimap.instance, __instance)
-                        && __instance.m_mode == Minimap.MapMode.Large && !UnifiedPopup.IsVisible()
-                        && ReferenceEquals(Player.m_localPlayer, player) && PinHistoryController.SafePlayer(player) && !Menu.IsVisible() && candidate.m_save
+                    candidate => plugin != null && plugin.isActiveAndEnabled && RemovalContext(__instance, player)
+                        && ReferenceEquals(ZNet.instance, network) && network.GetWorldUID() == world && player.GetPlayerID() == character
+                        && candidate.m_save
                         && ((List<Minimap.PinData>)plugin.pins.GetValue(__instance)).Contains(candidate),
                     candidate => plugin.history.Remove(__instance, candidate));
             }
             catch (Exception error) { plugin.Logger.LogError("Pin removal blocked: " + error); }
             return false;
+        }
+        private static bool RemovalContext(Minimap map, Player player)
+        {
+            // TextInput.IsVisible includes our own Jotunn input lease after Show;
+            // validate the native input panel here and check the shared lock only before opening.
+            return map != null && ReferenceEquals(Minimap.instance, map) && map.m_mode == Minimap.MapMode.Large
+                && ReferenceEquals(Player.m_localPlayer, player) && PinHistoryController.SafePlayer(player)
+                && !UnifiedPopup.IsVisible() && !Menu.IsVisible() && !global::Console.IsVisible() && !InventoryGui.IsVisible()
+                && (Chat.instance == null || !Chat.instance.HasFocus())
+                && (TextInput.instance == null || TextInput.instance.m_panel == null || !TextInput.instance.m_panel.activeInHierarchy);
         }
         private void Update()
         {

@@ -9,7 +9,7 @@ using UnityEngine.UI;
 
 namespace ValheimModPack.ExpeditionLoadouts
 {
-    [BepInPlugin(Id, "Expedition Loadouts", "1.1.0")]
+    [BepInPlugin(Id, "Expedition Loadouts", "1.1.1")]
     [BepInDependency("com.jotunn.jotunn", "2.30.2")]
     [BepInDependency("randyknapp.mods.equipmentandquickslots", BepInDependency.DependencyFlags.SoftDependency)]
     [BepInDependency("goldenrevolver.quick_stack_store", BepInDependency.DependencyFlags.SoftDependency)]
@@ -23,6 +23,7 @@ namespace ValheimModPack.ExpeditionLoadouts
         private ConfigEntry<float> radius;
         private LoadoutWindow window;
         private Player owner;
+        private long ownerId;
         private ZNet network;
         private int pendingFrame = -1;
         private float pendingUntil;
@@ -49,13 +50,14 @@ namespace ValheimModPack.ExpeditionLoadouts
             try
             {
                 Player player = Player.m_localPlayer;
-                if (!ReferenceEquals(player, owner) || !ReferenceEquals(ZNet.instance, network))
+                long playerId = player == null ? 0 : player.GetPlayerID();
+                if (!ReferenceEquals(player, owner) || !ReferenceEquals(ZNet.instance, network) || playerId != ownerId)
                 {
                     window.Hide(); Service.Cancel(); pendingFrame = -1; Store = null;
-                    owner = player; network = ZNet.instance;
-                    if (owner != null && network != null)
+                    owner = player; ownerId = playerId; network = ZNet.instance;
+                    if (owner != null && network != null && ownerId != 0)
                     {
-                        Store = new PresetStore(directory, owner.GetPlayerID());
+                        Store = new PresetStore(directory, ownerId);
                         if (Store.ReadOnly) Logger.LogWarning("Preset file preserved after load error: " + Store.LoadError);
                     }
                 }
@@ -84,7 +86,7 @@ namespace ValheimModPack.ExpeditionLoadouts
 
         internal static bool ValidPlayer(Player player)
         {
-            return player != null && ReferenceEquals(player, Player.m_localPlayer) && ZNet.instance != null
+            return player != null && ReferenceEquals(player, Player.m_localPlayer) && player.GetPlayerID() != 0 && ZNet.instance != null
                 && !player.IsDead() && !player.IsTeleporting() && !player.InCutscene() && !player.IsSleeping();
         }
         private static bool CanOpen()

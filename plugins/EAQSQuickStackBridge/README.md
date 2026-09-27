@@ -1,4 +1,4 @@
-# EAQS Quick Stack Bridge 1.1.0
+# EAQS Quick Stack Bridge 1.1.1
 
 Local compatibility plugin for Quick Stack Store Sort Trash Restock **1.4.15**, Equipment and Quick Slots **3.1.3**, and optional AzuAutoStore **3.1.6**. Original vendor DLLs are unchanged. The bridge applies Harmony patches in memory.
 
@@ -19,6 +19,8 @@ The existing Quick Stack preference file is authoritative, including an empty fi
 
 Manual Azu dispatch guards install in **Awake**, before its shortcut Update can run. K and single-item store remain blocked until exact versions, filter APIs, collection fields and state hooks validate. A runtime favorite-data failure blocks further manual storing and displays one warning instead of treating missing data as an empty favorite set. Ground auto-pull is outside these dispatch hooks. Updating any of the three vendor versions requires revalidation.
 
+Version 1.1.1 makes repeated initialization and disposal idempotent: hooks and the shared favorite-state binding are installed once, and a disposed bridge cannot reinstall them. Sorting and manual storing also reject inventory geometry above 32 rows before native grid enumeration.
+
 Build on Windows with `./plugins/EAQSQuickStackBridge/Build.ps1 -GameDirectory '<Valheim folder>'`. Run `./plugins/EAQSQuickStackBridge/Test.ps1` for boundary regressions and static checks against the pinned DLLs. Game assemblies are read locally and are not redistributed. The resulting DLL is managed code; the pack's Windows and Linux installers both copy it. Linux runtime operation has not been tested.
 
 The root lock records the local binary hash. `scripts/Build.ps1` includes that binary in a pack rebuild. Recompiling the source requires updating its lock and payload hashes.
@@ -27,7 +29,7 @@ Before relying on this in a live world, use a test character: equip armor and qu
 
 Version 1.0.1 waits for both Quick Stack sorting entries before initialization: Quick Stack binds them in Start, after the bridge Awake used to run. The startup regression harness compiles the real plugin source with host doubles; it is not a Unity runtime test.
 
-Tests cover the original 1,095 inventory-boundary assertions and eight startup assertions, 36 production Azu filter/lifecycle assertions, 27 production shared-state/migration assertions, and actual vendor APIs and call sites via Mono.Cecil. State tests cover either mod reading first, an existing empty primary, immediate removal of a favorite, Z saving without losing the third list, two complete reloads without reviving stale mirror marks, replacement sets after reset, and refusing detached caches.
+Tests cover the original 1,095 inventory-boundary assertions and ten startup assertions, 39 production Azu filter/lifecycle assertions, 27 production shared-state/migration assertions, and actual vendor APIs and call sites via Mono.Cecil. State tests cover either mod reading first, an existing empty primary, immediate removal of a favorite, Z saving without losing the third list, two complete reloads without reviving stale mirror marks, replacement sets after reset, refusing detached caches, repeated initialization without duplicate hooks, and refusing reinitialization after disposal.
 
 `Build-NativeChecks.ps1 -GameDirectory '<Valheim folder>' [-PluginAssembly '<already built DLL>']` builds the optional `EAQSAzuNativeChecks.dll`. Its public `ValheimModPack.BridgeSmoke.NativeChecks.Run()` is intended for the isolated QoL native probe after the mods' Start methods complete. It verifies real Harmony ownership and uses actual vendor getters, toggles and serializers with fixture files under the isolated smoke root; it refuses the user's normal configuration directory and never runs with a live player. Live movement of items with K, multiplayer chest access, UI border appearance and physical click interaction still require an in-game acceptance check.
 

@@ -54,6 +54,16 @@ public static class UnifiedPopup
     public static bool IsVisible() { return Visible; }
 }
 public static class Menu { public static bool IsVisible() { return false; } }
+public static class Console { public static bool Visible; public static bool IsVisible() { return Visible; } }
+public static class InventoryGui { public static bool Visible; public static bool IsVisible() { return Visible; } }
+public class Chat { public static Chat instance; public bool Focus; public bool HasFocus() { return Focus; } }
+public class TextInput
+{
+    public class Panel { public bool activeInHierarchy; }
+    public static TextInput instance; public Panel m_panel; public static bool ForeignVisible;
+    public static bool IsVisible() { return ForeignVisible || (instance != null && instance.m_panel != null && instance.m_panel.activeInHierarchy); }
+}
+public class ZNet { public static ZNet instance = new ZNet(); public long World = 100; public long GetWorldUID() { return World; } }
 public static class ZInput
 {
     public static bool Cancel;
@@ -64,6 +74,8 @@ public class Player
 {
     public static Player m_localPlayer;
     public bool Dead;
+    public long Id = 200;
+    public long GetPlayerID() { return Id; }
     public int Warnings;
     public bool IsDead() { return Dead; }
     public void Message(MessageHud.MessageType kind, string text, int amount, object icon) { Warnings++; }

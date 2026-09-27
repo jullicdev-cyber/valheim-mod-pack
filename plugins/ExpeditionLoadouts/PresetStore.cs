@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace ValheimModPack.ExpeditionLoadouts
@@ -47,6 +48,7 @@ namespace ValheimModPack.ExpeditionLoadouts
         public const int MaxCount = 9999;
         private const int MaxBytes = 131072;
         private readonly string path;
+        private byte[] diskHash;
         public bool ReadOnly { get; private set; }
         public string LoadError { get; private set; }
         public List<LoadoutPreset> Presets { get; private set; }
@@ -58,16 +60,14 @@ namespace ValheimModPack.ExpeditionLoadouts
             if (!File.Exists(path)) return;
             try
             {
-                var info = new FileInfo(path);
-                if (info.Length > MaxBytes) throw new InvalidDataException("Preset file is too large.");
-                byte[] bytes = File.ReadAllBytes(path);
-                if (bytes.Length > MaxBytes) throw new InvalidDataException("Preset file is too large.");
+                byte[] bytes = ReadBounded(path);
                 using (var stream = new MemoryStream(bytes))
                 {
                     var document = (PresetDocument)Serializer().ReadObject(stream);
                     Validate(document);
                     Presets = document.Presets;
                 }
+                diskHash = Hash(bytes);
             }
             catch (Exception error)
             {
@@ -121,15 +121,57 @@ namespace ValheimModPack.ExpeditionLoadouts
                     stream.Write(bytes, 0, bytes.Length);
                     stream.Flush(true);
                 }
-                if (File.Exists(path)) File.Replace(temporary, path, path + ".bak");
+                EnsureUnchangedOnDisk();
+                if (diskHash != null) File.Replace(temporary, path, path + ".bak");
                 else File.Move(temporary, path);
                 Presets = updated;
+                diskHash = Hash(bytes);
             }
             finally { if (File.Exists(temporary)) File.Delete(temporary); }
         }
 
         private static DataContractJsonSerializer Serializer()
-        { return new DataContractJsonSerializer(typeof(PresetDocument)); }
+        { return new DataContractJsonSerializer(typeof(PresetDocument), new DataContractJsonSerializerSettings { MaxItemsInObjectGraph = 16384 }); }
+
+        private void EnsureUnchangedOnDisk()
+        {
+            bool unchanged;
+            try
+            {
+                bool exists = File.Exists(path);
+                unchanged = diskHash == null ? !exists : exists && SameHash(diskHash, Hash(ReadBounded(path)));
+            }
+            catch (Exception error)
+            {
+                ReadOnly = true; LoadError = "Preset file could not be verified before saving. Reload the character to retry.";
+                throw new IOException(LoadError, error);
+            }
+            if (unchanged) return;
+            ReadOnly = true; LoadError = "Preset file changed outside this window. Reload the character to read the current version.";
+            throw new IOException(LoadError);
+        }
+        private static byte[] ReadBounded(string file)
+        {
+            using (var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                if (stream.Length <= 0 || stream.Length > MaxBytes) throw new InvalidDataException("Preset file size is invalid.");
+                byte[] bytes = new byte[(int)stream.Length]; int offset = 0;
+                while (offset < bytes.Length)
+                {
+                    int read = stream.Read(bytes, offset, bytes.Length - offset);
+                    if (read == 0) throw new EndOfStreamException();
+                    offset += read;
+                }
+                return bytes;
+            }
+        }
+        private static byte[] Hash(byte[] bytes) { using (var hash = SHA256.Create()) return hash.ComputeHash(bytes); }
+        private static bool SameHash(byte[] left, byte[] right)
+        {
+            if (left.Length != right.Length) return false;
+            for (int i = 0; i < left.Length; i++) if (left[i] != right[i]) return false;
+            return true;
+        }
 
         private static void Validate(PresetDocument document)
         {

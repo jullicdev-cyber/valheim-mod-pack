@@ -20,6 +20,7 @@ namespace ValheimModPack.LoadoutSmoke
     [BepInDependency("valheimmodpack.eaqsquickstackbridge", "1.1.0")]
     [BepInDependency("valheimmodpack.interfaceinputfix", "1.0.0")]
     [BepInDependency("valheimmodpack.renewableresourcetimers", "1.0.0")]
+    [BepInDependency("valheimmodpack.nordicradio", "1.1.1")]
     public sealed class BackendNativeProbe : BaseUnityPlugin
     {
         private static readonly BindingFlags All = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
@@ -50,7 +51,7 @@ namespace ValheimModPack.LoadoutSmoke
             yield return null;
             try
             {
-                foreach (string id in new[] { "valheimmodpack.expeditionloadouts", "valheimmodpack.chestsearch", "valheimmodpack.confirmpinremoval" })
+                foreach (string id in new[] { "valheimmodpack.expeditionloadouts", "valheimmodpack.chestsearch", "valheimmodpack.confirmpinremoval", "valheimmodpack.nordicradio" })
                 {
                     Check(Chainloader.PluginInfos.ContainsKey(id), "Loaded " + id);
                     Check(Chainloader.PluginInfos[id].Instance.enabled, "Enabled " + id);

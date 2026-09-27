@@ -452,7 +452,7 @@ namespace ValheimModPack.ExpeditionLoadouts
 
         private static bool ValidPlayer(Player owner)
         {
-            return owner != null && owner == Player.m_localPlayer && !owner.IsDead() && !owner.IsTeleporting()
+            return owner != null && owner == Player.m_localPlayer && owner.GetPlayerID() != 0 && !owner.IsDead() && !owner.IsTeleporting()
                 && !owner.IsSleeping() && !owner.InCutscene() && owner.GetInventory() != null;
         }
 
@@ -466,8 +466,9 @@ namespace ValheimModPack.ExpeditionLoadouts
 
         private static bool CanUse(Container container, Player owner, float range)
         {
-            if (container == null || owner == null || !container.isActiveAndEnabled
-                || (container.transform.position - owner.transform.position).sqrMagnitude > range * range) return false;
+            if (container == null || owner == null || !container.isActiveAndEnabled) return false;
+            float distance = (container.transform.position - owner.transform.position).sqrMagnitude;
+            if (Single.IsNaN(distance) || Single.IsInfinity(distance) || distance > range * range) return false;
             if (container.m_autoDestroyEmpty || container.m_rootObjectOverride != null || container.m_wagon != null
                 || container.GetComponentInParent<Player>() != null || container.GetComponentInParent<TombStone>() != null
                 || container.GetComponentInParent<ItemDrop>() != null || container.GetComponentInParent<Ship>() != null) return false;
@@ -476,13 +477,14 @@ namespace ValheimModPack.ExpeditionLoadouts
             if (piece == null || !piece.IsPlacedByPlayer() || view == null || !view.IsValid() || !view.HasOwner()
                 || !TransferPolicy.StandardChest(Utils.GetPrefabName(container.gameObject))
                 || !Convert.ToBoolean(AccessMethod.Invoke(container, new object[] { owner.GetPlayerID() }))) return false;
-            return !container.m_checkGuardStone || PrivateArea.CheckAccess(container.transform.position, 0f, false, false);
+            // Match ChestSearch's access policy even when another mod disables the native flag.
+            return PrivateArea.CheckAccess(container.transform.position, 0f, false, false);
         }
 
         private static bool Fresh(Container container)
         {
             ZNetView view = View(container);
-            return view != null && view.IsValid() && !Convert.ToBoolean(LoadingField.GetValue(container))
+            return view != null && view.IsValid() && view.GetZDO().DataRevision != 0 && !Convert.ToBoolean(LoadingField.GetValue(container))
                 && Convert.ToUInt32(LastRevisionField.GetValue(container)) == view.GetZDO().DataRevision;
         }
 
@@ -528,6 +530,9 @@ namespace ValheimModPack.ExpeditionLoadouts
 
             internal int VisibleRows(Inventory inventory)
             {
+                if (inventory == null || inventory.GetWidth() < 1 || inventory.GetWidth() > 32
+                    || inventory.GetHeight() < 1 || inventory.GetHeight() > 32)
+                    throw new InvalidOperationException("Inventory dimensions are outside supported bounds");
                 int rows = visible == null ? inventory.GetHeight() : Convert.ToInt32(visible.Invoke(null, null));
                 if (rows < 1 || rows > inventory.GetHeight() || (fullHeight != null && Convert.ToInt32(fullHeight.Invoke(null, null)) != inventory.GetHeight()))
                     throw new InvalidOperationException("Inventory dimensions are inconsistent with EAQS");

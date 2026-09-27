@@ -7,7 +7,7 @@ using HarmonyLib;
 
 namespace ValheimModPack
 {
-    [BepInPlugin(Id, "EAQS Quick Stack Bridge", "1.1.0")]
+    [BepInPlugin(Id, "EAQS Quick Stack Bridge", "1.1.1")]
     [BepInDependency(QuickStack, "1.4.15")]
     [BepInDependency(Eaqs, "3.1.3")]
     [BepInDependency("Azumatt.AzuAutoStore", BepInDependency.DependencyFlags.SoftDependency)]
@@ -18,6 +18,7 @@ namespace ValheimModPack
         private const string Eaqs = "randyknapp.mods.equipmentandquickslots";
         private Harmony harmony;
         private AutoStoreFavorites autoStore;
+        private bool initialized;
 
         private void Awake()
         {
@@ -50,6 +51,7 @@ namespace ValheimModPack
 
         private void Initialize()
         {
+            if (initialized) return;
             try
             {
                 // Defaults on disk stay disabled, so removing this bridge restores the guard.
@@ -67,6 +69,7 @@ namespace ValheimModPack
                 harmony.Patch(sort, prefix: new HarmonyMethod(typeof(Plugin), "ValidatePlayerInventory"));
                 SetSortingControls(true);
                 if (autoStore != null) autoStore.Initialize();
+                initialized = true;
                 Logger.LogInfo("EAQS slot protection active; inventory sorting enabled with O and buttons. Disk config remains guarded.");
             }
             catch (Exception error)

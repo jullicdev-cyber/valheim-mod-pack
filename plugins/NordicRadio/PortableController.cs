@@ -142,8 +142,12 @@ namespace ValheimModPack.NordicRadio
             }
             if (pendingOpen)
             {
-                if (!HasItem(token) || Time.unscaledTime > openDeadline) pendingOpen = false;
-                else if (Time.frameCount >= openAfterFrame && !InventoryGui.IsVisible() && !Menu.IsVisible() && !UnifiedPopup.IsVisible())
+                if (!HasItem(token) || Time.unscaledTime > openDeadline || Input.GetKeyDown(KeyCode.Escape)
+                    || ZInput.GetButtonDown("JoyButtonB")) pendingOpen = false;
+                // No radio lease is held yet: Jotunn's patched TextInput guard
+                // correctly includes another mod's modal here.
+                else if (Time.frameCount >= openAfterFrame && !InventoryGui.IsVisible() && !Menu.IsVisible() && !UnifiedPopup.IsVisible()
+                    && !TextInput.IsVisible() && !global::Console.IsVisible() && (Chat.instance == null || !Chat.instance.HasFocus()))
                 {
                     PortableRadioTarget target;
                     if (targets.TryGetValue(local, out target) && target.IsReady)

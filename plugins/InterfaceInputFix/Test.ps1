@@ -10,4 +10,4 @@ $runner = Join-Path $outputDirectory 'InterfaceInputTests.exe'
 if ($LASTEXITCODE -ne 0) { throw 'Input lifecycle test compilation failed' }
 & $runner
 if ($LASTEXITCODE -ne 0) { throw 'Input lifecycle tests failed' }
-& (Join-Path $PSScriptRoot 'Build.ps1') -GameDirectory $GameDirectory
+& (Join-Path $PSScriptRoot 'Build.ps1') -GameDirectory $GameDirectory -OutputFile (Join-Path $outputDirectory 'InterfaceInputFix.dll')

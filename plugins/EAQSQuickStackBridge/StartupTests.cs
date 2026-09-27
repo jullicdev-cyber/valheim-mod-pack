@@ -79,6 +79,9 @@ public static class StartupTests
         Check(HarmonyLib.Harmony.Patches==2 && plugin.Logger.Errors==0,"Both protection hooks must install before enabling controls");
         Check((Buttons)display.BoxedValue==Buttons.Both && ((KeyboardShortcut)key.BoxedValue).MainKey==UnityEngine.KeyCode.O,"O and buttons must enable");
         Check(qs.Instance.Config.SaveOnConfigSet,"SaveOnConfigSet must be restored");
+        typeof(ValheimModPack.Plugin).GetMethod("Initialize",BindingFlags.NonPublic|BindingFlags.Instance).Invoke(plugin,null);
+        Check(HarmonyLib.Harmony.Patches==2,"Repeated initialization must not duplicate inventory protection hooks");
+        Check(ValheimModPack.SlotPolicy.IsProtected(0,0,8,Int32.MaxValue,Int32.MaxValue-1,Int32.MaxValue),"Unbounded matching geometry must stop sorting before native cell enumeration");
         typeof(ValheimModPack.Plugin).GetMethod("OnDestroy",BindingFlags.NonPublic|BindingFlags.Instance).Invoke(plugin,null);
         Check((Buttons)display.BoxedValue==Buttons.OnlyContainerButton && HarmonyLib.Harmony.Patches==0,"Shutdown must restore guard");
         Console.WriteLine("OK: real bridge source waits for delayed/partial config, installs both hooks, enables O, and restores guard on shutdown.");

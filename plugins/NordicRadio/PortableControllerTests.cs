@@ -47,6 +47,8 @@ internal static class PortableControllerTests
             global::Player.Players.Clear();
             InventoryGui.instance = new InventoryGui(); InventoryGui.Visible = false;
             Menu.Visible = UnifiedPopup.Visible = false;
+            TextInput.Visible = Console.Visible = UnityEngine.Input.Escape = ZInput.Cancel = false;
+            Chat.instance = new Chat();
             Localization.instance = new Localization();
             Player = NewPlayer(1, 10, true); global::Player.m_localPlayer = Player;
             Idol = Item(PortableModel.PrefabName); Player.Inventory.Items.Add(Idol);
@@ -252,6 +254,29 @@ internal static class PortableControllerTests
             InventoryGui.Visible = false; f.Advance(0.3f);
             Check(f.Plugin.Opened.Count == 0, "stale pending request cannot unexpectedly open UI after timeout");
         }
+        using (Fixture f = new Fixture())
+        {
+            f.Activate();
+            TextInput.Visible = true; f.Advance(0.01f);
+            Check(f.Plugin.Opened.Count == 0, "native text or another Jotunn window prevents pending radio stealing input");
+            TextInput.Visible = false; Chat.instance.Focus = true; f.Advance(0.01f);
+            Check(f.Plugin.Opened.Count == 0, "chat focus prevents pending radio stealing input");
+            Chat.instance.Focus = false; Console.Visible = true; f.Advance(0.01f);
+            Check(f.Plugin.Opened.Count == 0, "console prevents pending radio stealing input");
+            Console.Visible = false; f.Advance(0.01f);
+            Check(f.Plugin.Opened.Count == 1, "pending radio opens once text input releases within deadline");
+        }
+        using (Fixture f = new Fixture())
+        {
+            f.Activate(); UnityEngine.Input.Escape = true; f.Advance(0.01f);
+            UnityEngine.Input.Escape = false; f.Advance(0.1f);
+            Check(f.Plugin.Opened.Count == 0 && f.Controller.HasItem(Token(f.Idol)), "Escape cancels pending UI without cancelling the selected music item");
+        }
+        using (Fixture f = new Fixture())
+        {
+            f.Activate(); ZInput.Cancel = true; f.Advance(0.01f); ZInput.Cancel = false; f.Advance(0.1f);
+            Check(f.Plugin.Opened.Count == 0, "controller cancel also discards pending UI");
+        }
     }
     private static int Main()
     {
@@ -259,9 +284,9 @@ internal static class PortableControllerTests
         {
             OrdinaryItemsRemainVanilla(); ActivationAndSharedWindow(); InventoryAndShipLifecycle();
             SwitchingAndTransferring(); RemoteDiscoveryAndCleanup(); GuardsAndDeferredInput();
-            Console.WriteLine("PASS: " + assertions + " portable-controller behavior assertions against production source.");
+            System.Console.WriteLine("PASS: " + assertions + " portable-controller behavior assertions against production source.");
             return 0;
         }
-        catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+        catch (Exception error) { System.Console.Error.WriteLine(error); return 1; }
     }
 }

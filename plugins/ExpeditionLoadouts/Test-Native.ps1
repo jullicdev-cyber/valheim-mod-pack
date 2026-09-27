@@ -14,7 +14,7 @@ foreach ($path in @('Game/BepInEx/plugins/Jotunn.dll','Game/BepInEx/plugins/Valh
     'Game/BepInEx/plugins/Azumatt-AzuAutoStore/AzuAutoStore.dll','local-plugins/EAQSQuickStackBridge.dll',
     'local-plugins/ExpeditionLoadouts.dll','local-plugins/ChestSearch.dll','local-plugins/ConfirmMapPinRemoval.dll',
     'Game/BepInEx/plugins/Advize-PlantEverything/Advize_PlantEverything.dll',
-    'local-plugins/InterfaceInputFix.dll','local-plugins/RenewableResourceTimers.dll')) {
+    'local-plugins/InterfaceInputFix.dll','local-plugins/RenewableResourceTimers.dll','local-plugins/NordicRadio.dll')) {
     Copy-Item -LiteralPath (Join-Path $root $path) -Destination (Join-Path $smoke ('BepInEx/plugins/' + (Split-Path $path -Leaf)))
 }
 foreach ($folder in @('XPortal','Vapok-AdventureBackpacks')) {
@@ -60,7 +60,7 @@ try {
     $result = [IO.File]::ReadAllText($resultFile)
     Write-Output $result
     if (-not $result.StartsWith('PASS') -or $result.Contains('FAIL')) { throw 'Native verification failed.' }
-    foreach ($name in @('ExpeditionLoadouts','ChestSearch','ConfirmMapPinRemoval','EAQSQuickStackBridge','InterfaceInputFix','RenewableResourceTimers')) {
+    foreach ($name in @('ExpeditionLoadouts','ChestSearch','ConfirmMapPinRemoval','EAQSQuickStackBridge','InterfaceInputFix','RenewableResourceTimers','NordicRadio')) {
         Write-Output ($name + ' SHA256: ' + (Get-FileHash -LiteralPath (Join-Path $smoke "BepInEx/plugins/$name.dll")).Hash)
     }
 } finally {
