@@ -1,8 +1,10 @@
-# Confirm Map Pin Removal 1.1.0
+# Confirm Map Pin Removal 1.1.1
 
 Client-side BepInEx/Harmony mod for the pack's Valheim 1.0.16 and Jotunn 2.30.2. Right-clicking a saved map pin opens a confirmation with the pin name, Cancel and Delete buttons. Russian game language uses «Удаление метки», «Отмена» and «Удалить»; other languages use English.
 
 The window uses the same Jotunn components as [XPortal's portal configuration panel](https://github.com/SpikeHimself/XPortal/blob/main/XPortal/UI/PortalConfigurationPanel.cs): `CreateWoodpanel`, AveriaSerif fonts, orange heading and `CreateButton`. It is a dedicated compact dialog, with a dimmed backdrop that catches pointer input. Jotunn's counted input lock blocks gameplay while it is open. Initial selection is Cancel; explicit left/right button navigation stays inside the dialog. Escape or controller B cancels.
+
+Version 1.1.1 silences the selection sound on these two buttons while retaining their normal click sound. In the installed Unity UI, pointer-down focuses a button and pointer-up invokes its click. Jotunn adds a separate `ButtonSfx` sound to each event; this produced two sounds when clicking the initially unfocused Delete button. Only the two dialog instances are changed. Focus navigation and the single-use deletion guard remain intact. Check one audible click on both Cancel and Delete in-game; automated logic checks do not verify audio output.
 
 Only manual `Minimap.RemovePinUnderPointer` deletion is intercepted. Automatic pin cleanup and programmatic `RemovePin` calls remain unchanged. The exact pin selected on click is retained; confirmation rechecks the same map, local player, saved pin membership, open map and living player. Moving the pointer or clicking again cannot redirect deletion. Cancel, stale callbacks and repeated confirmations cannot delete a different pin.
 

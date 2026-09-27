@@ -1,7 +1,8 @@
 [CmdletBinding()]
-param([string]$PackDirectory)
+param([string]$PackDirectory, [string]$ManifestDirectory)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
+if ($ManifestDirectory) { $root = (Resolve-Path -LiteralPath $ManifestDirectory).ProviderPath }
 if (-not $PackDirectory) { $PackDirectory = Join-Path $root 'Game' }
 $pack = [IO.Path]::GetFullPath($PackDirectory)
 $inventory = Get-Content (Join-Path $root 'files.sha256.json') -Raw | ConvertFrom-Json

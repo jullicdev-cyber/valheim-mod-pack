@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+"""Download a pinned snapshot of main, verify it and use its offline installer."""
+import argparse
+import json
+from pathlib import Path
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+from urllib.request import Request, urlopen
+import zipfile
+from game_path import get_game_directory
+from install_linux import ensure_game_closed, verify_pack
+
+REPO = 'jullicdev-cyber/valheim-mod-pack'
+
+
+def expand_archive(archive, destination, commit):
+    if not re.fullmatch(r'[0-9a-f]{40}', commit):
+        raise ValueError('Invalid GitHub commit.')
+    destination = Path(destination)
+    if destination.exists():
+        raise ValueError('Extraction directory must be new.')
+    prefix = 'valheim-mod-pack-' + commit
+    with zipfile.ZipFile(archive) as bundle:
+        seen = set()
+        for item in bundle.infolist():
+            name = item.filename
+            parts = name.rstrip('/').split('/')
+            if (parts[0] != prefix or any(p in ('', '.', '..') for p in parts)
+                    or any(c in name for c in '\\:<>|?*') or name.casefold() in seen
+                    or stat.S_ISLNK(item.external_attr >> 16)):
+                raise ValueError('Unsafe or duplicate archive entry: ' + name)
+            seen.add(name.casefold())
+        destination.mkdir(parents=True)
+        bundle.extractall(destination)
+    return destination / prefix
+
+
+def fetch(url):
+    return urlopen(Request(url, headers={'User-Agent': 'ValheimModPack-Updater',
+                                       'Accept': 'application/vnd.github+json'}), timeout=300)
+
+
+def download_pack(root):
+    updates = Path(root) / '.updates'
+    if updates.is_symlink():
+        raise ValueError('Update directory must not be a link.')
+    with fetch('https://api.github.com/repos/' + REPO + '/commits/main') as response:
+        commit = json.load(response)['sha']
+    if not isinstance(commit, str) or not re.fullmatch(r'[0-9a-f]{40}', commit):
+        raise ValueError('GitHub returned an invalid commit.')
+    updates.mkdir(exist_ok=True)
+    job = Path(tempfile.mkdtemp(prefix=commit[:12] + '-', dir=updates))
+    archive = job / 'pack.zip'
+    print('Downloading main at', commit)
+    with fetch('https://codeload.github.com/' + REPO + '/zip/' + commit) as response, archive.open('wb') as stream:
+        shutil.copyfileobj(response, stream)
+    pack = expand_archive(archive, job / 'extracted', commit)
+    if not (pack / 'scripts/install_linux.py').is_file():
+        raise ValueError('Downloaded Linux installer is missing.')
+    verify_pack(pack)
+    version = (pack / 'VERSION').read_text(encoding='utf-8-sig').strip()
+    metadata = json.loads((pack / 'mods.lock.json').read_text(encoding='utf-8-sig'))
+    if not re.fullmatch(r'\d+\.\d+\.\d+', version) or metadata['packVersion'] != version:
+        raise ValueError('Downloaded version metadata mismatch.')
+    (updates / 'latest.json').write_text(json.dumps({'commit': commit, 'version': version, 'directory': str(pack)},
+                                                  ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    print('Downloaded and verified pack', version, 'at', pack)
+    return pack
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('game_directory', nargs='?')
+    parser.add_argument('--download-only', action='store_true', help='Download and verify without installing.')
+    args = parser.parse_args()
+    if sys.platform != 'linux':
+        raise ValueError('On Windows use Update-Windows.cmd.')
+    root = Path(__file__).resolve().parent.parent
+    target = None
+    if not args.download_only:
+        target = get_game_directory(root, args.game_directory)
+        ensure_game_closed()
+    pack = download_pack(root)
+    if args.download_only:
+        print('Download complete. Game files were not changed.')
+        return
+    subprocess.run([sys.executable, str(pack / 'scripts/install_linux.py'), str(target)], check=True)
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (OSError, ValueError, KeyError, zipfile.BadZipFile, subprocess.CalledProcessError) as error:
+        print('Update failed:', error, file=sys.stderr)
+        sys.exit(1)

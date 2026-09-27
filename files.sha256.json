@@ -13,7 +13,7 @@
   },
   {
     "path": "BepInEx/config/Gonfreecss.ResourceDropModifier.cfg",
-    "sha256": "44b2c301cf59ce931d3dbb5debabe81e19554f24c76fe9af451f6a397f7c1073"
+    "sha256": "0069709bd3f45659e07a3e642db102b7ccaef86b9a246c1bafd987a32d68fc06"
   },
   {
     "path": "BepInEx/config/TastyChickenLegs.AutomaticFuel.cfg",
@@ -205,7 +205,7 @@
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-ConfirmMapPinRemoval/ConfirmMapPinRemoval.dll",
-    "sha256": "6526bce8053a1518a1bd8c108201a91be7730f5668f303abefcbf0baee8bb390"
+    "sha256": "1fffba23589ff66432e46a209314fa841b3ec44c00ae7be6798a9d5fda345aba"
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-EAQSQuickStackBridge/EAQSQuickStackBridge.dll",

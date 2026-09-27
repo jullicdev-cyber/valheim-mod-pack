@@ -6,14 +6,11 @@ from pathlib import Path
 import shutil
 import sys
 import tempfile
+from game_path import get_game_directory
 
 
-def install(root, target):
-    root, target = Path(root).resolve(), Path(target).expanduser().resolve(strict=True)
-    if not (target / 'valheim.x86_64').is_file():
-        raise ValueError('valheim.x86_64 not found. Select the native Linux game directory (not Proton).')
-    if target == root or root in target.parents:
-        raise ValueError('Cannot install inside the pack repository.')
+def verify_pack(root):
+    root = Path(root).resolve()
     source = root / 'Game'
     inventory = json.loads((root / 'files.sha256.json').read_text(encoding='utf-8-sig'))
     actual = {p.relative_to(source).as_posix() for p in source.rglob('*') if p.is_file()}
@@ -23,6 +20,18 @@ def install(root, target):
         path = source / entry['path']
         if path.is_symlink() or hashlib.sha256(path.read_bytes()).hexdigest() != entry['sha256']:
             raise ValueError('Pack checksum mismatch: ' + entry['path'])
+
+
+def install(root, target):
+    root, target = Path(root).resolve(), Path(target).expanduser().resolve(strict=True)
+    if not (target / 'valheim.x86_64').is_file():
+        raise ValueError('valheim.x86_64 not found. Select the native Linux game directory (not Proton).')
+    if target == root or root in target.parents or target in root.parents:
+        raise ValueError('Keep the pack repository and game directory separate.')
+    if sys.platform == 'linux':
+        ensure_game_closed()
+    source = root / 'Game'
+    verify_pack(root)
     names = ['BepInEx', 'doorstop_libs', 'start_game_bepinex.sh', '.doorstop_version', 'valheim-modded.sh']
     for name in names + ['ValheimModpack-backups']:
         if (target / name).is_symlink():
@@ -61,6 +70,8 @@ def install(root, target):
     wrapper = stage / 'valheim-modded.sh'
     wrapper.write_text('#!/bin/sh\ncd -- "$(dirname -- "$0")" || exit 1\nexec ./start_game_bepinex.sh "$@"\n', encoding='utf-8')
     wrapper.chmod(0o755)
+    if sys.platform == 'linux':
+        ensure_game_closed()
     saved, installed = [], []
     try:
         for name in names:
@@ -84,11 +95,7 @@ def install(root, target):
     return original
 
 
-def main():
-    if sys.platform != 'linux':
-        raise ValueError('Run this installer on Linux. On Windows use Install-Windows.cmd.')
-    if len(sys.argv) > 2:
-        raise ValueError('Usage: bash Install-Linux.sh [Valheim-directory]')
+def ensure_game_closed():
     # Check the current user's processes without requiring pgrep.
     for entry in Path('/proc').iterdir():
         if entry.name.isdigit():
@@ -97,10 +104,16 @@ def main():
                     raise ValueError('Close Valheim and its server before installing.')
             except (OSError, UnicodeError):
                 pass
-    target = sys.argv[1] if len(sys.argv) == 2 else input('Valheim directory (contains valheim.x86_64): ').strip().strip('"')
-    if not target:
-        raise ValueError('No directory specified.')
-    original = install(Path(__file__).resolve().parent.parent, target)
+
+def main():
+    if sys.platform != 'linux':
+        raise ValueError('Run this installer on Linux. On Windows use Install-Windows.cmd.')
+    if len(sys.argv) > 2:
+        raise ValueError('Usage: bash Install-Linux.sh [Valheim-directory]')
+    root = Path(__file__).resolve().parent.parent
+    target = get_game_directory(root, sys.argv[1] if len(sys.argv) == 2 else None)
+    ensure_game_closed()
+    original = install(root, target)
     print('Installed successfully. Backup:', original)
     print('Full game backup:', original.parent / 'full-backup')
     print('Steam launch options: ./valheim-modded.sh %command%')

@@ -48,6 +48,13 @@ namespace ValheimModPack.PinRemoval
                     new Vector2(-120, -88), 200, 48).GetComponent<Button>();
                 var deleteButton = gui.CreateButton(ru ? "Удалить" : "Delete", panel.transform, center, center,
                     new Vector2(120, -88), 200, 48).GetComponent<Button>();
+                // Pointer-down selects an unfocused button; pointer-up clicks it. Jotunn gives
+                // both events a sound, so keep only the click sound in this confirmation dialog.
+                foreach (var button in new[] { cancelButton, deleteButton })
+                {
+                    var sound = button.GetComponent<ButtonSfx>();
+                    if (sound != null) sound.m_selectSfxPrefab = null;
+                }
                 cancelButton.onClick.AddListener(() => cancel());
                 deleteButton.onClick.AddListener(() => confirm());
                 var cancelNavigation = new Navigation { mode = Navigation.Mode.Explicit, selectOnRight = deleteButton };

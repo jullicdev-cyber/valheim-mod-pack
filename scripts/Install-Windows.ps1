@@ -1,7 +1,8 @@
 [CmdletBinding()]
-param([string]$GameDirectory)
+param([string]$GameDirectory, [string]$SettingsDirectory)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
+. (Join-Path $PSScriptRoot 'GamePath.ps1')
 
 function Assert-BackupEntry($Entry) {
     if ($Entry.Attributes -band [IO.FileAttributes]::ReparsePoint) {
@@ -35,19 +36,10 @@ function Copy-BackupEntry($Entry, [string]$Destination) {
 }
 
 try {
-    if (-not $GameDirectory) { $GameDirectory = Read-Host 'Valheim directory (contains valheim.exe)' }
-    # Accept a pasted console line, including repeated prompt prefixes.
-    $GameDirectory = $GameDirectory.Trim()
-    while ($GameDirectory -match '^Valheim directory \(contains valheim\.exe\):\s*') {
-        $GameDirectory = $GameDirectory.Substring($Matches[0].Length).Trim()
-    }
-    $GameDirectory = $GameDirectory.Trim().Trim('"')
-    if (-not $GameDirectory) { throw 'No directory specified.' }
-    $target = (Resolve-Path -LiteralPath $GameDirectory).Path
-    if (-not (Test-Path -LiteralPath (Join-Path $target 'valheim.exe') -PathType Leaf)) { throw 'valheim.exe not found. Select the game directory.' }
+    $target = Get-GameDirectory -PackRoot $root -GameDirectory $GameDirectory -SettingsDirectory $SettingsDirectory
     $source = (Resolve-Path -LiteralPath (Join-Path $root 'Game')).Path
     if ($target -eq $source -or $target.StartsWith($root + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or $target -eq $root) { throw 'Cannot install inside the pack repository.' }
-    if (Get-Process -Name valheim -ErrorAction SilentlyContinue) { throw 'Close Valheim before installing.' }
+    if (Get-Process -Name valheim,valheim_server -ErrorAction SilentlyContinue) { throw 'Close Valheim and its server before installing.' }
     $names = @('BepInEx', 'winhttp.dll', 'doorstop_config.ini', '.doorstop_version')
     foreach ($name in $names) {
         $path = Join-Path $target $name
@@ -71,6 +63,7 @@ try {
     Set-Content -LiteralPath (Join-Path $backup 'BACKUP-COMPLETE.txt') -Value 'Full backup completed before installation.'
     # Complete copying before changing any existing files.
     foreach ($name in $names) { Copy-Item -LiteralPath (Join-Path $source $name) -Destination $stage -Recurse -Force }
+    if (Get-Process -Name valheim,valheim_server -ErrorAction SilentlyContinue) { throw 'Game started during backup; installation stopped.' }
     $saved = @()
     $installed = @()
     try {

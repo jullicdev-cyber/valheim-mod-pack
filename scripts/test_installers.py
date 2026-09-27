@@ -8,6 +8,7 @@ from unittest.mock import patch
 import sys
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / 'scripts'))
 spec = importlib.util.spec_from_file_location('installer', ROOT / 'scripts/install_linux.py')
 installer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(installer)
@@ -25,6 +26,7 @@ class InstallTests(unittest.TestCase):
     def setUp(self):
         # Retain fixtures for inspecting backups and failure recovery.
         self.target = Path(tempfile.mkdtemp(prefix='valheim installer test '))
+        self.settings = Path(tempfile.mkdtemp(prefix='valheim settings test '))
         (self.target / 'valheim.x86_64').write_bytes(b'mock game')
         (self.target / 'valheim.exe').write_bytes(b'mock game')
         (self.target / 'BepInEx').mkdir()
@@ -69,7 +71,7 @@ class InstallTests(unittest.TestCase):
         pasted = 'Valheim directory (contains valheim.exe): ' * 2 + '"' + str(self.target) + '"'
         result = subprocess.run(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass',
                                  '-File', str(ROOT / 'scripts/Install-Windows.ps1'),
-                                 '-GameDirectory', pasted], capture_output=True)
+                                 '-SettingsDirectory', str(self.settings), '-GameDirectory', pasted], capture_output=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue((self.target / 'BepInEx/core/BepInEx.dll').exists())
 
@@ -83,7 +85,7 @@ class InstallTests(unittest.TestCase):
         self.make_symlink(self.target / 'winhttp.dll', payload)
         result = subprocess.run(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass',
                                  '-File', str(ROOT / 'scripts/Install-Windows.ps1'),
-                                 '-GameDirectory', str(self.target)], capture_output=True)
+                                 '-SettingsDirectory', str(self.settings), '-GameDirectory', str(self.target)], capture_output=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         backup = next((self.target / 'ValheimModpack-backups').iterdir())
         for name in ['BepInEx/linked.dll', 'winhttp.dll']:
@@ -100,7 +102,7 @@ class InstallTests(unittest.TestCase):
         self.make_symlink(self.target / 'BepInEx/missing.dll', self.target / 'not-present.dll')
         result = subprocess.run(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass',
                                  '-File', str(ROOT / 'scripts/Install-Windows.ps1'),
-                                 '-GameDirectory', str(self.target)], capture_output=True)
+                                 '-SettingsDirectory', str(self.settings), '-GameDirectory', str(self.target)], capture_output=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual((self.target / 'BepInEx/old-plugin.txt').read_text(), 'old mod')
         self.assertFalse((self.target / 'ValheimModpack-backups').exists())
@@ -120,7 +122,7 @@ class InstallTests(unittest.TestCase):
         try:
             result = subprocess.run(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass',
                                      '-File', str(ROOT / 'scripts/Install-Windows.ps1'),
-                                     '-GameDirectory', str(self.target)], capture_output=True)
+                                     '-SettingsDirectory', str(self.settings), '-GameDirectory', str(self.target)], capture_output=True)
             self.assertNotEqual(result.returncode, 0)
         finally:
             close = ctypes.windll.kernel32.CloseHandle
@@ -145,7 +147,7 @@ class InstallTests(unittest.TestCase):
     @unittest.skipUnless(sys.platform == 'win32', 'Windows PowerShell test')
     def test_windows_install_and_reinstall(self):
         command = ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
-                   str(ROOT / 'scripts/Install-Windows.ps1'), '-GameDirectory', str(self.target)]
+                   str(ROOT / 'scripts/Install-Windows.ps1'), '-SettingsDirectory', str(self.settings), '-GameDirectory', str(self.target)]
         for _ in range(2):
             result = subprocess.run(command, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

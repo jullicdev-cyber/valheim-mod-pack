@@ -4,3 +4,5 @@ dist/
 BepInEx/cache/
 BepInEx/LogOutput.log
 __pycache__/
+local-settings.json
+.updates/
