@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Download a pinned snapshot of main, verify it and use its offline installer."""
+"""Update this pack folder from GitHub, then run its offline game installer."""
 import argparse
 import json
 from pathlib import Path
@@ -13,6 +13,7 @@ from urllib.request import Request, urlopen
 import zipfile
 from game_path import get_game_directory
 from install_linux import ensure_game_closed, verify_pack
+from sync_pack import sync_pack
 
 REPO = 'jullicdev-cyber/valheim-mod-pack'
 
@@ -75,9 +76,6 @@ def download_pack(root):
         raise ValueError('Downloaded Linux installer is missing.')
     verify_pack(pack)
     version = (pack / 'VERSION').read_text(encoding='utf-8-sig').strip()
-    metadata = json.loads((pack / 'mods.lock.json').read_text(encoding='utf-8-sig'))
-    if not re.fullmatch(r'\d+\.\d+\.\d+', version) or metadata['packVersion'] != version:
-        raise ValueError('Downloaded version metadata mismatch.')
     (updates / 'latest.json').write_text(json.dumps({'commit': commit, 'version': version, 'directory': str(pack)},
                                                   ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     print('Downloaded and verified pack', version, 'at', pack)
@@ -87,7 +85,7 @@ def download_pack(root):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('game_directory', nargs='?')
-    parser.add_argument('--download-only', action='store_true', help='Download and verify without installing.')
+    parser.add_argument('--download-only', action='store_true', help='Update this pack folder without installing into the game.')
     args = parser.parse_args()
     if sys.platform != 'linux':
         raise ValueError('On Windows use Update-Windows.cmd.')
@@ -96,9 +94,9 @@ def main():
     if not args.download_only:
         target = get_game_directory(root, args.game_directory)
         ensure_game_closed()
-    pack = download_pack(root)
+    pack = sync_pack(root, download_pack, verify_pack, expand_archive)
     if args.download_only:
-        print('Download complete. Game files were not changed.')
+        print('Pack folder updated. Game files were not changed.')
         return
     subprocess.run([sys.executable, str(pack / 'scripts/install_linux.py'), str(target)], check=True)
 

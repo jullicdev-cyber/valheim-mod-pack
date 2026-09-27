@@ -3,6 +3,9 @@ param([string]$PackDirectory, [string]$ManifestDirectory)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 if ($ManifestDirectory) { $root = (Resolve-Path -LiteralPath $ManifestDirectory).ProviderPath }
+$version = (Get-Content -LiteralPath (Join-Path $root 'VERSION') -Raw).Trim()
+$lock = Get-Content -LiteralPath (Join-Path $root 'mods.lock.json') -Raw | ConvertFrom-Json
+if ($version -notmatch '^\d+\.\d+\.\d+$' -or $version -ne $lock.packVersion) { throw "Pack version mismatch: VERSION=$version, mods.lock.json=$($lock.packVersion)" }
 if (-not $PackDirectory) { $PackDirectory = Join-Path $root 'Game' }
 $pack = [IO.Path]::GetFullPath($PackDirectory)
 $inventory = Get-Content (Join-Path $root 'files.sha256.json') -Raw | ConvertFrom-Json

@@ -2,6 +2,9 @@
 param([string]$OutputDirectory)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
+$version = (Get-Content -LiteralPath (Join-Path $root 'VERSION') -Raw).Trim()
+$versionLock = Get-Content -LiteralPath (Join-Path $root 'mods.lock.json') -Raw | ConvertFrom-Json
+if ($version -notmatch '^\d+\.\d+\.\d+$' -or $version -ne $versionLock.packVersion) { throw 'VERSION must match mods.lock.json before building.' }
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $root ('dist/rebuild-' + (Get-Date -Format 'yyyyMMdd-HHmmss')) }
 $output = [IO.Path]::GetFullPath($OutputDirectory)
 if (Test-Path -LiteralPath $output) { throw "Output directory already exists: $output" }

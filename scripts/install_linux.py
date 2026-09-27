@@ -12,6 +12,10 @@ from game_path import get_game_directory
 
 def verify_pack(root):
     root = Path(root).resolve()
+    version = (root / 'VERSION').read_text(encoding='utf-8-sig').strip()
+    lock = json.loads((root / 'mods.lock.json').read_text(encoding='utf-8-sig'))
+    if not re.fullmatch(r'\d+\.\d+\.\d+', version) or lock.get('packVersion') != version:
+        raise ValueError('Pack version mismatch: VERSION=' + version + ', mods.lock.json=' + str(lock.get('packVersion')))
     source = root / 'Game'
     inventory = json.loads((root / 'files.sha256.json').read_text(encoding='utf-8-sig'))
     actual = {p.relative_to(source).as_posix() for p in source.rglob('*') if p.is_file()}
