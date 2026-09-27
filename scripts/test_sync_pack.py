@@ -49,6 +49,8 @@ class SyncTests(unittest.TestCase):
         (self.root / 'local-settings.json').write_text('{"game":"keep"}')
         (self.root / 'NordicRadio/Music').mkdir(parents=True)
         (self.root / 'NordicRadio/Music/personal.mp3').write_bytes(b'music')
+        (self.root / 'ValheimModpack/WorldCharacters/characters').mkdir(parents=True)
+        (self.root / 'ValheimModpack/WorldCharacters/characters/preserved.wchar').write_bytes(b'world character save')
         (self.root / 'notes.txt').write_text('unrelated')
 
     def run_update(self, mode='git', fail=False):
@@ -72,6 +74,7 @@ class SyncTests(unittest.TestCase):
     def preserved(self):
         self.assertEqual((self.root / 'local-settings.json').read_text(), '{"game":"keep"}')
         self.assertEqual((self.root / 'NordicRadio/Music/personal.mp3').read_bytes(), b'music')
+        self.assertEqual((self.root / 'ValheimModpack/WorldCharacters/characters/preserved.wchar').read_bytes(), b'world character save')
         self.assertEqual((self.root / 'notes.txt').read_text(), 'unrelated')
         self.assertFalse((self.root / '.updates/update.lock').exists())
 

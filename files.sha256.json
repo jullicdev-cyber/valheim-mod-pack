@@ -530,5 +530,13 @@
   {
     "path": "winhttp.dll",
     "sha256": "93406d0a02e7c164b89828cbfe3b289930a112d2eca50bd4a52e72ece169e6a8"
+  },
+  {
+    "path": "BepInEx/config/valheimmodpack.worldcharacters.cfg",
+    "sha256": "26d56ed6b1093be073bf421f09f5ca848c033683d798c500484d902113868f20"
+  },
+  {
+    "path": "BepInEx/plugins/ValheimModPack-WorldCharacters/WorldCharacters.dll",
+    "sha256": "c72679902b276d52ba22512f57359762ab6de2c64a9cc804961775ce53a7d3a5"
   }
 ]

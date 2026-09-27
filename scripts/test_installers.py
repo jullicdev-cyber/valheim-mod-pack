@@ -46,6 +46,8 @@ class InstallTests(unittest.TestCase):
         (self.target / 'ValheimModpack/ExpeditionLoadouts/character.json').write_bytes(b'personal loadout fixture')
         (self.target / 'ValheimModpack/MapPinHistory').mkdir()
         (self.target / 'ValheimModpack/MapPinHistory/world-character.bin').write_bytes(b'personal map history fixture')
+        (self.target / 'ValheimModpack/WorldCharacters/characters').mkdir(parents=True)
+        (self.target / 'ValheimModpack/WorldCharacters/characters/world-account-character.wchar').write_bytes(b'authoritative character fixture')
 
         for relative in ('BepInEx/bindrune.keys', 'BepInEx/bindrune.spare', 'BepInEx/config/Bindrune/situations.txt', 'BepInEx/config/isimp.Bindrune.cfg'):
             path = self.target / relative
@@ -59,6 +61,7 @@ class InstallTests(unittest.TestCase):
             self.assertEqual((location / ('BepInEx/config/QuickStackStore_player_' + name + '.dat')).read_bytes(), content)
         self.assertEqual((location / 'ValheimModpack/ExpeditionLoadouts/character.json').read_bytes(), b'personal loadout fixture')
         self.assertEqual((location / 'ValheimModpack/MapPinHistory/world-character.bin').read_bytes(), b'personal map history fixture')
+        self.assertEqual((location / 'ValheimModpack/WorldCharacters/characters/world-account-character.wchar').read_bytes(), b'authoritative character fixture')
         self.assertEqual((location / 'BepInEx/config/AzuAutoStore_player_123.dat').read_bytes(), b'legacy Azu favorites fixture')
         self.assertEqual((location / 'BepInEx/config/AzuExtendedPlayerInventory_player_-456.dat').read_bytes(), b'legacy Azu EPI favorites fixture')
 
@@ -199,6 +202,8 @@ class InstallTests(unittest.TestCase):
             self.assertEqual((snapshot / 'valheim.exe').read_bytes(), b'mock game')
             self.assertFalse((snapshot / 'ValheimModpack-backups').exists())
             self.assertEqual((snapshot / 'NordicRadio/Music/скальд.mp3').read_bytes(), b'personal music fixture')
+            self.assertEqual((snapshot / 'ValheimModpack/WorldCharacters/characters/world-account-character.wchar').read_bytes(), b'authoritative character fixture')
+        self.assertEqual((self.target / 'ValheimModpack/WorldCharacters/characters/world-account-character.wchar').read_bytes(), b'authoritative character fixture')
         self.assertEqual((self.target / 'NordicRadio/Music/скальд.mp3').read_bytes(), b'personal music fixture')
         self.assertEqual((self.target / 'NordicRadio/Cache/fixture.mp3').read_bytes(), b'cached music fixture')
         self.assertEqual((self.target / 'unrelated.txt').read_text(), 'keep')
