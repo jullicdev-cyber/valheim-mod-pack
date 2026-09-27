@@ -7,15 +7,23 @@ using HarmonyLib;
 
 namespace ValheimModPack
 {
-    [BepInPlugin(Id, "EAQS Quick Stack Bridge", "1.0.1")]
+    [BepInPlugin(Id, "EAQS Quick Stack Bridge", "1.1.0")]
     [BepInDependency(QuickStack, "1.4.15")]
     [BepInDependency(Eaqs, "3.1.3")]
+    [BepInDependency("Azumatt.AzuAutoStore", BepInDependency.DependencyFlags.SoftDependency)]
     public sealed class Plugin : BaseUnityPlugin
     {
         public const string Id = "valheimmodpack.eaqsquickstackbridge";
         private const string QuickStack = "goldenrevolver.quick_stack_store";
         private const string Eaqs = "randyknapp.mods.equipmentandquickslots";
         private Harmony harmony;
+        private AutoStoreFavorites autoStore;
+
+        private void Awake()
+        {
+            autoStore = new AutoStoreFavorites(message => Logger.LogInfo(message), error => Logger.LogError(error));
+            autoStore.InstallGuards();
+        }
 
         private System.Collections.IEnumerator Start()
         {
@@ -58,6 +66,7 @@ namespace ValheimModPack
                 harmony.Patch(target, postfix: new HarmonyMethod(typeof(Plugin), "ProtectSlots"));
                 harmony.Patch(sort, prefix: new HarmonyMethod(typeof(Plugin), "ValidatePlayerInventory"));
                 SetSortingControls(true);
+                if (autoStore != null) autoStore.Initialize();
                 Logger.LogInfo("EAQS slot protection active; inventory sorting enabled with O and buttons. Disk config remains guarded.");
             }
             catch (Exception error)
@@ -111,7 +120,7 @@ namespace ValheimModPack
         private void OnDestroy()
         {
             try { SetSortingControls(false); }
-            finally { if (harmony != null) harmony.UnpatchSelf(); }
+            finally { if (harmony != null) harmony.UnpatchSelf(); if (autoStore != null) autoStore.Dispose(); }
         }
     }
 }

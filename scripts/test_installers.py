@@ -36,6 +36,24 @@ class InstallTests(unittest.TestCase):
         (self.target / 'NordicRadio/Music/скальд.mp3').write_bytes(b'personal music fixture')
         (self.target / 'NordicRadio/Cache').mkdir()
         (self.target / 'NordicRadio/Cache/fixture.mp3').write_bytes(b'cached music fixture')
+        (self.target / 'BepInEx/config').mkdir()
+        (self.target / 'BepInEx/config/QuickStackStore_player_123.dat').write_bytes(b'personal favorite slots fixture')
+        (self.target / 'BepInEx/config/QuickStackStore_player_-456.dat').write_bytes(b'personal favorite item types fixture')
+        (self.target / 'BepInEx/config/AzuAutoStore_player_123.dat').write_bytes(b'legacy Azu favorites fixture')
+        (self.target / 'BepInEx/config/AzuExtendedPlayerInventory_player_-456.dat').write_bytes(b'legacy Azu EPI favorites fixture')
+        (self.target / 'BepInEx/config/unknown-old-mod.cfg').write_bytes(b'old config must not survive')
+        (self.target / 'ValheimModpack/ExpeditionLoadouts').mkdir(parents=True)
+        (self.target / 'ValheimModpack/ExpeditionLoadouts/character.json').write_bytes(b'personal loadout fixture')
+        (self.target / 'ValheimModpack/MapPinHistory').mkdir()
+        (self.target / 'ValheimModpack/MapPinHistory/world-character.bin').write_bytes(b'personal map history fixture')
+
+    def assert_personal_data(self, location):
+        for name, content in [('123', b'personal favorite slots fixture'), ('-456', b'personal favorite item types fixture')]:
+            self.assertEqual((location / ('BepInEx/config/QuickStackStore_player_' + name + '.dat')).read_bytes(), content)
+        self.assertEqual((location / 'ValheimModpack/ExpeditionLoadouts/character.json').read_bytes(), b'personal loadout fixture')
+        self.assertEqual((location / 'ValheimModpack/MapPinHistory/world-character.bin').read_bytes(), b'personal map history fixture')
+        self.assertEqual((location / 'BepInEx/config/AzuAutoStore_player_123.dat').read_bytes(), b'legacy Azu favorites fixture')
+        self.assertEqual((location / 'BepInEx/config/AzuExtendedPlayerInventory_player_-456.dat').read_bytes(), b'legacy Azu EPI favorites fixture')
 
     def test_linux_install_and_reinstall(self):
         backup = installer.install(ROOT, self.target)
@@ -50,6 +68,9 @@ class InstallTests(unittest.TestCase):
         self.assertTrue((second / 'BepInEx/core/BepInEx.dll').is_file())
         self.assertEqual((self.target / 'unrelated.txt').read_text(), 'keep')
         self.assertNotIn(b'\r', (self.target / 'start_game_bepinex.sh').read_bytes())
+        self.assert_personal_data(self.target)
+        self.assert_personal_data(snapshot)
+        self.assertFalse((self.target / 'BepInEx/config/unknown-old-mod.cfg').exists())
         for base in (self.target, snapshot):
             self.assertEqual((base / 'NordicRadio/Music/скальд.mp3').read_bytes(), b'personal music fixture')
             self.assertEqual((base / 'NordicRadio/Cache/fixture.mp3').read_bytes(), b'cached music fixture')
@@ -81,6 +102,8 @@ class InstallTests(unittest.TestCase):
                                  '-SettingsDirectory', str(self.settings), '-GameDirectory', pasted], capture_output=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue((self.target / 'BepInEx/core/BepInEx.dll').exists())
+        self.assert_personal_data(self.target)
+        self.assertFalse((self.target / 'BepInEx/config/unknown-old-mod.cfg').exists())
 
     @unittest.skipUnless(sys.platform == 'win32', 'Windows PowerShell test')
     def test_windows_vortex_file_links(self):

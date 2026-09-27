@@ -16,6 +16,8 @@ $refs = @(
     (Join-Path $managed 'assembly_guiutils.dll'),
     (Join-Path $managed 'assembly_valheim.dll'),
     (Join-Path $managed 'assembly_utils.dll'),
+    (Join-Path $managed 'Splatform.dll'),
+    (Join-Path $managed 'SoftReferenceableAssets.dll'),
     (Join-Path $managed 'UnityEngine.dll'),
     (Join-Path $managed 'UnityEngine.CoreModule.dll'),
     (Join-Path $managed 'UnityEngine.InputLegacyModule.dll'),
@@ -28,7 +30,7 @@ foreach ($ref in $refs) { if (-not (Test-Path -LiteralPath $ref)) { throw "Missi
 New-Item -ItemType Directory -Force (Split-Path $OutputFile -Parent) | Out-Null
 $argsList = @('/nologo','/codepage:65001','/target:library','/optimize+',('/out:' + $OutputFile))
 $argsList += $refs | ForEach-Object { '/reference:' + $_ }
-$argsList += @('Plugin.cs', 'Confirmation.cs', 'RemovalDialog.cs', 'PinLabel.cs', 'WoodDialogView.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
+$argsList += @('Plugin.cs', 'Confirmation.cs', 'RemovalDialog.cs', 'PinLabel.cs', 'WoodDialogView.cs', 'PinArchive.cs', 'PinHistoryController.cs', 'PinHistoryWindow.cs', 'SharedPinMetadata.cs', 'SharedPinCodec.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
 & $compiler @argsList
 if ($LASTEXITCODE -ne 0) { throw 'Map confirmation compilation failed.' }
 Write-Output "Built map confirmation: $OutputFile"

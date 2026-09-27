@@ -36,6 +36,14 @@
     "sha256": "7e8bad635ca7b856f425c49f7388c376ddb51cb74295bf8d9060198083e2e035"
   },
   {
+    "path": "BepInEx/config/valheimmodpack.chestsearch.cfg",
+    "sha256": "0c2142f668cbf47221066ee91313edbead415fb397538e9829d3b7a2bdf40233"
+  },
+  {
+    "path": "BepInEx/config/valheimmodpack.expeditionloadouts.cfg",
+    "sha256": "fa858b80d7b77e790d7a5b3ab6bbcb0c8467ba604d09aecd6d7fe7ce679d2eff"
+  },
+  {
     "path": "BepInEx/config/valheimmodpack.nordicradio.cfg",
     "sha256": "6319d2b7da3ec895696d8054dea97c5c5c6c596d87417544d5b15f0b1d37159d"
   },
@@ -208,12 +216,20 @@
     "sha256": "6bf2aac493c73bf6e0b45b84dbe4b8fae8de0507523b91e3e68ac909e38d0df5"
   },
   {
+    "path": "BepInEx/plugins/ValheimModPack-ChestSearch/ChestSearch.dll",
+    "sha256": "8dbd83c0465823d37098618e17e1363a827da3f1de0e6503f9498ebfae571dd6"
+  },
+  {
     "path": "BepInEx/plugins/ValheimModPack-ConfirmMapPinRemoval/ConfirmMapPinRemoval.dll",
-    "sha256": "1fffba23589ff66432e46a209314fa841b3ec44c00ae7be6798a9d5fda345aba"
+    "sha256": "1151ddde4ab717d6dd37bcdf90235c1867256691b524fe98c764fc92d0ca027c"
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-EAQSQuickStackBridge/EAQSQuickStackBridge.dll",
-    "sha256": "281783592a2418b8d998039a70c824d6aa1856c7be317511198d3888f024e88b"
+    "sha256": "e7e2689c33d1bf90f107d5b837d78fae1465b47ec15d68c66d840b9bcfa3c1ef"
+  },
+  {
+    "path": "BepInEx/plugins/ValheimModPack-ExpeditionLoadouts/ExpeditionLoadouts.dll",
+    "sha256": "500f80edf6cb459dc898ccd86809437adc0cb617afd9351a25693287da2aec21"
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-NordicRadio/NordicRadio.dll",

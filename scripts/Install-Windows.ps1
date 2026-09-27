@@ -63,6 +63,17 @@ try {
     Set-Content -LiteralPath (Join-Path $backup 'BACKUP-COMPLETE.txt') -Value 'Full backup completed before installation.'
     # Complete copying before changing any existing files.
     foreach ($name in $names) { Copy-Item -LiteralPath (Join-Path $source $name) -Destination $stage -Recurse -Force }
+    # Preserve Quick Stack's personal favorites and the two legacy Azu files
+    # needed for one-time migration, not old shared mod settings.
+    $previousConfig = Join-Path $target 'BepInEx/config'
+    if (Test-Path -LiteralPath $previousConfig -PathType Container) {
+        $stagedConfig = Join-Path $stage 'BepInEx/config'
+        foreach ($personal in Get-ChildItem -LiteralPath $previousConfig -File -Force) {
+            if ($personal.Name -match '^(QuickStackStore|AzuAutoStore|AzuExtendedPlayerInventory)_player_-?\d+\.dat$') {
+                Copy-BackupEntry $personal $stagedConfig
+            }
+        }
+    }
     if (Get-Process -Name valheim,valheim_server -ErrorAction SilentlyContinue) { throw 'Game started during backup; installation stopped.' }
     $saved = @()
     $installed = @()

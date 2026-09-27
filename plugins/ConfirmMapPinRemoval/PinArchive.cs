@@ -1,0 +1,203 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Security.Cryptography;
+using System.Text;
+namespace ValheimModPack.PinRemoval
+{
+    // This format belongs to this plugin, never to Valheim's character or world saves.
+    public sealed class PinRecord
+    {
+        public string Id = "", Name = "", Author = "", CreatorName = "";
+        public int Type;
+        public float X, Y, Z, WorldSize;
+        public long Owner, CreatedUtc, DeletedUtc, RestoredUtc;
+        public bool Checked, DoubleSize, Animate;
+        public PinRecord Copy() { return (PinRecord)MemberwiseClone(); }
+        public string Key
+        {
+            get
+            {
+                return Type + ":" + Owner.ToString(CultureInfo.InvariantCulture) + ":" + Author + ":"
+                    + X.ToString("R", CultureInfo.InvariantCulture) + ":" + Y.ToString("R", CultureInfo.InvariantCulture)
+                    + ":" + Z.ToString("R", CultureInfo.InvariantCulture);
+            }
+        }
+        public void Validate()
+        {
+            if (Name == null || Name.Length > 256 || Author == null || Author.Length > 256
+                || CreatorName == null || CreatorName.Length > 128 || Type < 0 || Type > 1024
+                || !Finite(X) || !Finite(Y) || !Finite(Z) || !Finite(WorldSize) || WorldSize < 0
+                || !ValidTime(CreatedUtc) || !ValidTime(DeletedUtc) || !ValidTime(RestoredUtc))
+                throw new InvalidDataException("Invalid map pin history record");
+        }
+        private static bool Finite(float value) { return !float.IsNaN(value) && !float.IsInfinity(value) && Math.Abs(value) <= 1000000; }
+        private static bool ValidTime(long value) { return value >= 0 && value <= DateTime.MaxValue.Ticks; }
+    }
+    public enum RestoreResult { Restored, AlreadyRestored, AlreadyPresent, Missing }
+    public sealed class PinArchive
+    {
+        public const int MaximumDeleted = 500, MaximumMetadata = 5000, MaximumFileBytes = 4 * 1024 * 1024;
+        private const int Magic = 0x50494E48, Format = 1;
+        private readonly string file;
+        public readonly long World, Character;
+        private readonly List<PinRecord> deleted = new List<PinRecord>();
+        private readonly Dictionary<string, PinRecord> metadata = new Dictionary<string, PinRecord>(StringComparer.Ordinal);
+        public IList<PinRecord> Deleted { get { return deleted.AsReadOnly(); } }
+        public PinArchive(string file, long world, long character)
+        {
+            if (world == 0 || character == 0) throw new ArgumentException("A loaded world and character are required");
+            this.file = file; World = world; Character = character;
+            if (File.Exists(file)) Load();
+        }
+        public void Enrich(PinRecord pin)
+        {
+            PinRecord known;
+            if (metadata.TryGetValue(pin.Key, out known))
+            { pin.CreatedUtc = known.CreatedUtc; pin.CreatorName = known.CreatorName; }
+        }
+        public void RememberCreation(PinRecord pin, string creator, long utc)
+        {
+            pin = pin.Copy(); pin.CreatorName = creator ?? ""; pin.CreatedUtc = utc; pin.Validate();
+            PinRecord previous; bool existed = metadata.TryGetValue(pin.Key, out previous);
+            metadata[pin.Key] = pin;
+            PinRecord evicted = null;
+            if (metadata.Count > MaximumMetadata)
+            {
+                foreach (var value in metadata.Values)
+                    if (value.Key != pin.Key && (evicted == null || value.CreatedUtc < evicted.CreatedUtc)) evicted = value;
+                if (evicted != null) metadata.Remove(evicted.Key);
+            }
+            try { Save(); }
+            catch { if (existed) metadata[pin.Key] = previous; else metadata.Remove(pin.Key);
+                if (evicted != null) metadata[evicted.Key] = evicted; throw; }
+        }
+        public void ImportCreationMetadata(IEnumerable<PinRecord> records)
+        {
+            var previous = new Dictionary<string, PinRecord>(metadata, StringComparer.Ordinal);
+            bool changed = false;
+            try
+            {
+                foreach (PinRecord record in records)
+                {
+                    record.Validate(); if (record.CreatedUtc == 0) continue;
+                    PinRecord existing;
+                    // Own/adopted pins keep their recorded origin. Shared pins may be recreated at the
+                    // same native identity; newer known origins win, and stale relays cannot roll them back.
+                    if (metadata.TryGetValue(record.Key, out existing) && existing.CreatedUtc != 0
+                        && (record.Owner == 0 || record.CreatedUtc <= existing.CreatedUtc)) continue;
+                    metadata[record.Key] = record.Copy(); changed = true;
+                }
+                while (metadata.Count > MaximumMetadata)
+                {
+                    PinRecord oldest = null;
+                    foreach (PinRecord record in metadata.Values) if (oldest == null || record.CreatedUtc < oldest.CreatedUtc) oldest = record;
+                    metadata.Remove(oldest.Key);
+                }
+                if (changed) Save();
+            }
+            catch { metadata.Clear(); foreach (var entry in previous) metadata.Add(entry.Key, entry.Value); throw; }
+        }
+        public PinRecord RecordBeforeDelete(PinRecord pin, long utc)
+        {
+            pin = pin.Copy(); Enrich(pin); pin.Id = Guid.NewGuid().ToString("N");
+            pin.DeletedUtc = utc; pin.RestoredUtc = 0; pin.Validate();
+            deleted.Add(pin); PinRecord evicted = null;
+            if (deleted.Count > MaximumDeleted) { evicted = deleted[0]; deleted.RemoveAt(0); }
+            try { Save(); }
+            catch { deleted.Remove(pin); if (evicted != null) deleted.Insert(0, evicted); throw; }
+            return pin;
+        }
+        public RestoreResult Restore(string id, Func<PinRecord, bool> exists, Action<PinRecord> add, long utc)
+        {
+            PinRecord entry = deleted.Find(value => value.Id == id);
+            if (entry == null) return RestoreResult.Missing;
+            if (entry.RestoredUtc != 0) return RestoreResult.AlreadyRestored;
+            if (utc <= 0 || utc > DateTime.MaxValue.Ticks) throw new ArgumentOutOfRangeException("utc");
+            bool present = exists(entry.Copy());
+            if (!present) add(entry.Copy());
+            entry.RestoredUtc = utc;
+            // On a disk error retain the recoverable record. The live pin is checked on every attempt.
+            try { Save(); } catch { entry.RestoredUtc = 0; throw; }
+            return present ? RestoreResult.AlreadyPresent : RestoreResult.Restored;
+        }
+        private void Save()
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(file)));
+            byte[] payload;
+            using (var stream = new MemoryStream())
+            using (var writer = new BinaryWriter(stream, Encoding.UTF8))
+            {
+                writer.Write(Magic); writer.Write(Format); writer.Write(World); writer.Write(Character);
+                writer.Write(deleted.Count); foreach (var entry in deleted) Write(writer, entry);
+                writer.Write(metadata.Count); foreach (var entry in metadata.Values) Write(writer, entry);
+                writer.Flush(); payload = stream.ToArray();
+            }
+            if (payload.Length + 32 > MaximumFileBytes) throw new InvalidDataException("Map history limit exceeded");
+            byte[] digest; using (var hash = SHA256.Create()) digest = hash.ComputeHash(payload);
+            string temporary = file + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                { stream.Write(payload, 0, payload.Length); stream.Write(digest, 0, digest.Length); stream.Flush(true); }
+                if (File.Exists(file)) File.Replace(temporary, file, file + ".bak");
+                else File.Move(temporary, file);
+            }
+            finally { if (File.Exists(temporary)) File.Delete(temporary); }
+        }
+        private void Load()
+        {
+            var info = new FileInfo(file);
+            if (info.Length < 64 || info.Length > MaximumFileBytes) throw new InvalidDataException("Invalid map history size");
+            byte[] bytes = File.ReadAllBytes(file);
+            byte[] digest; using (var hash = SHA256.Create()) digest = hash.ComputeHash(bytes, 0, bytes.Length - 32);
+            for (int i = 0; i < digest.Length; i++)
+                if (digest[i] != bytes[bytes.Length - 32 + i]) throw new InvalidDataException("Map history checksum failed; original file preserved");
+            using (var stream = new MemoryStream(bytes, 0, bytes.Length - 32))
+            using (var reader = new BinaryReader(stream, Encoding.UTF8))
+            {
+                if (reader.ReadInt32() != Magic || reader.ReadInt32() != Format
+                    || reader.ReadInt64() != World || reader.ReadInt64() != Character)
+                    throw new InvalidDataException("Map history belongs to a different world/character or version");
+                int count = ReadCount(reader, MaximumDeleted); var ids = new HashSet<string>(StringComparer.Ordinal);
+                for (int i = 0; i < count; i++)
+                {
+                    var entry = Read(reader); Guid parsed;
+                    if (!Guid.TryParseExact(entry.Id, "N", out parsed) || !ids.Add(entry.Id) || entry.DeletedUtc == 0)
+                        throw new InvalidDataException("Invalid map deletion ID");
+                    deleted.Add(entry);
+                }
+                count = ReadCount(reader, MaximumMetadata);
+                for (int i = 0; i < count; i++) { var entry = Read(reader); metadata.Add(entry.Key, entry); }
+                if (stream.Position != stream.Length) throw new InvalidDataException("Unexpected map history data");
+            }
+        }
+        private static int ReadCount(BinaryReader reader, int limit)
+        { int count = reader.ReadInt32(); if (count < 0 || count > limit) throw new InvalidDataException("Map history count limit"); return count; }
+        private static void WriteText(BinaryWriter writer, string value)
+        { byte[] bytes = Encoding.UTF8.GetBytes(value ?? ""); writer.Write(bytes.Length); writer.Write(bytes); }
+        private static string ReadText(BinaryReader reader, int limit)
+        {
+            int length = ReadCount(reader, limit * 4); byte[] bytes = reader.ReadBytes(length);
+            if (bytes.Length != length) throw new EndOfStreamException();
+            string value = new UTF8Encoding(false, true).GetString(bytes);
+            if (value.Length > limit) throw new InvalidDataException("Map history text too long"); return value;
+        }
+        private static void Write(BinaryWriter writer, PinRecord entry)
+        {
+            entry.Validate(); WriteText(writer, entry.Id); WriteText(writer, entry.Name); WriteText(writer, entry.Author); WriteText(writer, entry.CreatorName);
+            writer.Write(entry.Type); writer.Write(entry.X); writer.Write(entry.Y); writer.Write(entry.Z); writer.Write(entry.WorldSize);
+            writer.Write(entry.Owner); writer.Write(entry.CreatedUtc); writer.Write(entry.DeletedUtc); writer.Write(entry.RestoredUtc);
+            writer.Write(entry.Checked); writer.Write(entry.DoubleSize); writer.Write(entry.Animate);
+        }
+        private static PinRecord Read(BinaryReader reader)
+        {
+            var entry = new PinRecord { Id = ReadText(reader, 32), Name = ReadText(reader, 256), Author = ReadText(reader, 256), CreatorName = ReadText(reader, 128),
+                Type = reader.ReadInt32(), X = reader.ReadSingle(), Y = reader.ReadSingle(), Z = reader.ReadSingle(), WorldSize = reader.ReadSingle(),
+                Owner = reader.ReadInt64(), CreatedUtc = reader.ReadInt64(), DeletedUtc = reader.ReadInt64(), RestoredUtc = reader.ReadInt64(),
+                Checked = reader.ReadBoolean(), DoubleSize = reader.ReadBoolean(), Animate = reader.ReadBoolean() };
+            entry.Validate(); return entry;
+        }
+    }
+}

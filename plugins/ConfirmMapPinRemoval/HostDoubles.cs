@@ -53,6 +53,7 @@ public static class UnifiedPopup
     public static bool Visible;
     public static bool IsVisible() { return Visible; }
 }
+public static class Menu { public static bool IsVisible() { return false; } }
 public static class ZInput
 {
     public static bool Cancel;
@@ -88,6 +89,16 @@ public class Minimap
 }
 namespace ValheimModPack.PinRemoval
 {
+    public sealed class PinHistoryController : IDisposable
+    {
+        public bool IsOpen;
+        public PinHistoryController(HarmonyLib.Harmony harmony, System.Reflection.FieldInfo pins, Action<Exception> report) { }
+        public void Tick(bool canOpen) { }
+        public void Close() { IsOpen = false; }
+        public void Dispose() { Close(); }
+        public void Remove(Minimap map, Minimap.PinData pin) { map.RemovePin(pin); }
+        internal static bool SafePlayer(Player player) { return player != null && !player.IsDead(); }
+    }
     public class WoodDialogView : IDialogView
     {
         public static WoodDialogView Last;

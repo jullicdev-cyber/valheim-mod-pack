@@ -22,9 +22,9 @@ $refs = @(
 )
 foreach ($ref in $refs) { if (-not (Test-Path -LiteralPath $ref)) { throw "Missing reference: $ref" } }
 New-Item -ItemType Directory -Force (Split-Path $OutputFile -Parent) | Out-Null
-$argsList = @('/nologo','/target:library','/optimize+',('/out:' + $OutputFile))
+$argsList = @('/nologo','/codepage:65001','/target:library','/optimize+',('/out:' + $OutputFile))
 $argsList += $refs | ForEach-Object { '/reference:' + $_ }
-$argsList += @((Join-Path $PSScriptRoot 'Plugin.cs'), (Join-Path $PSScriptRoot 'SlotPolicy.cs'))
+$argsList += @('Plugin.cs','SlotPolicy.cs','AutoStoreFavorites.cs','FavoriteStateLink.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
 & $compiler @argsList
 if ($LASTEXITCODE -ne 0) { throw 'Bridge compilation failed.' }
 Write-Output "Built bridge: $OutputFile"

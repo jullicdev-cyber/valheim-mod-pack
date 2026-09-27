@@ -16,7 +16,7 @@ namespace BepInEx
 {
     public class BepInPlugin : Attribute { public BepInPlugin(string a,string b,string c) {} }
     [AttributeUsage(AttributeTargets.Class,AllowMultiple=true)]
-    public class BepInDependency : Attribute { public BepInDependency(string a,string b) {} }
+    public class BepInDependency : Attribute { public enum DependencyFlags { SoftDependency } public BepInDependency(string a,string b) {} public BepInDependency(string a,DependencyFlags b) {} }
     public class Log { public int Errors; public void LogInfo(object o) {} public void LogError(object o) { Errors++; } }
     public class BaseUnityPlugin { public ConfigFile Config = new ConfigFile(); public Log Logger = new Log(); }
 }
@@ -82,5 +82,16 @@ public static class StartupTests
         typeof(ValheimModPack.Plugin).GetMethod("OnDestroy",BindingFlags.NonPublic|BindingFlags.Instance).Invoke(plugin,null);
         Check((Buttons)display.BoxedValue==Buttons.OnlyContainerButton && HarmonyLib.Harmony.Patches==0,"Shutdown must restore guard");
         Console.WriteLine("OK: real bridge source waits for delayed/partial config, installs both hooks, enables O, and restores guard on shutdown.");
+    }
+}
+namespace ValheimModPack
+{
+    // This harness isolates the original sorting lifecycle; Azu integration has its own production-source tests.
+    internal sealed class AutoStoreFavorites : IDisposable
+    {
+        internal AutoStoreFavorites(Action<string> info, Action<Exception> report) { }
+        internal void InstallGuards() { }
+        internal void Initialize() { }
+        public void Dispose() { }
     }
 }

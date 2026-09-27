@@ -2,6 +2,7 @@
 """Offline installer for native Linux Valheim; only Python's standard library."""
 import hashlib
 import json
+import re
 from pathlib import Path
 import shutil
 import sys
@@ -63,6 +64,17 @@ def install(root, target):
             shutil.copytree(src, stage / name)
         else:
             shutil.copy2(src, stage / name)
+    # Keep Quick Stack's per-character protection flags across pack updates.
+    # Shared mod configs still come from the verified package.
+    previous_config = target / 'BepInEx/config'
+    if previous_config.is_symlink():
+        raise ValueError('Personal-data config directory must not be a link.')
+    if previous_config.is_dir():
+        for personal in previous_config.iterdir():
+            if re.fullmatch(r'(QuickStackStore|AzuAutoStore|AzuExtendedPlayerInventory)_player_-?\d+\.dat', personal.name):
+                if personal.is_symlink() or not personal.is_file():
+                    raise ValueError('Personal Quick Stack data must be a regular file: ' + personal.name)
+                shutil.copy2(personal, stage / 'BepInEx/config' / personal.name)
     # Upstream shell files may have CRLF in Windows downloads.
     launcher = stage / 'start_game_bepinex.sh'
     launcher.write_bytes(launcher.read_bytes().replace(b'\r\n', b'\n'))
