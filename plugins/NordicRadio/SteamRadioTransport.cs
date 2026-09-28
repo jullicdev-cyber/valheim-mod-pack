@@ -8,7 +8,7 @@ namespace ValheimModPack.NordicRadio
 {
     // SteamNetworkingMessages uses its own implicit connection. Valheim uses an
     // explicit SteamNetworkingSockets connection; never put MP3 blocks in that queue.
-    internal sealed class SteamRadioTransport : IRadioBulkTransport
+    internal sealed class SteamRadioTransport : IRadioBulkTransport, IRadioTransportHealth
     {
         internal const int Channel = 0x564D52; // Dedicated NordicRadio channel.
         private readonly Action<string> log;
@@ -25,6 +25,9 @@ namespace ValheimModPack.NordicRadio
             internal long Uid;
             internal bool Ready;
             internal float LastReceived, NextProbe;
+            internal float NextDiagnostic;
+            internal int ProbesQueued;
+            internal bool StateKnown;
             internal ESteamNetworkingConnectionState State;
         }
 
@@ -79,7 +82,7 @@ namespace ValheimModPack.NordicRadio
         {
             Link link;
             if (!links.TryGetValue(id, out link) || link.Uid != uid)
-                links[id] = link = new Link { Uid = uid };
+                links[id] = link = new Link { Uid = uid, NextDiagnostic = Time.realtimeSinceStartup + 10 };
             return link;
         }
 
@@ -100,17 +103,54 @@ namespace ValheimModPack.NordicRadio
                 if (SteamNetworkingMessages.AcceptSessionWithUser(ref identity)) opened.Add(id);
                 SteamNetConnectionInfo_t info; SteamNetConnectionRealTimeStatus_t status;
                 var state = SteamNetworkingMessages.GetSessionConnectionInfo(ref identity, out info, out status);
-                if (state != link.State)
+                if (!link.StateKnown || state != link.State)
                 {
-                    link.State = state;
+                    link.State = state; link.StateKnown = true;
                     log("Steam music connection state: " + state + (info.m_eEndReason == 0 ? "" : " reason=" + info.m_eEndReason + " " + info.m_szEndDebug));
                 }
                 if (state != ESteamNetworkingConnectionState.k_ESteamNetworkingConnectionState_Connected
                     || Time.realtimeSinceStartup - link.LastReceived > 25) link.Ready = false;
+                if (!link.Ready && Time.realtimeSinceStartup >= link.NextDiagnostic)
+                {
+                    link.NextDiagnostic = Time.realtimeSinceStartup + 30;
+                    log("Steam music delivery still unconfirmed: state=" + state + ", queued probes=" + link.ProbesQueued
+                        + ". A successful send only means queued; recovery remains available.");
+                }
                 if (Time.realtimeSinceStartup < link.NextProbe) continue;
                 link.NextProbe = Time.realtimeSinceStartup + (link.Ready ? 10 : 2);
-                SendFrame(ref identity, id, peer.m_uid, new byte[] { 2, Probe });
+                if (SendFrame(ref identity, id, peer.m_uid, new byte[] { 2, Probe })) link.ProbesQueued++;
             }
+        }
+
+        // Delivery proof and native connection state determine availability.
+        // In particular, game/bulk queue pressure must NOT select slow recovery.
+        public bool IsAvailable(long peerUid)
+        {
+            try
+            {
+                ZNetPeer peer; SteamNetworkingIdentity identity; SteamNetConnectionRealTimeStatus_t status;
+                return TryGetConnection(peerUid, out peer, out identity, out status);
+            }
+            catch (Exception error) { Report(error); return false; }
+        }
+
+        private bool TryGetConnection(long peerUid, out ZNetPeer peer, out SteamNetworkingIdentity identity,
+            out SteamNetConnectionRealTimeStatus_t status)
+        {
+            peer = null; identity = new SteamNetworkingIdentity(); status = new SteamNetConnectionRealTimeStatus_t();
+            if (disposed || ZNet.instance == null) return false;
+            peer = ZNet.instance.GetPeer(peerUid);
+            if (!Allowed(peer)) return false;
+            ulong id = SteamId(peer); Link link;
+            if (id == 0 || !links.TryGetValue(id, out link) || link.Uid != peerUid || !link.Ready) return false;
+            if (Time.realtimeSinceStartup - link.LastReceived > 25)
+            { link.Ready = false; link.NextProbe = 0; return false; }
+            identity.SetSteamID64(id);
+            SteamNetConnectionInfo_t info;
+            var state = SteamNetworkingMessages.GetSessionConnectionInfo(ref identity, out info, out status);
+            if (state != ESteamNetworkingConnectionState.k_ESteamNetworkingConnectionState_Connected)
+            { link.Ready = false; link.NextProbe = 0; return false; }
+            return true;
         }
 
         private void OnRequest(SteamNetworkingMessagesSessionRequest_t request)
@@ -129,20 +169,13 @@ namespace ValheimModPack.NordicRadio
             try
             {
                 if (data == null || data.Length < 2 || data.Length > RadioProtocol.MaxPacket || !EnsureStarted()) return false;
-                ZNetPeer peer = ZNet.instance.GetPeer(peerUid);
-                if (!Allowed(peer)) return false;
-                ulong id = SteamId(peer);
-                if (id == 0 || (opened.Count >= 64 && !opened.Contains(id))) return false;
-                Link link;
-                if (!links.TryGetValue(id, out link) || link.Uid != peerUid || !link.Ready) return false;
+                ZNetPeer peer; SteamNetworkingIdentity identity; SteamNetConnectionRealTimeStatus_t status;
+                if (!TryGetConnection(peerUid, out peer, out identity, out status)) return false;
+                ulong id = identity.GetSteamID64();
+                if (opened.Count >= 64 && !opened.Contains(id)) return false;
                 // Yield to gameplay when its OWN queue is already busy. In normal
                 // operation our data never increments that queue in the first place.
                 if (data[1] == (byte)RadioMessageKind.Chunk && peer.m_socket.GetSendQueueSize() > 4096) return false;
-                var identity = new SteamNetworkingIdentity(); identity.SetSteamID64(id);
-                SteamNetConnectionInfo_t info; SteamNetConnectionRealTimeStatus_t status;
-                var state = SteamNetworkingMessages.GetSessionConnectionInfo(ref identity, out info, out status);
-                if (state != ESteamNetworkingConnectionState.k_ESteamNetworkingConnectionState_Connected)
-                { link.Ready = false; link.NextProbe = 0; return false; }
                 long queued = Math.Max(0, status.m_cbPendingReliable) + (long)Math.Max(0, status.m_cbPendingUnreliable)
                     + Math.Max(0, status.m_cbSentUnackedReliable);
                 int size = data.Length + RadioBulkFrame.HeaderSize;

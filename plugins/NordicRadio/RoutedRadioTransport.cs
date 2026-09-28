@@ -6,12 +6,12 @@ using UnityEngine;
 namespace ValheimModPack.NordicRadio
 {
     // Recovery path only. A bulk packet is NEVER inserted into the game queue.
-    // 3 acknowledged-in-flight fragments plus framing occupy < 3 KiB. Each send
-    // additionally reserves room below the game's 8 KiB ZDO starvation boundary.
-    internal sealed class RoutedRadioTransport : IRadioBulkTransport
+    // Native pending + unacknowledged bytes already bound traffic in flight.
+    // Keep a larger application window without raising the game's queue ceiling.
+    internal sealed class RoutedRadioTransport : IRadioBulkTransport, IRadioChunkProgress
     {
         internal const string RpcName = "VMP_RadioRecovery_1";
-        internal const int FragmentSize = 768, Window = 3, QueueCeiling = 4096;
+        internal const int FragmentSize = 768, Window = 16, QueueCeiling = 4096;
         private const int HeaderSize = 41, MaxFrame = RadioProtocol.MaxPacket + RadioBulkFrame.HeaderSize;
         private readonly Dictionary<long, Peer> peers = new Dictionary<long, Peer>();
         private ZRoutedRpc registered;
@@ -32,6 +32,7 @@ namespace ValheimModPack.NordicRadio
             internal int Total, Offset;
             internal byte[] Frame;
             internal float Progress;
+            internal string ChunkId;
         }
         private sealed class Peer
         {
@@ -93,7 +94,9 @@ namespace ValheimModPack.NordicRadio
             { registered = ZRoutedRpc.instance; registered.Register<ZPackage>(RpcName, OnMessage); }
             var ids = new List<long>(peers.Keys);
             int sends = 0;
-            for (int i = 0; i < ids.Count; i++)
+            // Several fair rounds fill available native capacity even at low FPS.
+            // At most eight small packets total per frame, including ACKs.
+            for (int i = 0; i < ids.Count * 8 && sends < 8; i++)
             {
                 long uid = ids[(cursor + i) % ids.Count];
                 ZNetPeer connected = Allowed(uid);
@@ -168,6 +171,7 @@ namespace ValheimModPack.NordicRadio
                 if (offset == incoming.Offset && incoming.Frame != null)
                 {
                     reader.Read(incoming.Frame, offset, size); incoming.Offset += size; incoming.Progress = Now;
+                    if (offset == 0) incoming.ChunkId = ReadChunkId(incoming.Frame, size, sender);
                     if (incoming.Offset == total)
                     {
                         byte[] data = RadioBulkFrame.Decode(incoming.Frame, world, sender, local);
@@ -179,11 +183,26 @@ namespace ValheimModPack.NordicRadio
                 target.AckPending = true;
             }
         }
+        private string ReadChunkId(byte[] frame, int length, long sender)
+        {
+            var prefix = new byte[length]; Array.Copy(frame, prefix, length);
+            byte[] data = RadioBulkFrame.Decode(prefix, world, sender, local);
+            if (data == null || data.Length < 70 || data[0] != 2 || data[1] != (byte)RadioMessageKind.Chunk
+                || data[2] != 64 || data[3] != 0 || data[4] != 0 || data[5] != 0) return null;
+            string id = System.Text.Encoding.ASCII.GetString(data, 6, 64);
+            return RadioProtocol.ValidId(id) ? id : null;
+        }
+        public float GetChunkProgress(long uid, string id)
+        {
+            Peer peer;
+            return Current() && Allowed(uid) != null && peers.TryGetValue(uid, out peer)
+                && peer.In != null && peer.In.ChunkId == id ? peer.In.Progress : 0;
+        }
         public void Reset() { peers.Clear(); receiver = null; world = local = 0; cursor = 0; }
         public void Dispose() { disposed = true; Reset(); }
     }
 
-    internal sealed class RecoveringRadioTransport : IRadioBulkTransport
+    internal sealed class RecoveringRadioTransport : IRadioBulkTransport, IRadioChunkProgress
     {
         private readonly IRadioBulkTransport steam, routed;
         private readonly Action<string> log;
@@ -212,10 +231,14 @@ namespace ValheimModPack.NordicRadio
         {
             if (notified.Contains(peer)) return routed.TrySend(peer, data, maxQueuedBytes);
             if (steam.TrySend(peer, data, maxQueuedBytes)) { waiting.Remove(peer); notified.Remove(peer); return true; }
+            var health = steam as IRadioTransportHealth;
+            if (health != null && health.IsAvailable(peer)) { waiting.Remove(peer); return false; }
             float started;
             if (!waiting.TryGetValue(peer, out started))
             { if (waiting.Count >= 64) return false; waiting.Add(peer, started = Time.realtimeSinceStartup); }
-            if (Time.realtimeSinceStartup - started < 10) return false;
+            var connecting = steam as IRadioTransportConnecting;
+            float grace = connecting != null && connecting.IsConnecting(peer) ? 30 : 10;
+            if (Time.realtimeSinceStartup - started < grace) return false;
             bool sent = routed.TrySend(peer, data, maxQueuedBytes);
             if (sent) SelectRecovery(peer);
             return sent;
@@ -223,7 +246,12 @@ namespace ValheimModPack.NordicRadio
         private void SelectRecovery(long peer)
         {
             if (notified.Count < 64 && notified.Add(peer))
-                log("Steam music delivery unavailable or congested; using acknowledged 768-byte recovery fragments with a 4 KiB game-queue ceiling until reconnect.");
+                log("Steam music delivery unavailable; using acknowledged 768-byte recovery fragments with a 4 KiB game-queue ceiling until reconnect.");
+        }
+        public float GetChunkProgress(long peer, string id)
+        {
+            var progress = (notified.Contains(peer) ? routed : steam) as IRadioChunkProgress;
+            return progress == null ? 0 : progress.GetChunkProgress(peer, id);
         }
         public void Reset() { waiting.Clear(); notified.Clear(); steam.Reset(); routed.Reset(); }
         public void Dispose() { Reset(); steam.Dispose(); routed.Dispose(); }

@@ -14,7 +14,7 @@ New-Item -ItemType Directory -Force (Split-Path $OutputFile -Parent) | Out-Null
 $argsList = @('/nologo','/codepage:65001','/target:library','/optimize+',('/out:' + $OutputFile))
 $argsList += $refs | ForEach-Object { '/reference:' + $_ }
 $argsList += @('Plugin.cs','HornModel.cs','PortableModel.cs','PortableController.cs','IRadioTarget.cs','RadioPiece.cs','RadioWindow.cs','RadioAudio.cs','PlaybackMath.cs','RadioPlayback.cs','RadioGain.cs','AudioGainProcessor.cs','MusicDucking.cs','RadioService.cs','RadioProtocol.cs','RadioLibrary.cs','RadioTransfer.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
-$argsList += @('RadioBulkTransport.cs','SteamRadioTransport.cs','RoutedRadioTransport.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
+$argsList += @('RadioBulkTransport.cs','SteamSocketRadioTransport.cs','RoutedRadioTransport.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
 & $compiler @argsList
 if ($LASTEXITCODE -ne 0) { throw 'NordicRadio compilation failed.' }
 Write-Output "Built NordicRadio: $OutputFile"

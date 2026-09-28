@@ -45,11 +45,15 @@ namespace ValheimModPack.NordicRadio
                 foreach (LODGroup component in prefab.GetComponents<LODGroup>()) Object.DestroyImmediate(component);
 
                 // VisEquipment instantiates the direct "attach" child for a
-                // held item and resets its transform. Put the grip offset on
-                // the nested model, so dropped and equipped versions agree.
+                // held item and resets its transform. Keep the rear grip at
+                // the attach origin, then use the game's equipoffset marker
+                // to turn only the held visual around that grip. The dropped
+                // visual/collider and inventory icon keep their orientation.
                 GameObject attach = Child(prefab.transform, "attach");
                 GameObject model = Child(attach.transform, "SkaldIdolModel");
                 model.transform.localPosition = new Vector3(0f, -0.20f, -0.14f);
+                GameObject equipOffset = Child(prefab.transform, "equipoffset");
+                equipOffset.transform.localRotation = Quaternion.Euler(0f, 90f, 0f);
                 List<Part> parts = BuildGeometry();
                 foreach (Part part in parts)
                 {

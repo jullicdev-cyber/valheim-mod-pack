@@ -13,6 +13,25 @@ namespace ValheimModPack.NordicRadio
         void Reset();
     }
 
+    // Optional health signal, independent of per-send flow control. A connected
+    // channel can legitimately refuse more bytes while either queue is busy.
+    internal interface IRadioTransportHealth
+    {
+        bool IsAvailable(long peer);
+    }
+
+    internal interface IRadioTransportConnecting
+    {
+        bool IsConnecting(long peer);
+    }
+
+    // In recovery a complete chunk may take longer than the service timeout.
+    // Report only new bytes of the requested song, never duplicate fragments or metadata.
+    internal interface IRadioChunkProgress
+    {
+        float GetChunkProgress(long peer, string id);
+    }
+
     internal static class RadioBulkFrame
     {
         internal const int HeaderSize = 28;

@@ -671,6 +671,12 @@ namespace ValheimModPack.NordicRadio
             }
             if (active != null)
             {
+                var progress = bulk as IRadioChunkProgress;
+                if (progress != null)
+                {
+                    double receivedAt = progress.GetChunkProgress(sessionServer, active.Track.Id);
+                    if (receivedAt > active.LastProgress) { active.LastProgress = receivedAt; active.Retries = 0; }
+                }
                 if (realtime - active.LastProgress > 10 && !active.Writing)
                 {
                     if (++active.Retries > 3) FailDownload("Steam music channel unavailable (move closer or reconnect)");

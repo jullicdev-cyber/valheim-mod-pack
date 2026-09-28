@@ -79,6 +79,7 @@ namespace ValheimModPack.NordicRadioSmoke
                 if (!attach || attach.GetComponentsInChildren<MeshFilter>(true).Length != 5 || attach.GetComponentsInChildren<Collider>(true).Length != 0)
                     throw new Exception("Portable equipped visual/physics separation");
                 if (prefab.GetComponents<Collider>().Length != 1) throw new Exception("Portable dropped collider");
+                CheckPortableGrip(prefab);
                 var hammer = PrefabManager.Instance.GetPrefab("Hammer").GetComponent<ItemDrop>().m_itemData.m_shared;
                 if (hammer.m_buildPieces == null || ReferenceEquals(hammer, shared)) throw new Exception("Original hammer was modified");
                 // Fejd registers items but defers recipes until world startup.
@@ -98,12 +99,53 @@ namespace ValheimModPack.NordicRadioSmoke
                     if (!requirement.m_resItem || !expected.TryGetValue(requirement.m_resItem.name, out amount) || requirement.m_amount != amount)
                         throw new Exception("Portable recipe material/amount");
                 }
-                report += "PASS native portable idol: ObjectDB item, forge I recipe Wood10/FineWood5/Bronze2/SurtlingCore1, 128px icon, five equipped meshes, root collider, original Hammer unchanged.\n";
+                report += "PASS native portable idol: ObjectDB item, forge I recipe Wood10/FineWood5/Bronze2/SurtlingCore1, 128px icon, five equipped meshes, native 90-degree grip rotation, unchanged dropped visual/collider, original Hammer unchanged.\n";
             }
             catch (Exception error) { Finish(report + "FAIL portable idol: " + error, 6); yield break; }
             string mp3 = Environment.GetEnvironmentVariable("NORDICRADIO_SMOKE_MP3");
             if (!String.IsNullOrEmpty(mp3)) yield return StartCoroutine(Decode(report, mp3));
             else Finish(report + "MP3 decode not requested.\n", 0);
+        }
+        private static void CheckPortableGrip(GameObject prefab)
+        {
+            Transform marker = prefab.transform.Find("equipoffset");
+            Transform droppedModel = prefab.transform.Find("attach/SkaldIdolModel");
+            if (!marker || !droppedModel || marker.childCount != 0 || marker.localPosition.sqrMagnitude > 0.000001f)
+                throw new Exception("Portable native equip offset marker");
+            if (Quaternion.Angle(marker.localRotation, Quaternion.Euler(0f, 90f, 0f)) > 0.01f)
+                throw new Exception("Portable grip must turn the idol face by 90 degrees around its vertical axis");
+            if (Quaternion.Angle(droppedModel.localRotation, Quaternion.identity) > 0.01f ||
+                (droppedModel.localPosition - new Vector3(0f, -0.20f, -0.14f)).sqrMagnitude > 0.000001f)
+                throw new Exception("Portable dropped visual was changed by the grip rotation");
+            BoxCollider collider = prefab.GetComponent<BoxCollider>();
+            if (!collider || (collider.center - new Vector3(0f, 0.042f, -0.12f)).sqrMagnitude > 0.000001f ||
+                (collider.size - new Vector3(0.30f, 0.49f, 0.30f)).sqrMagnitude > 0.000001f)
+                throw new Exception("Portable dropped collider was changed by the grip rotation");
+
+            GameObject testRoot = new GameObject("NordicRadioGripProbe");
+            testRoot.SetActive(false);
+            try
+            {
+                // Exercise the game's actual cloning/reset/equipoffset path;
+                // prefab transforms alone cannot prove it applies in the hand.
+                VisEquipment visuals = testRoot.AddComponent<VisEquipment>();
+                MethodInfo attachItem = typeof(VisEquipment).GetMethod("AttachItem", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (attachItem == null) throw new Exception("Native VisEquipment.AttachItem API changed");
+                GameObject equipped = attachItem.Invoke(visuals, new object[] {
+                    PortableModel.PrefabName.GetStableHashCode(), 0, testRoot.transform, false, false, 1
+                }) as GameObject;
+                if (!equipped || equipped.GetComponentsInChildren<MeshFilter>(true).Length != 5 ||
+                    equipped.GetComponentsInChildren<Collider>(true).Length != 0)
+                    throw new Exception("Portable native equipped visual/physics separation");
+                if (equipped.transform.localPosition.sqrMagnitude > 0.000001f ||
+                    Quaternion.Angle(equipped.transform.localRotation, marker.rotation) > 0.01f)
+                    throw new Exception("Native equipment did not apply the portable grip rotation");
+                Transform model = equipped.transform.Find("SkaldIdolModel");
+                Vector3 grip = model.TransformPoint(new Vector3(0f, 0.20f, 0.14f));
+                if ((grip - testRoot.transform.position).sqrMagnitude > 0.000001f)
+                    throw new Exception("Portable rotation moved the rear grip out of the hand");
+            }
+            finally { UnityEngine.Object.DestroyImmediate(testRoot); }
         }
         private static string CheckMusicDucking()
         {

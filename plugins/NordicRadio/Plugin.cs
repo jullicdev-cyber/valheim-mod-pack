@@ -14,7 +14,7 @@ namespace ValheimModPack.NordicRadio
     public sealed class Plugin : BaseUnityPlugin
     {
         public const string Id = "valheimmodpack.nordicradio";
-        public const string Version = "1.3.1";
+        public const string Version = "1.3.2";
         public static Plugin Instance { get; private set; }
         public RadioService Service { get; private set; }
         public string DataRoot { get; private set; }
@@ -67,7 +67,7 @@ namespace ValheimModPack.NordicRadio
                 Directory.CreateDirectory(Path.Combine(DataRoot, "Music"));
                 Directory.CreateDirectory(Path.Combine(DataRoot, "Cache"));
                 Service = new RadioService(this, DataRoot, message => Logger.LogInfo(message),
-                    new RecoveringRadioTransport(new SteamRadioTransport(message => Logger.LogInfo(message)),
+                    new RecoveringRadioTransport(new SteamSocketRadioTransport(message => Logger.LogInfo(message)),
                         new RoutedRadioTransport(), message => Logger.LogWarning(message)));
                 window = new RadioWindow(this);
                 musicDucking = new MusicDucking();
