@@ -11,7 +11,12 @@ internal static partial class NetworkTests
     private static void Check(bool good,string name) { if(!good) throw new Exception(name); assertions++; }
     private static void Reject(Action action,string name) { bool failed=false; try { action(); } catch(InvalidDataException) { failed=true; } catch(EndOfStreamException) { failed=true; } Check(failed,name); }
     private static TrackInfo Track(string id) { return new TrackInfo { Id=id,Title="Track",Size=123,Duration=5 }; }
-    public static void Main()
+    public static int Main()
+    {
+        try { Run(); return 0; }
+        catch(Exception error) { Console.Error.WriteLine(error); return 1; }
+    }
+    private static void Run()
     {
         string root=Path.Combine(Path.GetTempPath(),"NordicRadio-tests-"+Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -100,11 +105,36 @@ internal static partial class NetworkTests
     }
     private sealed class Node
     {
-        public ZNet Net; public ZRoutedRpc Rpc; public RadioService Service; public Player Player; public ZDOMan Objects;
+        public ZNet Net; public ZRoutedRpc Rpc; public RadioService Service; public Player Player; public ZDOMan Objects; public TestBulk Bulk;
+    }
+    private sealed class TestBulk : IRadioBulkTransport
+    {
+        private readonly Node node;
+        public bool Available=true;
+        public readonly HashSet<long> BlockedPeers=new HashSet<long>();
+        public readonly Dictionary<long,int> Attempts=new Dictionary<long,int>();
+        public readonly Queue<Delivery> Inbox=new Queue<Delivery>();
+        private readonly Dictionary<long,TestSocket> queues=new Dictionary<long,TestSocket>();
+        public TestBulk(Node node) { this.node=node; }
+        public TestSocket Queue(long uid) { TestSocket socket; if(!queues.TryGetValue(uid,out socket)) queues.Add(uid,socket=new TestSocket()); return socket; }
+        public bool TrySend(long peer,byte[] data,int limit)
+        {
+            int count; Attempts.TryGetValue(peer,out count);Attempts[peer]=count+1;
+            if(!Available || BlockedPeers.Contains(peer)) return false;
+            var kind=(RadioMessageKind)data[1];
+            if(kind==RadioMessageKind.Chunk && node.Net.GetPeer(peer).m_socket.Pending>4096) return false;
+            int size=data.Length+RadioBulkFrame.HeaderSize;
+            if(Queue(peer).Pending+size>(kind==RadioMessageKind.Library?Math.Max(limit,size):limit)) return false;
+            QueuePacket(node.Net.Uid,peer,"bulk",new ZPackage(data)); return true;
+        }
+        public void Poll(Action<long,byte[]> receive) { for(int i=0;i<8 && Inbox.Count>0;i++){Delivery p=Inbox.Dequeue();receive(p.Sender,p.Package.GetArray());} }
+        public void Reset() { Inbox.Clear(); queues.Clear(); }
+        public void Dispose() { Reset(); }
     }
     private sealed class Delivery { public long Sender,Target; public string Name; public ZPackage Package; public double Due; public TestSocket Socket; }
     private static readonly List<Node> nodes=new List<Node>();
     private static readonly Queue<Delivery> wire=new Queue<Delivery>();
+    private static int worldBlockedTicks;
     private static void Select(Node node) { ZNet.instance=node.Net; ZRoutedRpc.instance=node.Rpc; ZDOMan.instance=node.Objects; Player.m_localPlayer=node.Player; }
     private static void Pump(int count)
     {
@@ -112,25 +142,30 @@ internal static partial class NetworkTests
         {
             UnityEngine.Time.realtimeSinceStartup+=0.025f;
             foreach(Node node in nodes) { Select(node); node.Service.Tick(); }
+            // Valheim ZDOMan.SendZDOs needs at least 2048 of its 10240-byte budget.
+            foreach(Node node in nodes) if(node.Net.Host)
+                foreach(ZNetPeer peer in node.Net.Peers) if(peer.m_socket.Pending>8192) { worldBlockedTicks++; break; }
             for(int j=wire.Count;j>0;j--)
             {
                 Delivery packet=wire.Dequeue(); Node target=nodes.Find(n=>n.Net.Uid==packet.Target);
                 if(packet.Due>UnityEngine.Time.realtimeSinceStartup) { wire.Enqueue(packet); continue; }
-                if(packet.Socket!=null) acknowledgements.Enqueue(new Delivery {Socket=packet.Socket,Package=packet.Package,Due=UnityEngine.Time.realtimeSinceStartup+transferDelay});
+                if(packet.Socket!=null) acknowledgements.Enqueue(new Delivery {Name=packet.Name,Socket=packet.Socket,Package=packet.Package,Due=UnityEngine.Time.realtimeSinceStartup+transferDelay});
                 if(target==null) continue; Select(target); Action<long,ZPackage> receiver;
+                if(packet.Name=="bulk") { target.Bulk.Inbox.Enqueue(packet); continue; }
                 if(target.Rpc.Methods.TryGetValue(packet.Name,out receiver)) receiver(packet.Sender,packet.Package);
             }
             for(int j=acknowledgements.Count;j>0;j--)
             {
                 Delivery ack=acknowledgements.Dequeue();
                 if(ack.Due>UnityEngine.Time.realtimeSinceStartup) acknowledgements.Enqueue(ack);
-                else ack.Socket.Pending-=ack.Package.Size();
+                else ack.Socket.Pending-=ack.Package.Size()+(ack.Name=="bulk"?RadioBulkFrame.HeaderSize:0);
             }
             Thread.Sleep(1);
         }
     }
     private static void Network(string root)
     {
+        int blockedBefore=worldBlockedTicks;
         var objects=new ZDOMan(); var radio=new ZDOID(1,1);
         objects.Objects[radio]=new ZDO { Prefab="vmp_skald_horn".GetStableHashCode() };
         for(int i=0;i<8;i++)
@@ -141,7 +176,7 @@ internal static partial class NetworkTests
             node.Rpc.Transport=(peer,name,package)=>QueuePacket(uid,peer,name,package);
             string data=Path.Combine(root,"node"+uid); Directory.CreateDirectory(Path.Combine(data,"Music"));
             if(i==0) WriteMp3(Path.Combine(data,"Music","Host song.mp3"),1000,true);
-            Select(node); node.Service=new RadioService(null,data,Console.WriteLine); nodes.Add(node);
+            Select(node); node.Bulk=new TestBulk(node); node.Service=new RadioService(null,data,Console.WriteLine,node.Bulk); nodes.Add(node);
         }
         Node host=nodes[0];
         musicRecipients.Clear();
@@ -150,7 +185,12 @@ internal static partial class NetworkTests
             host.Net.Peers.Add(new ZNetPeer {m_uid=nodes[i].Net.Uid,m_characterID=new ZDOID(nodes[i].Net.Uid,100)});
             nodes[i].Net.Peers.Add(new ZNetPeer{m_uid=1,m_characterID=new ZDOID(1,100)});
         }
+        host.Bulk.BlockedPeers.Add(2);
         Pump(120);
+        Check(nodes[1].Service.Tracks.Count==0 && nodes[2].Service.Tracks.Count==1,"unavailable music peer does not block others' playlists");
+        Check(host.Bulk.Attempts[2]<10,"failed large playlists are retried with cooldown rather than every frame");
+        host.Bulk.BlockedPeers.Clear();Pump(60);
+        Check(nodes[1].Service.Tracks.Count==1,"pending playlist recovers when music channel becomes available");
         Select(host); Check(host.Service.Tracks.Count==1,"host asynchronous scan");
         string id=host.Service.Tracks[0].Id;
         objects.Objects[new ZDOID(7,100)].Position=new UnityEngine.Vector3(145,0,0);
@@ -187,6 +227,20 @@ internal static partial class NetworkTests
             Select(nodes[i]); string path=nodes[i].Service.GetTrackPath(id);
             Check(path!=null && RadioLibrary.HashFile(path)==id,"validated MP3 delivery to client "+i);
         }
+        Check(worldBlockedTicks==blockedBefore,"seven simultaneous listeners do not block world updates");
+        Select(nodes[1]);
+        var unsolicited=new RadioMessage {Kind=RadioMessageKind.Library,Tracks=new List<TrackInfo>()};
+        nodes[1].Rpc.Methods[RadioProtocol.RpcName](1,new ZPackage(RadioProtocol.Encode(unsolicited)));
+        Check(nodes[1].Service.Tracks.Count==1,"bulk playlist cannot fall back to gameplay RPC");
+        nodes[1].Bulk.Inbox.Enqueue(new Delivery{Sender=3,Package=new ZPackage(RadioProtocol.Encode(unsolicited))});
+        Pump(1);Select(nodes[1]);
+        Check(nodes[1].Service.Tracks.Count==1,"another client's bulk playlist injection rejected");
+        // Simulate metadata lost across a bulk connection restart while control
+        // state still arrives. The unknown song must trigger a fresh host playlist.
+        nodes[1].Bulk.Inbox.Enqueue(new Delivery{Sender=1,Package=new ZPackage(RadioProtocol.Encode(unsolicited))});
+        Pump(1);Select(nodes[1]);Check(nodes[1].Service.Tracks.Count==0,"metadata recovery fixture applied");
+        for(int i=0;i<200 && nodes[1].Service.Tracks.Count==0;i++)Pump(1);
+        Check(nodes[1].Service.Tracks.Count==1,"unknown playing song resynchronizes lost metadata over bulk transport");
         Pump(240); // Cross a maintenance pass without refreshing these still-valid subscriptions.
         Select(host); host.Service.Command(radio,"volume","",0.65f); Pump(4);
         Select(nodes[6]); Check(nodes[6].Service.GetState(radio).Volume==0.65f,"145m listener remains subscribed after maintenance");
@@ -253,11 +307,14 @@ internal static partial class NetworkTests
         Check(extra!=null,"additional host track scanned for portable delivery");
         Select(listener); listener.Service.ResetSession(); Pump(4);
         Select(listener); listener.Service.Watch(portable);
-        for(int round=0;round<200;round++)
+        // A reconnect can fall inside the host's two-second Hello cooldown;
+        // allow the next five-second greeting and asynchronous cache verification.
+        for(int round=0;round<600;round++)
         {
             Select(owner); owner.Service.SetPortable(portable,tokenA);
             Select(listener); listener.Service.Watch(portable); listener.Service.RequestTrack(extra);
             Pump(1);
+            Select(listener); if(listener.Service.GetTrackPath(extra)!=null) break;
         }
         Select(listener); string path=listener.Service.GetTrackPath(extra);
         Check(path!=null && RadioLibrary.HashFile(path)==extra,"host MP3 transferred using portable-only subscription");

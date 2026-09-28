@@ -69,7 +69,7 @@
   },
   {
     "path": "BepInEx/config/valheimmodpack.nordicradio.cfg",
-    "sha256": "ac68f46aaac1a6c4a4903d448b2b0c08b2bbe090b9cd21af692af416ede2036e"
+    "sha256": "2d850c7e2dbc2238b79e77eeee4cba8c224a84d15333abf94274a2a628717d3e"
   },
   {
     "path": "BepInEx/config/valheimmodpack.renewableresourcetimers.cfg",
@@ -277,7 +277,7 @@
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-NordicRadio/NordicRadio.dll",
-    "sha256": "96c1c151395dc4495868b175d485a32d77f533d292e0183ef18f3d1cfd4f75d0"
+    "sha256": "858c8aadf8252f2a44740258bd517e455e77a78bb6d62baf7d6c2a05e8d7bca2"
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-RenewableResourceTimers/RenewableResourceTimers.dll",

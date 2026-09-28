@@ -19,6 +19,10 @@ namespace ValheimModPack.NordicRadio
             if (cost > tokens) return false;
             tokens -= cost; return true;
         }
+        public void Refund(double cost)
+        {
+            if (RadioProtocol.Finite(cost) && cost > 0) tokens = Math.Min(capacity, tokens + cost);
+        }
     }
 
     public sealed class TrackInfo

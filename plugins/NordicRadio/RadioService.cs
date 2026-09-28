@@ -12,6 +12,9 @@ namespace ValheimModPack.NordicRadio
     {
         private readonly Action<string> log;
         private readonly RadioLibrary library;
+        private readonly IRadioBulkTransport bulk;
+        private readonly HashSet<long> pendingLibraries = new HashSet<long>();
+        private readonly Dictionary<long, double> libraryRetryAt = new Dictionary<long, double>();
         private readonly Queue<Action> completions = new Queue<Action>();
         private readonly List<TrackInfo> tracks = new List<TrackInfo>();
         private readonly Dictionary<string, LibraryEntry> sources = new Dictionary<string, LibraryEntry>(StringComparer.Ordinal);
@@ -42,6 +45,7 @@ namespace ValheimModPack.NordicRadio
         private volatile bool disposed;
         private bool receivedLibrary;
         private double nextHello;
+        private double sessionStarted;
         private double nextMaintenance;
         private double nextState;
         private double nextErrorLog;
@@ -91,9 +95,11 @@ namespace ValheimModPack.NordicRadio
             }
         }
 
-        public RadioService(BaseUnityPlugin host, string dataRoot, Action<string> log)
+        internal RadioService(BaseUnityPlugin host, string dataRoot, Action<string> log, IRadioBulkTransport bulk)
         {
             this.log = log ?? delegate { };
+            if (bulk == null) throw new ArgumentNullException("bulk");
+            this.bulk = bulk;
             library = new RadioLibrary(dataRoot);
         }
 
@@ -104,7 +110,7 @@ namespace ValheimModPack.NordicRadio
             set { upload.Rate = Math.Max(64, Math.Min(4096, value)) * 1024; }
         }
         public string LibraryStatus { get { return libraryStatus; } }
-        private int downloadWindow = 4, maxQueuedKiB = 96;
+        private int downloadWindow = 8, maxQueuedKiB = 256;
         public int DownloadWindow { get { return downloadWindow; } set { downloadWindow = Math.Max(1, Math.Min(8, value)); } }
         public int MaxQueuedKiB { get { return maxQueuedKiB; } set { maxQueuedKiB = Math.Max(32, Math.Min(256, value)); } }
         public bool DownloadEnabled = true;
@@ -135,20 +141,28 @@ namespace ValheimModPack.NordicRadio
             if (!System.Object.ReferenceEquals(sessionRpc, rpc) || sessionWorld != world || sessionServer != server)
             {
                 ResetSession(); sessionRpc = rpc; sessionWorld = world; sessionServer = server;
+                sessionStarted = Realtime;
                 if (IsHost) { needsScan = true; RefreshLibrary(); }
+                else libraryStatus = "Connecting Steam music channel...";
             }
+            bulk.Poll(OnBulkMessage);
             double realtime = Realtime;
             if (IsHost)
             {
                 if (needsScan && scanning == 0) RefreshLibrary();
                 CorrectClock(realtime);
                 ExpirePortables(realtime);
+                FlushLibraries();
                 ServeChunks(realtime);
                 if (realtime >= nextState) { nextState = realtime + 1; AdvanceAndBroadcast(); }
             }
             else
             {
-                if (!receivedLibrary && realtime >= nextHello) { nextHello = realtime + 5; Send(server, new RadioMessage { Kind = RadioMessageKind.Hello }); }
+                if (!receivedLibrary && realtime - sessionStarted > 30)
+                    libraryStatus = "Steam music channel unavailable. Check host/client radio versions and use Steam networking (no crossplay).";
+                // A reliable bulk send can still be lost when its connection dies.
+                // Periodically resync metadata after recovery, not just on first join.
+                if (realtime >= nextHello) { nextHello = realtime + (receivedLibrary ? 30 : 5); Send(server, new RadioMessage { Kind = RadioMessageKind.Hello }); }
                 ProcessDownload(realtime);
             }
             if (realtime >= nextMaintenance) { nextMaintenance = realtime + 5; Maintain(realtime); }
@@ -157,6 +171,7 @@ namespace ValheimModPack.NordicRadio
         public void ResetSession()
         {
             generation++;
+            bulk.Reset(); pendingLibraries.Clear(); libraryRetryAt.Clear();
             if (active != null) { active.Dispose(); active = null; }
             tracks.Clear(); sources.Clear(); states.Clear(); watched.Clear(); subscribers.Clear(); chunkRequests.Clear(); chunkOrder.Clear();
             scheduledUploads.Clear();
@@ -166,7 +181,7 @@ namespace ValheimModPack.NordicRadio
             sessionRpc = null; sessionWorld = 0; sessionServer = 0; libraryStatus = ""; clockSet = false; needsScan = false;
         }
 
-        public void Dispose() { if (disposed) return; disposed = true; ResetSession(); lock (completions) completions.Clear(); }
+        public void Dispose() { if (disposed) return; disposed = true; ResetSession(); bulk.Dispose(); lock (completions) completions.Clear(); }
 
         public void RefreshLibrary()
         {
@@ -310,16 +325,38 @@ namespace ValheimModPack.NordicRadio
         private TrackInfo FindTrack(string id) { foreach (TrackInfo track in tracks) if (track.Id == id) return track; return null; }
         private static RadioMessage Key(RadioMessageKind kind, ZDOID id) { return new RadioMessage { Kind = kind, Owner = id.UserID, Object = id.ID }; }
 
-        private void Send(long peer, RadioMessage message)
+        private static bool UsesBulk(RadioMessageKind kind)
         {
-            if (disposed || ZRoutedRpc.instance == null || peer == 0) return;
-            try { ZRoutedRpc.instance.InvokeRoutedRPC(peer, RadioProtocol.RpcName, new ZPackage(RadioProtocol.Encode(message))); }
+            return kind == RadioMessageKind.Library || kind == RadioMessageKind.Chunk
+                || kind == RadioMessageKind.ChunkRequest || kind == RadioMessageKind.Error;
+        }
+
+        private bool Send(long peer, RadioMessage message)
+        {
+            if (disposed || sessionRpc == null || peer == 0) return false;
+            try
+            {
+                byte[] data = RadioProtocol.Encode(message);
+                if (UsesBulk(message.Kind)) return bulk.TrySend(peer, data, maxQueuedKiB * 1024);
+                if (data.Length > 1024) throw new InvalidDataException("Oversized radio control packet");
+                sessionRpc.InvokeRoutedRPC(peer, RadioProtocol.RpcName, new ZPackage(data)); return true;
+            }
             catch (Exception exception) { LogError(exception); }
+            return false;
         }
 
         private void OnMessage(long sender, ZPackage package)
         {
-            if (disposed || sessionRpc == null || package == null || package.Size() > RadioProtocol.MaxPacket) return;
+            if (package == null || package.Size() > 1024) return;
+            ReceiveMessage(sender, package.GetArray(), false);
+        }
+
+        private void OnBulkMessage(long sender, byte[] data) { ReceiveMessage(sender, data, true); }
+
+        private void ReceiveMessage(long sender, byte[] data, bool isBulk)
+        {
+            if (disposed || sessionRpc == null || data == null || data.Length < 2 || data.Length > RadioProtocol.MaxPacket
+                || UsesBulk((RadioMessageKind)data[1]) != isBulk) return;
             try
             {
                 if (IsHost)
@@ -329,10 +366,10 @@ namespace ValheimModPack.NordicRadio
                     RadioTokenBucket budget;
                     if (!peerBudgets.TryGetValue(sender, out budget)) { if (peerBudgets.Count >= 64) return; peerBudgets.Add(sender, budget = new RadioTokenBucket(80, 100)); }
                     if (!budget.Take(1, Realtime)) return;
-                    HandleHost(sender, RadioProtocol.Decode(package.GetArray()));
+                    HandleHost(sender, RadioProtocol.Decode(data));
                 }
                 else if (sender == sessionServer && ZNet.instance.GetServerPeer() != null && ZNet.instance.GetServerPeer().m_uid == sender)
-                    HandleClient(RadioProtocol.Decode(package.GetArray()));
+                    HandleClient(RadioProtocol.Decode(data));
             }
             catch (Exception exception) { LogError(exception); }
         }
@@ -507,6 +544,8 @@ namespace ValheimModPack.NordicRadio
                 if (watched.ContainsKey(id) && (!states.TryGetValue(id, out previous) || message.State.Revision >= previous.Revision || (previous.Revision == Int32.MaxValue && message.State.Revision == 0)))
                 {
                     states[id] = message.State;
+                    if (message.State.TrackId.Length > 0 && FindTrack(message.State.TrackId) == null)
+                    { receivedLibrary = false; nextHello = Math.Min(nextHello, Realtime + 1); }
                     // Begin fetching while approaching a subscribed playing source, before its 150 m audio boundary.
                     if (message.State.Playing) RequestTrack(message.State.TrackId);
                 }
@@ -515,7 +554,24 @@ namespace ValheimModPack.NordicRadio
             else if (message.Kind == RadioMessageKind.Error && active != null && message.Id == active.Track.Id) FailDownload(message.Command);
         }
 
-        private void SendLibrary(long peer) { Send(peer, new RadioMessage { Kind = RadioMessageKind.Library, Tracks = new List<TrackInfo>(tracks) }); }
+        private void SendLibrary(long peer) { if (pendingLibraries.Count < 64) pendingLibraries.Add(peer); }
+        private void FlushLibraries()
+        {
+            int attempts = 0;
+            foreach (long uid in new List<long>(pendingLibraries))
+            {
+                ZNetPeer peer = ZNet.instance.GetPeer(uid);
+                if (peer == null || !peer.IsReady()) { pendingLibraries.Remove(uid); libraryRetryAt.Remove(uid); continue; }
+                double retry;
+                if (libraryRetryAt.TryGetValue(uid, out retry) && Realtime < retry) continue;
+                libraryRetryAt[uid] = Realtime + 1;
+                if (Send(uid, new RadioMessage { Kind = RadioMessageKind.Library, Tracks = new List<TrackInfo>(tracks) }))
+                { pendingLibraries.Remove(uid); libraryRetryAt.Remove(uid); }
+                // Bound failed attempts too: an unavailable peer must not cause
+                // a large playlist to be re-encoded every frame or starve peers.
+                if (++attempts >= 2) break;
+            }
+        }
         private void BroadcastLibrary()
         {
             if (ZNet.instance == null) return;
@@ -561,18 +617,16 @@ namespace ValheimModPack.NordicRadio
                 { chunkRequests.Remove(peer); continue; }
                 if (!HasNearbyWatch(peer)) { chunkRequests.Remove(peer); continue; }
                 if (scheduledUploads.Add(peer)) chunkOrder.Enqueue(peer);
-                ZNetPeer connection = ZNet.instance.GetPeer(peer);
-                // This is the native queue INCLUDING outstanding reliable bytes. Do not alter the game's global rate.
-                if (connection == null || connection.m_socket == null
-                    || connection.m_socket.GetSendQueueSize() + RadioProtocol.ChunkSize + 256 > maxQueuedKiB * 1024) continue;
                 if (pending.Ready != null && sent < 3)
                 {
                     RadioMessage reply = pending.Ready;
                     // End this rotation when the global budget is spent, so the same first peers cannot starve others.
-                    if (!upload.Take((reply.Data == null ? 0 : reply.Data.Length) + 256, realtime)) break;
+                    int cost = (reply.Data == null ? 0 : reply.Data.Length) + 256;
+                    if (!upload.Take(cost, realtime)) break;
+                    if (!Send(peer, reply)) { upload.Refund(cost); continue; }
                     pending.Ready = null; pending.Offsets.Remove(reply.Offset);
                     if (reply.Kind == RadioMessageKind.Error) { pending.Requests.Clear(); pending.Offsets.Clear(); }
-                    Send(peer, reply); sent++;
+                    sent++;
                 }
                 if (pending.Reading || pending.Ready != null || pending.Requests.Count == 0 || uploadWorkers >= 8) continue;
                 RadioMessage request = pending.Requests.Dequeue();
@@ -617,9 +671,9 @@ namespace ValheimModPack.NordicRadio
             }
             if (active != null)
             {
-                if (realtime - active.LastProgress > 10 && active.Requested.Count > 0)
+                if (realtime - active.LastProgress > 10 && !active.Writing)
                 {
-                    if (++active.Retries > 3) FailDownload("Host did not send music (move closer and retry)");
+                    if (++active.Retries > 3) FailDownload("Steam music channel unavailable (move closer or reconnect)");
                     else
                     {
                         active.LastProgress = realtime;
@@ -696,9 +750,10 @@ namespace ValheimModPack.NordicRadio
             if (active == null) return;
             while (active.NextRequest < active.Track.Size && active.NextRequest - active.Offset < (long)downloadWindow * RadioProtocol.ChunkSize)
             {
-                long offset = active.NextRequest; active.NextRequest += RadioProtocol.ChunkSize;
+                long offset = active.NextRequest;
+                if (!Send(sessionServer, new RadioMessage { Kind = RadioMessageKind.ChunkRequest, Id = active.Track.Id, Offset = offset })) break;
+                active.NextRequest += RadioProtocol.ChunkSize;
                 active.Requested.Add(offset, Realtime);
-                Send(sessionServer, new RadioMessage { Kind = RadioMessageKind.ChunkRequest, Id = active.Track.Id, Offset = offset });
             }
             double rate = active.Offset / Math.Max(0.5, Realtime - active.StartedAt) / 1024;
             statuses[active.Track.Id] = "Downloading " + (active.Offset * 100 / active.Track.Size) + "% (" + ((int)rate) + " KiB/s)";

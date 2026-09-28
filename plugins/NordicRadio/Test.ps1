@@ -18,6 +18,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Audio gain tests compilation failed' }
 if ($LASTEXITCODE -ne 0) { throw 'Audio gain tests failed' }
 & (Join-Path $PSScriptRoot 'Test-MusicDucking.ps1') -GameDirectory $GameDirectory
 & (Join-Path $PSScriptRoot 'Test-Network.ps1')
+& (Join-Path $PSScriptRoot 'Test-SteamTransport.ps1')
 & (Join-Path $PSScriptRoot 'Test-Portable.ps1')
 & (Join-Path $PSScriptRoot 'Build.ps1') -GameDirectory $GameDirectory -OutputFile (Join-Path $out 'NordicRadio.dll')
 & (Join-Path $PSScriptRoot 'Test-UI.ps1') -GameDirectory $GameDirectory

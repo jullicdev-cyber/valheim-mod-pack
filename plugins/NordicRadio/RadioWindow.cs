@@ -242,9 +242,11 @@ namespace ValheimModPack.NordicRadio
             string libraryStatus = plugin.Service.LibraryStatus ?? "";
             bool scanning = libraryStatus.StartsWith("Scanning MP3", StringComparison.Ordinal);
             bool scanFailed = libraryStatus.StartsWith("MP3 scan failed:", StringComparison.Ordinal);
+            bool networkStatus = libraryStatus.StartsWith("Connecting Steam", StringComparison.Ordinal)
+                || libraryStatus.StartsWith("Steam music channel unavailable", StringComparison.Ordinal);
             if (count == 0)
             {
-                if (scanning || scanFailed) detail = LocalStatus(libraryStatus, russian);
+                if (scanning || scanFailed || networkStatus) detail = LocalStatus(libraryStatus, russian);
                 else detail = ZNet.instance.IsServer() ? T("Добавьте MP3 в NordicRadio/Music и нажмите «Обновить»", "Add MP3 files to NordicRadio/Music, then Rescan")
                     : T("Ожидание списка музыки от хоста", "Waiting for the host's music library");
             }
@@ -364,6 +366,9 @@ namespace ValheimModPack.NordicRadio
             if (value == "Queued") return "В очереди";
             if (value == "Checking cache") return "Проверка кэша";
             if (value == "Waiting for music") return "Ожидание музыки";
+            if (value.StartsWith("Connecting Steam", StringComparison.Ordinal)) return "Подключение канала музыки Steam...";
+            if (value.StartsWith("Steam music channel unavailable", StringComparison.Ordinal)) return "Музыка недоступна: проверьте версии радио и сеть Steam без crossplay; переподключитесь";
+            if (value.StartsWith("Download failed: Steam music channel unavailable", StringComparison.Ordinal)) return "Музыка не загружается: подойдите ближе или переподключитесь";
             if (value.StartsWith("Scanning MP3", StringComparison.Ordinal)) return "Сканирование MP3...";
             if (value.StartsWith("Downloading ", StringComparison.Ordinal)) return "Загрузка " + value.Substring("Downloading ".Length);
             if (value.StartsWith("Download failed: ", StringComparison.Ordinal)) return "Ошибка загрузки: " + value.Substring("Download failed: ".Length);

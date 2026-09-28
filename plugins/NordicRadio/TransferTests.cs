@@ -7,7 +7,7 @@ using ValheimModPack.NordicRadio;
 internal static partial class NetworkTests
 {
     private static double transferDelay;
-    private static int chunkPackets, requestPackets, maximumQueued;
+    private static int chunkPackets, requestPackets, maximumQueued, gameplayMusicPackets;
     private static bool disorder;
     private static readonly HashSet<long> musicRecipients=new HashSet<long>();
     private static readonly Queue<Delivery> acknowledgements=new Queue<Delivery>();
@@ -16,14 +16,15 @@ internal static partial class NetworkTests
         RadioMessage message=RadioProtocol.Decode(package.GetArray());
         double delay=transferDelay;
         if(message.Kind==RadioMessageKind.ChunkRequest) requestPackets++;
-        TestSocket socket=null;
+        Node origin=nodes.Find(n=>n.Net.Uid==sender);
+        TestSocket socket=name=="bulk"?origin.Bulk.Queue(target):origin.Net.GetPeer(target).m_socket;
+        socket.Pending+=package.Size()+(name=="bulk"?RadioBulkFrame.HeaderSize:0);
+        if(name=="bulk") maximumQueued=Math.Max(maximumQueued,socket.Pending);
         if(message.Kind==RadioMessageKind.Chunk)
         {
+            if(name!="bulk")gameplayMusicPackets++;
             chunkPackets++;
             musicRecipients.Add(target);
-            Node origin=nodes.Find(n=>n.Net.Uid==sender);
-            ZNetPeer peer=origin.Net.GetPeer(target); socket=peer.m_socket;
-            socket.Pending+=package.Size(); maximumQueued=Math.Max(maximumQueued,socket.Pending);
             if(disorder && message.Offset==0) delay+=0.15;
             if(disorder && message.Offset==RadioProtocol.ChunkSize)
                 wire.Enqueue(new Delivery{Sender=sender,Target=target,Name=name,Package=package,Due=UnityEngine.Time.realtimeSinceStartup+delay+0.1});
@@ -34,16 +35,19 @@ internal static partial class NetworkTests
     {
         double serial=TransferRun(Path.Combine(root,"serial"),1,false,false,false);
         double pipelined=TransferRun(Path.Combine(root,"pipeline"),4,false,true,false);
+        double wide=TransferRun(Path.Combine(root,"wide"),8,false,false,false);
         Check(pipelined < serial*0.65,"windowed transfer improves high-latency download time");
-        Console.WriteLine("Simulated 300 ms RTT, 3.3 MiB: window1="+serial.ToString("F2")+"s; window4="+pipelined.ToString("F2")+"s (not a real Steam bandwidth measurement).");
+        Check(wide < pipelined*0.8,"eight-block window reduces round-trip waiting further");
+        Console.WriteLine("Simulated 300 ms RTT, 3.6 MiB: window1="+serial.ToString("F2")+"s; window4="+pipelined.ToString("F2")+"s; window8="+wide.ToString("F2")+"s (not a real Steam bandwidth measurement).");
         TransferRun(Path.Combine(root,"local"),4,true,false,false);
         TransferRun(Path.Combine(root,"congestion"),4,false,false,true);
+        TransferRun(Path.Combine(root,"blocked-channel"),8,false,false,false,true);
         WriterFailures(Path.Combine(root,"writer"));
     }
-    private static double TransferRun(string root,int window,bool local,bool reordered,bool congestion)
+    private static double TransferRun(string root,int window,bool local,bool reordered,bool congestion,bool blockedChannel=false)
     {
         nodes.Clear(); wire.Clear(); acknowledgements.Clear(); transferDelay=0.15;
-        chunkPackets=requestPackets=maximumQueued=0; disorder=reordered;
+        chunkPackets=requestPackets=maximumQueued=gameplayMusicPackets=0; disorder=reordered;
         var objects=new ZDOMan(); var radio=new ZDOID(1,1);
         objects.Objects[radio]=new ZDO{Prefab="vmp_skald_horn".GetStableHashCode()};
         for(int i=0;i<2;i++)
@@ -54,7 +58,7 @@ internal static partial class NetworkTests
             string data=Path.Combine(root,"node"+uid); Directory.CreateDirectory(Path.Combine(data,"Music"));
             if(i==0) WriteMp3(Path.Combine(data,"Music","song.mp3"),8000,true);
             else if(local) File.Copy(Path.Combine(root,"node1","Music","song.mp3"),Path.Combine(data,"Music","another name.mp3"));
-            Select(node); node.Service=new RadioService(null,data,Console.WriteLine); node.Service.DownloadWindow=window; nodes.Add(node);
+            Select(node); node.Bulk=new TestBulk(node); node.Service=new RadioService(null,data,Console.WriteLine,node.Bulk); node.Service.DownloadWindow=window; nodes.Add(node);
         }
         Node host=nodes[0],client=nodes[1];
         host.Net.Peers.Add(new ZNetPeer{m_uid=2,m_characterID=new ZDOID(2,100)});
@@ -63,7 +67,9 @@ internal static partial class NetworkTests
         string id=host.Service.Tracks[0].Id;
         Select(client); client.Service.Watch(radio); Pump(24);
         if(congestion) host.Net.Peers[0].m_socket.Pending=256*1024;
+        if(blockedChannel) client.Bulk.Available=false;
         double start=UnityEngine.Time.realtimeSinceStartup;
+        int blockedBefore=worldBlockedTicks;
         for(int tick=0;tick<5000;tick++)
         {
             if(congestion && tick==0) client.Service.DownloadEnabled=false;
@@ -77,19 +83,31 @@ internal static partial class NetworkTests
                 Select(client); Check(client.Service.GetState(radio).Playing,"control messages continue while file transfer pauses");
                 host.Net.Peers[0].m_socket.Pending=0;
             }
+            if(blockedChannel && tick==80)
+            {
+                Check(requestPackets==0,"rejected bulk requests do not silently become outstanding requests");
+                client.Bulk.Available=true;host.Bulk.Available=false;
+            }
+            if(blockedChannel && tick==160)
+            {
+                Check(requestPackets>0 && chunkPackets==0,"blocked upload retains ready data for retry");
+                host.Bulk.Available=true;
+            }
             Pump(1); Select(client);
             if(client.Service.GetTrackPath(id)!=null) break;
         }
         double elapsed=UnityEngine.Time.realtimeSinceStartup-start;
         Select(client); string path=client.Service.GetTrackPath(id);
         Check(path!=null && RadioLibrary.HashFile(path)==id,"completed exact verified bytes with window "+window);
+        if(!congestion) Check(worldBlockedTicks==blockedBefore,"music never exhausts the native world-update queue budget");
+        Check(gameplayMusicPackets==0,"MP3 bytes only use the separate music connection");
         if(local)
         {
             Check(chunkPackets==0 && requestPackets==0,"pre-shared MP3 requires no music transfer");
             Check(Path.GetFileName(path)=="another name.mp3","local music matched by bytes, not title");
             Check(Directory.GetFiles(Path.Combine(root,"node2","Cache"),"*.mp3").Length==0,"local MP3 not duplicated in cache");
         }
-        else Check(maximumQueued <= host.Service.MaxQueuedKiB*1024,"native queue limit including unacknowledged bytes respected");
+        else Check(maximumQueued <= host.Service.MaxQueuedKiB*1024,"separate music queue limit including unacknowledged bytes respected");
         int previous=chunkPackets;
         for(int tick=0;tick<100;tick++){Select(client);client.Service.Watch(radio);client.Service.RequestTrack(id);Pump(1);}
         Check(chunkPackets==previous,"completed cached song is not downloaded again");

@@ -14,7 +14,7 @@ namespace ValheimModPack.NordicRadio
     public sealed class Plugin : BaseUnityPlugin
     {
         public const string Id = "valheimmodpack.nordicradio";
-        public const string Version = "1.2.2";
+        public const string Version = "1.3.0";
         public static Plugin Instance { get; private set; }
         public RadioService Service { get; private set; }
         public string DataRoot { get; private set; }
@@ -57,8 +57,8 @@ namespace ValheimModPack.NordicRadio
                 amplification = Config.Bind("Audio", "Amplification", 1f, new ConfigDescription("Local signal gain before spatial attenuation and game effects volume. 1 leaves the signal unchanged; higher values amplify and gently limit peaks.", new AcceptableValueRange<float>(1, 6)));
                 backgroundMusicVolume = Config.Bind("Audio", "BackgroundMusicVolume", 0.2f, new ConfigDescription("Fraction of normal Valheim music volume near an audible horn. 1 disables ducking; original music settings are preserved.", new AcceptableValueRange<float>(0, 1)));
                 uploadRate = Config.Bind("Network", "UploadKiBPerSecond", 1024, new ConfigDescription("Host total music upload cap shared by all peers. Lower if gameplay lags while downloading.", new AcceptableValueRange<int>(64, 4096)));
-                downloadWindow = Config.Bind("Network", "DownloadWindow", 4, new ConfigDescription("Number of MP3 blocks requested concurrently. Reduces round-trip waits; buffers at most this many 24 KiB blocks.", new AcceptableValueRange<int>(1, 8)));
-                maxQueuedKiB = Config.Bind("Network", "MaxQueuedKiB", 96, new ConfigDescription("Host pauses music packets when the peer's native send queue including unacknowledged data would exceed this size. Does not change Valheim's send rate.", new AcceptableValueRange<int>(32, 256)));
+                downloadWindow = Config.Bind("Network", "DownloadWindow", 8, new ConfigDescription("Number of MP3 blocks requested concurrently over the separate Steam music connection. Buffers at most this many 24 KiB blocks.", new AcceptableValueRange<int>(1, 8)));
+                maxQueuedKiB = Config.Bind("Network", "MaxQueuedKiB", 256, new ConfigDescription("Limit for the separate Steam music queue, including unacknowledged bytes. MP3 data never enters Valheim's gameplay queue. Does not change Valheim's send rate.", new AcceptableValueRange<int>(32, 256)));
                 wood = Config.Bind("Recipe", "FineWood", 20, new ConfigDescription("Fine wood required (restart game after changing recipe; keep equal on all peers).", new AcceptableValueRange<int>(1, 100)));
                 bronze = Config.Bind("Recipe", "Bronze", 5, new ConfigDescription("Bronze required.", new AcceptableValueRange<int>(1, 100)));
                 leather = Config.Bind("Recipe", "LeatherScraps", 4, new ConfigDescription("Leather scraps required.", new AcceptableValueRange<int>(1, 100)));
@@ -66,7 +66,8 @@ namespace ValheimModPack.NordicRadio
                 DataRoot = Path.Combine(BepInEx.Paths.GameRootPath, "NordicRadio");
                 Directory.CreateDirectory(Path.Combine(DataRoot, "Music"));
                 Directory.CreateDirectory(Path.Combine(DataRoot, "Cache"));
-                Service = new RadioService(this, DataRoot, message => Logger.LogInfo(message));
+                Service = new RadioService(this, DataRoot, message => Logger.LogInfo(message),
+                    new SteamRadioTransport(message => Logger.LogWarning(message)));
                 window = new RadioWindow(this);
                 musicDucking = new MusicDucking();
                 Portable = new PortableController(this);
