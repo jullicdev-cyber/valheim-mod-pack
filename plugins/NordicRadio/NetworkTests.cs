@@ -4,7 +4,7 @@ using System.IO;
 using System.Threading;
 using ValheimModPack.NordicRadio;
 
-internal static class NetworkTests
+internal static partial class NetworkTests
 {
     private static int assertions;
     private static readonly string A=new string('a',64), B=new string('b',64), C=new string('c',64);
@@ -15,7 +15,8 @@ internal static class NetworkTests
     {
         string root=Path.Combine(Path.GetTempPath(),"NordicRadio-tests-"+Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
-        Protocol(); Library(root); Network(root);
+        ThreadPool.SetMinThreads(16,16);
+        Protocol(); Library(root); Network(root); Transfers(root);
         Console.WriteLine("PASS: "+assertions+" NordicRadio protocol, library, state, rate and simulated multiplayer assertions.");
         Console.WriteLine("Fixtures retained: "+root);
     }
@@ -101,7 +102,7 @@ internal static class NetworkTests
     {
         public ZNet Net; public ZRoutedRpc Rpc; public RadioService Service; public Player Player; public ZDOMan Objects;
     }
-    private sealed class Delivery { public long Sender,Target; public string Name; public ZPackage Package; }
+    private sealed class Delivery { public long Sender,Target; public string Name; public ZPackage Package; public double Due; public TestSocket Socket; }
     private static readonly List<Node> nodes=new List<Node>();
     private static readonly Queue<Delivery> wire=new Queue<Delivery>();
     private static void Select(Node node) { ZNet.instance=node.Net; ZRoutedRpc.instance=node.Rpc; ZDOMan.instance=node.Objects; Player.m_localPlayer=node.Player; }
@@ -114,8 +115,16 @@ internal static class NetworkTests
             for(int j=wire.Count;j>0;j--)
             {
                 Delivery packet=wire.Dequeue(); Node target=nodes.Find(n=>n.Net.Uid==packet.Target);
+                if(packet.Due>UnityEngine.Time.realtimeSinceStartup) { wire.Enqueue(packet); continue; }
+                if(packet.Socket!=null) acknowledgements.Enqueue(new Delivery {Socket=packet.Socket,Package=packet.Package,Due=UnityEngine.Time.realtimeSinceStartup+transferDelay});
                 if(target==null) continue; Select(target); Action<long,ZPackage> receiver;
                 if(target.Rpc.Methods.TryGetValue(packet.Name,out receiver)) receiver(packet.Sender,packet.Package);
+            }
+            for(int j=acknowledgements.Count;j>0;j--)
+            {
+                Delivery ack=acknowledgements.Dequeue();
+                if(ack.Due>UnityEngine.Time.realtimeSinceStartup) acknowledgements.Enqueue(ack);
+                else ack.Socket.Pending-=ack.Package.Size();
             }
             Thread.Sleep(1);
         }
@@ -129,12 +138,13 @@ internal static class NetworkTests
             long uid=i+1; var node=new Node { Net=new ZNet {Uid=uid,Host=i==0},Rpc=new ZRoutedRpc(),Player=new Player(),Objects=objects };
             var characterId = new ZDOID(uid,100);
             objects.Objects[characterId]=node.Player.Character=new ZDO { m_uid=characterId };
-            node.Rpc.Transport=(peer,name,package)=>wire.Enqueue(new Delivery{Sender=uid,Target=peer,Name=name,Package=package});
+            node.Rpc.Transport=(peer,name,package)=>QueuePacket(uid,peer,name,package);
             string data=Path.Combine(root,"node"+uid); Directory.CreateDirectory(Path.Combine(data,"Music"));
             if(i==0) WriteMp3(Path.Combine(data,"Music","Host song.mp3"),1000,true);
             Select(node); node.Service=new RadioService(null,data,Console.WriteLine); nodes.Add(node);
         }
         Node host=nodes[0];
+        musicRecipients.Clear();
         for(int i=1;i<nodes.Count;i++)
         {
             host.Net.Peers.Add(new ZNetPeer {m_uid=nodes[i].Net.Uid,m_characterID=new ZDOID(nodes[i].Net.Uid,100)});
@@ -170,6 +180,7 @@ internal static class NetworkTests
         {
             foreach(Node node in nodes) { Select(node); node.Service.Watch(radio); node.Service.RequestTrack(id); }
             Pump(1);
+            if(round==100) Check(musicRecipients.Count==7,"all seven listeners get upload turns while transfers are active");
         }
         for(int i=1;i<8;i++)
         {

@@ -19,8 +19,9 @@ namespace ValheimModPack.NordicRadio
         private readonly Dictionary<ZDOID, PortableLease> portables = new Dictionary<ZDOID, PortableLease>();
         private readonly Dictionary<ZDOID, double> watched = new Dictionary<ZDOID, double>();
         private readonly Dictionary<long, Dictionary<ZDOID, double>> subscribers = new Dictionary<long, Dictionary<ZDOID, double>>();
-        private readonly Dictionary<long, RadioMessage> chunkRequests = new Dictionary<long, RadioMessage>();
+        private readonly Dictionary<long, UploadQueue> chunkRequests = new Dictionary<long, UploadQueue>();
         private readonly Queue<long> chunkOrder = new Queue<long>();
+        private readonly HashSet<long> scheduledUploads = new HashSet<long>();
         private readonly Dictionary<long, double> greetings = new Dictionary<long, double>();
         private readonly Dictionary<long, RadioTokenBucket> peerBudgets = new Dictionary<long, RadioTokenBucket>();
         private readonly List<string> downloads = new List<string>();
@@ -37,6 +38,7 @@ namespace ValheimModPack.NordicRadio
         private long sessionServer;
         private volatile int generation;
         private int scanning;
+        private int uploadWorkers;
         private volatile bool disposed;
         private bool receivedLibrary;
         private double nextHello;
@@ -62,26 +64,30 @@ namespace ValheimModPack.NordicRadio
             public double Expires;
         }
 
+        private sealed class UploadQueue
+        {
+            public string Id;
+            public readonly Queue<RadioMessage> Requests = new Queue<RadioMessage>();
+            public readonly HashSet<long> Offsets = new HashSet<long>();
+            public bool Reading;
+            public RadioMessage Ready;
+        }
+
         private sealed class Download : IDisposable
         {
             public TrackInfo Track;
-            public string Temporary;
-            public FileStream File;
-            public SHA256 Hash;
+            public RadioDownloadWriter Writer;
+            public readonly Dictionary<long, double> Requested = new Dictionary<long, double>();
+            public readonly Dictionary<long, byte[]> Received = new Dictionary<long, byte[]>();
+            public long NextRequest;
             public long Offset;
-            public double SentAt;
+            public bool Writing;
+            public double StartedAt, LastProgress;
             public int Retries;
             public void Dispose()
             {
-                // A full disk can make flushing Dispose throw as well as Write.
-                // Always clear ownership and still remove the incomplete download.
-                if (File != null)
-                {
-                    FileStream file = File; File = null;
-                    try { file.Dispose(); } catch (IOException) { } catch (UnauthorizedAccessException) { }
-                }
-                if (Hash != null) { Hash.Dispose(); Hash = null; }
-                if (Temporary != null) { try { if (System.IO.File.Exists(Temporary)) System.IO.File.Delete(Temporary); } catch (IOException) { } catch (UnauthorizedAccessException) { } Temporary = null; }
+                if (Writer != null) Writer.Dispose();
+                Requested.Clear(); Received.Clear();
             }
         }
 
@@ -98,6 +104,10 @@ namespace ValheimModPack.NordicRadio
             set { upload.Rate = Math.Max(64, Math.Min(4096, value)) * 1024; }
         }
         public string LibraryStatus { get { return libraryStatus; } }
+        private int downloadWindow = 4, maxQueuedKiB = 96;
+        public int DownloadWindow { get { return downloadWindow; } set { downloadWindow = Math.Max(1, Math.Min(8, value)); } }
+        public int MaxQueuedKiB { get { return maxQueuedKiB; } set { maxQueuedKiB = Math.Max(32, Math.Min(256, value)); } }
+        public bool DownloadEnabled = true;
         public IList<TrackInfo> Tracks { get { return tracks.AsReadOnly(); } }
         private static double Realtime { get { return Time.realtimeSinceStartup; } }
         private static double Now { get { return ZNet.instance == null ? 0 : ZNet.instance.GetTimeSeconds(); } }
@@ -149,6 +159,7 @@ namespace ValheimModPack.NordicRadio
             generation++;
             if (active != null) { active.Dispose(); active = null; }
             tracks.Clear(); sources.Clear(); states.Clear(); watched.Clear(); subscribers.Clear(); chunkRequests.Clear(); chunkOrder.Clear();
+            scheduledUploads.Clear();
             portables.Clear(); localPortable = new ZDOID(); localPortableToken = ""; nextPortablePresence = 0;
             greetings.Clear(); peerBudgets.Clear(); downloads.Clear(); waiting.Clear(); wanted.Clear(); prefetched.Clear(); statuses.Clear(); retryAfter.Clear();
             checkingCache = false; receivedLibrary = false; nextHello = 0; nextState = 0; nextMaintenance = 0;
@@ -252,7 +263,7 @@ namespace ValheimModPack.NordicRadio
 
         public void RequestTrack(string id)
         {
-            if (disposed || IsHost || !RadioProtocol.ValidId(id) || FindTrack(id) == null) return;
+            if (disposed || IsHost || !DownloadEnabled || !RadioProtocol.ValidId(id) || FindTrack(id) == null) return;
             double now = Realtime;
             wanted[id] = now;
             QueueDownload(id);
@@ -434,12 +445,16 @@ namespace ValheimModPack.NordicRadio
             {
                 LibraryEntry entry;
                 if (!sources.TryGetValue(message.Id, out entry) || message.Offset >= entry.Track.Size || !HasNearbyWatch(sender)) return;
-                if (!chunkRequests.ContainsKey(sender))
+                UploadQueue pending;
+                if (!chunkRequests.TryGetValue(sender, out pending))
                 {
                     if (chunkRequests.Count >= 64) return;
-                    chunkOrder.Enqueue(sender);
+                    pending = new UploadQueue { Id = message.Id }; chunkRequests.Add(sender, pending);
+                    if (scheduledUploads.Add(sender)) chunkOrder.Enqueue(sender);
                 }
-                chunkRequests[sender] = message; return;
+                else if (pending.Id != message.Id) chunkRequests[sender] = pending = new UploadQueue { Id = message.Id };
+                if (pending.Offsets.Count >= 8 || !pending.Offsets.Add(message.Offset)) return;
+                pending.Requests.Enqueue(message); return;
             }
             if (message.Kind != RadioMessageKind.Watch && message.Kind != RadioMessageKind.Command) return;
             ZDOID id = new ZDOID(message.Owner, message.Object);
@@ -489,7 +504,12 @@ namespace ValheimModPack.NordicRadio
             {
                 ZDOID id = new ZDOID(message.Owner, message.Object);
                 RadioSnapshot previous;
-                if (watched.ContainsKey(id) && (!states.TryGetValue(id, out previous) || message.State.Revision >= previous.Revision || (previous.Revision == Int32.MaxValue && message.State.Revision == 0))) states[id] = message.State;
+                if (watched.ContainsKey(id) && (!states.TryGetValue(id, out previous) || message.State.Revision >= previous.Revision || (previous.Revision == Int32.MaxValue && message.State.Revision == 0)))
+                {
+                    states[id] = message.State;
+                    // Begin fetching while approaching a subscribed playing source, before its 150 m audio boundary.
+                    if (message.State.Playing) RequestTrack(message.State.TrackId);
+                }
             }
             else if (message.Kind == RadioMessageKind.Chunk) ReceiveChunk(message);
             else if (message.Kind == RadioMessageKind.Error && active != null && message.Id == active.Track.Id) FailDownload(message.Command);
@@ -530,31 +550,54 @@ namespace ValheimModPack.NordicRadio
 
         private void ServeChunks(double realtime)
         {
-            for (int i = 0; i < 3 && chunkOrder.Count > 0; i++)
+            int visits = chunkOrder.Count, sent = 0;
+            for (int i = 0; i < visits && sent < 3 && chunkOrder.Count > 0; i++)
             {
-                long peer = chunkOrder.Peek();
-                RadioMessage request;
-                if (!chunkRequests.TryGetValue(peer, out request)) { chunkOrder.Dequeue(); continue; }
-                if (!upload.Take(RadioProtocol.ChunkSize + 128, realtime)) break;
-                chunkOrder.Dequeue(); chunkRequests.Remove(peer);
-                if (!HasNearbyWatch(peer)) continue;
-                LibraryEntry entry;
-                if (!sources.TryGetValue(request.Id, out entry)) continue;
-                try
+                long peer = chunkOrder.Dequeue();
+                scheduledUploads.Remove(peer);
+                UploadQueue pending;
+                if (!chunkRequests.TryGetValue(peer, out pending)) continue;
+                if (!pending.Reading && pending.Ready == null && pending.Requests.Count == 0)
+                { chunkRequests.Remove(peer); continue; }
+                if (!HasNearbyWatch(peer)) { chunkRequests.Remove(peer); continue; }
+                if (scheduledUploads.Add(peer)) chunkOrder.Enqueue(peer);
+                ZNetPeer connection = ZNet.instance.GetPeer(peer);
+                // This is the native queue INCLUDING outstanding reliable bytes. Do not alter the game's global rate.
+                if (connection == null || connection.m_socket == null
+                    || connection.m_socket.GetSendQueueSize() + RadioProtocol.ChunkSize + 256 > maxQueuedKiB * 1024) continue;
+                if (pending.Ready != null && sent < 3)
                 {
-                    string path = GetTrackPath(request.Id);
-                    if (path == null) throw new IOException("Host file changed; refresh the playlist");
-                    int length = (int)Math.Min(RadioProtocol.ChunkSize, entry.Track.Size - request.Offset);
-                    byte[] data = new byte[length];
-                    using (var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
-                    {
-                        file.Position = request.Offset;
-                        int read = 0;
-                        while (read < length) { int part = file.Read(data, read, length - read); if (part == 0) throw new EndOfStreamException(); read += part; }
-                    }
-                    Send(peer, new RadioMessage { Kind = RadioMessageKind.Chunk, Id = request.Id, Offset = request.Offset, Data = data });
+                    RadioMessage reply = pending.Ready;
+                    // End this rotation when the global budget is spent, so the same first peers cannot starve others.
+                    if (!upload.Take((reply.Data == null ? 0 : reply.Data.Length) + 256, realtime)) break;
+                    pending.Ready = null; pending.Offsets.Remove(reply.Offset);
+                    if (reply.Kind == RadioMessageKind.Error) { pending.Requests.Clear(); pending.Offsets.Clear(); }
+                    Send(peer, reply); sent++;
                 }
-                catch (Exception exception) { Send(peer, new RadioMessage { Kind = RadioMessageKind.Error, Id = request.Id, Command = "Host MP3 unavailable; refresh the playlist" }); LogError(exception); }
+                if (pending.Reading || pending.Ready != null || pending.Requests.Count == 0 || uploadWorkers >= 8) continue;
+                RadioMessage request = pending.Requests.Dequeue();
+                LibraryEntry entry;
+                if (!sources.TryGetValue(request.Id, out entry)) { pending.Offsets.Remove(request.Offset); continue; }
+                pending.Reading = true;
+                Interlocked.Increment(ref uploadWorkers);
+                int expectedGeneration = generation;
+                ThreadPool.QueueUserWorkItem(delegate
+                {
+                    byte[] bytes = null; Exception failure = null;
+                    try { bytes = RadioTransfer.ReadChunk(entry, request.Offset); }
+                    catch (Exception error) { failure = error; }
+                    finally { Interlocked.Decrement(ref uploadWorkers); }
+                    Post(delegate
+                    {
+                        UploadQueue current;
+                        if (expectedGeneration != generation || !chunkRequests.TryGetValue(peer, out current) || !ReferenceEquals(current, pending)) return;
+                        pending.Reading = false;
+                        pending.Ready = failure == null
+                            ? new RadioMessage { Kind = RadioMessageKind.Chunk, Id = request.Id, Offset = request.Offset, Data = bytes }
+                            : new RadioMessage { Kind = RadioMessageKind.Error, Id = request.Id, Offset = request.Offset, Command = "Host MP3 unavailable; refresh the playlist" };
+                        if (failure != null) LogError(failure);
+                    });
+                });
             }
         }
 
@@ -574,11 +617,20 @@ namespace ValheimModPack.NordicRadio
             }
             if (active != null)
             {
-                if (realtime - active.SentAt > 10)
+                if (realtime - active.LastProgress > 10 && active.Requested.Count > 0)
                 {
                     if (++active.Retries > 3) FailDownload("Host did not send music (move closer and retry)");
-                    else AskChunk();
+                    else
+                    {
+                        active.LastProgress = realtime;
+                        foreach (long offset in new List<long>(active.Requested.Keys))
+                        {
+                            active.Requested[offset] = realtime;
+                            Send(sessionServer, new RadioMessage { Kind = RadioMessageKind.ChunkRequest, Id = active.Track.Id, Offset = offset });
+                        }
+                    }
                 }
+                if (active != null) { WriteReceived(); FillWindow(); }
                 return;
             }
             if (checkingCache || downloads.Count == 0) return;
@@ -589,10 +641,13 @@ namespace ValheimModPack.NordicRadio
             if (track == null) { waiting.Remove(id); return; }
             checkingCache = true; statuses[id] = "Checking cache";
             int expected = generation;
+            var protectedIds = new HashSet<string>(StringComparer.Ordinal);
+            foreach (RadioSnapshot state in states.Values) if (!String.IsNullOrEmpty(state.TrackId)) protectedIds.Add(state.TrackId);
             ThreadPool.QueueUserWorkItem(delegate
             {
                 string cached = null; string error = null;
-                try { cached = library.ValidateCache(track); } catch (Exception exception) { error = exception.Message; }
+                try { cached = library.ValidateCache(track) ?? library.FindLocalTrack(track, delegate { return disposed || expected != generation; }); }
+                catch (Exception exception) { error = exception.Message; }
                 Post(delegate
                 {
                     if (expected != generation) return;
@@ -602,13 +657,8 @@ namespace ValheimModPack.NordicRadio
                     try
                     {
                         if (FindTrack(id) == null || (!Wanted(id, Realtime, false) && !Wanted(id, Realtime, true))) { waiting.Remove(id); return; }
-                        var protectedIds = new HashSet<string>(StringComparer.Ordinal);
-                        foreach (RadioSnapshot state in states.Values) if (!String.IsNullOrEmpty(state.TrackId)) protectedIds.Add(state.TrackId);
-                        string temporary = library.BeginDownload(track, protectedIds);
-                        var download = new Download { Track = track, Temporary = temporary };
-                        try { download.File = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 65536); download.Hash = SHA256.Create(); }
-                        catch { download.Dispose(); throw; }
-                        active = download; AskChunk();
+                        active = new Download { Track = track, Writer = new RadioDownloadWriter(library, track, protectedIds), StartedAt = Realtime, LastProgress = Realtime };
+                        FillWindow();
                     }
                     catch (Exception exception) { waiting.Remove(id); statuses[id] = "Download failed: " + exception.Message; retryAfter[id] = Realtime + 30; LogError(exception); }
                 });
@@ -641,32 +691,62 @@ namespace ValheimModPack.NordicRadio
             else if (elapsed >= 1) { clockGame = now; clockReal = realtime; }
         }
 
-        private void AskChunk()
+        private void FillWindow()
         {
             if (active == null) return;
-            active.SentAt = Realtime;
-            Send(sessionServer, new RadioMessage { Kind = RadioMessageKind.ChunkRequest, Id = active.Track.Id, Offset = active.Offset });
-            statuses[active.Track.Id] = "Downloading " + (active.Offset * 100 / active.Track.Size) + "%";
+            while (active.NextRequest < active.Track.Size && active.NextRequest - active.Offset < (long)downloadWindow * RadioProtocol.ChunkSize)
+            {
+                long offset = active.NextRequest; active.NextRequest += RadioProtocol.ChunkSize;
+                active.Requested.Add(offset, Realtime);
+                Send(sessionServer, new RadioMessage { Kind = RadioMessageKind.ChunkRequest, Id = active.Track.Id, Offset = offset });
+            }
+            double rate = active.Offset / Math.Max(0.5, Realtime - active.StartedAt) / 1024;
+            statuses[active.Track.Id] = "Downloading " + (active.Offset * 100 / active.Track.Size) + "% (" + ((int)rate) + " KiB/s)";
         }
 
         private void ReceiveChunk(RadioMessage message)
         {
-            if (active == null || message.Id != active.Track.Id || message.Offset != active.Offset) return;
+            if (active == null || message.Id != active.Track.Id || !active.Requested.ContainsKey(message.Offset)) return;
             try
             {
-                int expected = (int)Math.Min(RadioProtocol.ChunkSize, active.Track.Size - active.Offset);
+                int expected = (int)Math.Min(RadioProtocol.ChunkSize, active.Track.Size - message.Offset);
                 if (message.Data.Length != expected) throw new InvalidDataException("Unexpected MP3 chunk length");
-                active.File.Write(message.Data, 0, message.Data.Length);
-                active.Hash.TransformBlock(message.Data, 0, message.Data.Length, message.Data, 0);
-                active.Offset += message.Data.Length; active.Retries = 0;
-                if (active.Offset < active.Track.Size) { AskChunk(); return; }
-                active.Hash.TransformFinalBlock(new byte[0], 0, 0);
-                if (RadioLibrary.Hex(active.Hash.Hash) != active.Track.Id) throw new InvalidDataException("MP3 checksum mismatch");
-                active.File.Flush(); active.File.Dispose(); active.File = null;
-                library.CommitDownload(active.Track.Id, active.Temporary); active.Temporary = null;
-                string id = active.Track.Id; active.Dispose(); active = null; waiting.Remove(id); retryAfter.Remove(id); statuses[id] = "Ready";
+                active.Requested.Remove(message.Offset); active.Received.Add(message.Offset, message.Data);
+                active.LastProgress = Realtime; active.Retries = 0;
+                WriteReceived();
             }
             catch (Exception exception) { FailDownload(exception.Message); LogError(exception); }
+        }
+
+        private void WriteReceived()
+        {
+            if (active == null || active.Writing || !active.Received.ContainsKey(active.Offset)) return;
+            Download target = active;
+            var blocks = new List<byte[]>(); long end = target.Offset; byte[] block;
+            while (target.Received.TryGetValue(end, out block))
+            { target.Received.Remove(end); blocks.Add(block); end += block.Length; }
+            target.Writing = true;
+            int expectedGeneration = generation;
+            try
+            {
+                target.Writer.Write(target.Offset, blocks.ToArray(), delegate(long offset, bool finished, Exception error)
+                {
+                    Post(delegate
+                    {
+                        if (expectedGeneration != generation || !ReferenceEquals(active, target)) return;
+                        target.Writing = false;
+                        if (error != null) { FailDownload(error.Message); LogError(error); return; }
+                        target.Offset = offset; target.LastProgress = Realtime;
+                        if (finished)
+                        {
+                            string id = target.Track.Id; target.Dispose(); active = null;
+                            waiting.Remove(id); retryAfter.Remove(id); statuses[id] = "Ready";
+                        }
+                        else { WriteReceived(); FillWindow(); }
+                    });
+                });
+            }
+            catch (Exception error) { FailDownload(error.Message); LogError(error); }
         }
 
         private void FailDownload(string reason)

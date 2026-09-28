@@ -55,7 +55,13 @@ public class ZNetView
 public class ZNetPeer
 {
     public long m_uid; public ZDOID m_characterID; public bool Ready=true;
+    public TestSocket m_socket = new TestSocket();
     public bool IsReady() { return Ready; }
+}
+public class TestSocket
+{
+    public int Pending;
+    public int GetSendQueueSize() { return Pending; }
 }
 public class ZNet
 {

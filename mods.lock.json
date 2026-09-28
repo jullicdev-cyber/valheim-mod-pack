@@ -1,5 +1,5 @@
 {
-  "packVersion": "1.13.1",
+  "packVersion": "1.14.0",
   "created": "2026-09-25",
   "targetGameVersion": "1.0.16",
   "packages": [
@@ -287,10 +287,10 @@
     },
     {
       "id": "ValheimModPack-NordicRadio",
-      "version": "1.1.2",
+      "version": "1.2.0",
       "source": "local-plugins/NordicRadio.dll",
       "destination": "BepInEx/plugins/ValheimModPack-NordicRadio/NordicRadio.dll",
-      "sha256": "e91712472435268e4be3772e928c96597a27841ccb3c0a786966323a4f75bea4",
+      "sha256": "f08a7f7e019438ede7cffb88c32dfc90082803c7a76133c255a561ca2a82f393",
       "dependencies": [
         "denikson-BepInExPack_Valheim-5.4.2351",
         "ValheimModding-Jotunn-2.30.2"

@@ -127,6 +127,32 @@ namespace ValheimModPack.NordicRadio
             lock (verified) verified[id] = new LibraryEntry { Path = path, Modified = info.LastWriteTimeUtc.Ticks, Track = new TrackInfo { Id = id, Size = info.Length } };
         }
 
+        // Optional pre-shared music avoids transmitting it through the game at all.
+        // Names do not establish identity: use the host's exact length and SHA-256.
+        public string FindLocalTrack(TrackInfo track, Func<bool> cancelled)
+        {
+            AssertDirectory(MusicDirectory); int examined = 0;
+            foreach (string path in Directory.EnumerateFiles(MusicDirectory))
+            {
+                if (++examined > 4096 || (cancelled != null && cancelled())) return null;
+                if (!String.Equals(System.IO.Path.GetExtension(path), ".mp3", StringComparison.OrdinalIgnoreCase)) continue;
+                try
+                {
+                    var info = new FileInfo(path);
+                    if ((info.Attributes & FileAttributes.ReparsePoint) != 0 || info.Length != track.Size) continue;
+                    long modified = info.LastWriteTimeUtc.Ticks;
+                    if (HashFile(path) != track.Id) continue;
+                    info.Refresh();
+                    if (info.Length != track.Size || info.LastWriteTimeUtc.Ticks != modified
+                        || (cancelled != null && cancelled())) continue;
+                    lock (verified) verified[track.Id] = new LibraryEntry { Path = path, Modified = modified, Track = track };
+                    return path;
+                }
+                catch (IOException) { } catch (UnauthorizedAccessException) { }
+            }
+            return null;
+        }
+
         public string BeginDownload(TrackInfo track, ICollection<string> protectedIds)
         {
             Prune(track.Size, protectedIds);
