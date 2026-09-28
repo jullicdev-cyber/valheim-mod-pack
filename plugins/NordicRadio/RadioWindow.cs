@@ -243,6 +243,7 @@ namespace ValheimModPack.NordicRadio
             bool scanning = libraryStatus.StartsWith("Scanning MP3", StringComparison.Ordinal);
             bool scanFailed = libraryStatus.StartsWith("MP3 scan failed:", StringComparison.Ordinal);
             bool networkStatus = libraryStatus.StartsWith("Connecting Steam", StringComparison.Ordinal)
+                || libraryStatus.StartsWith("Waiting for host playlist;", StringComparison.Ordinal)
                 || libraryStatus.StartsWith("Steam music channel unavailable", StringComparison.Ordinal);
             if (count == 0)
             {
@@ -367,6 +368,7 @@ namespace ValheimModPack.NordicRadio
             if (value == "Checking cache") return "Проверка кэша";
             if (value == "Waiting for music") return "Ожидание музыки";
             if (value.StartsWith("Connecting Steam", StringComparison.Ordinal)) return "Подключение канала музыки Steam...";
+            if (value.StartsWith("Waiting for host playlist;", StringComparison.Ordinal)) return "Ожидание списка музыки: восстанавливаем соединение с хостом...";
             if (value.StartsWith("Steam music channel unavailable", StringComparison.Ordinal)) return "Музыка недоступна: проверьте версии радио и сеть Steam без crossplay; переподключитесь";
             if (value.StartsWith("Download failed: Steam music channel unavailable", StringComparison.Ordinal)) return "Музыка не загружается: подойдите ближе или переподключитесь";
             if (value.StartsWith("Scanning MP3", StringComparison.Ordinal)) return "Сканирование MP3...";

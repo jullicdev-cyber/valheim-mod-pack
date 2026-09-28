@@ -34,9 +34,11 @@ namespace Steamworks
         public void SetSteamID64(ulong id) { Id=id; }
     }
     public enum EResult { k_EResultOK, k_EResultLimitExceeded }
-    public struct SteamNetConnectionInfo_t { }
+    public enum ESteamNetworkingConnectionState { k_ESteamNetworkingConnectionState_None, k_ESteamNetworkingConnectionState_Connecting, k_ESteamNetworkingConnectionState_FindingRoute, k_ESteamNetworkingConnectionState_Connected, k_ESteamNetworkingConnectionState_ClosedByPeer, k_ESteamNetworkingConnectionState_ProblemDetectedLocally }
+    public struct SteamNetConnectionInfo_t { public SteamNetworkingIdentity m_identityRemote; public int m_eEndReason; public string m_szEndDebug; }
     public struct SteamNetConnectionRealTimeStatus_t { public int m_cbPendingReliable,m_cbPendingUnreliable,m_cbSentUnackedReliable; }
     public struct SteamNetworkingMessagesSessionRequest_t { public SteamNetworkingIdentity m_identityRemote; }
+    public struct SteamNetworkingMessagesSessionFailed_t { public SteamNetConnectionInfo_t m_info; }
     public static class Constants { public const int k_nSteamNetworkingSend_ReliableNoNagle=9,k_nSteamNetworkingSend_AutoRestartBrokenSession=32; }
     public class Callback<T> : IDisposable
     {
@@ -59,6 +61,7 @@ namespace Steamworks
         public static byte[] LastSent; public static ulong LastPeer; public static int LastChannel,LastFlags;
         public static EResult Result=EResult.k_EResultOK;
         public static SteamNetConnectionRealTimeStatus_t Status;
+        public static ESteamNetworkingConnectionState State = ESteamNetworkingConnectionState.k_ESteamNetworkingConnectionState_Connected;
         public static readonly List<int> ClosedChannels=new List<int>();
         public static readonly Queue<IntPtr> Incoming=new Queue<IntPtr>();
         public static EResult SendMessageToUser(ref SteamNetworkingIdentity id,IntPtr data,uint size,int flags,int channel)
@@ -72,8 +75,8 @@ namespace Steamworks
         public static bool AcceptSessionWithUser(ref SteamNetworkingIdentity id) { Accepts++;return true; }
         public static void CloseSessionWithUser(ref SteamNetworkingIdentity id) { SessionCloses++; }
         public static void CloseChannelWithUser(ref SteamNetworkingIdentity id,int channel) { ClosedChannels.Add(channel); }
-        public static void GetSessionConnectionInfo(ref SteamNetworkingIdentity id,out SteamNetConnectionInfo_t info,out SteamNetConnectionRealTimeStatus_t status)
-        { info=new SteamNetConnectionInfo_t();status=Status; }
+        public static ESteamNetworkingConnectionState GetSessionConnectionInfo(ref SteamNetworkingIdentity id,out SteamNetConnectionInfo_t info,out SteamNetConnectionRealTimeStatus_t status)
+        { info=new SteamNetConnectionInfo_t();status=Status;return State; }
         public static void Enqueue(ulong steamId,int channel,byte[] data,int? reportedSize=null)
         {
             IntPtr memory=Marshal.AllocHGlobal(Math.Max(1,data.Length));Marshal.Copy(data,0,memory,data.Length);

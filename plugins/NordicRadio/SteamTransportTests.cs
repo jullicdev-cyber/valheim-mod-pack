@@ -34,9 +34,14 @@ internal static class SteamTransportTests
         var peer=new ZNetPeer{m_uid=2,m_socket=socket}; ZNet.instance.Peers.Add(peer);
         transport.Poll(delegate{});
         Check(Callback<SteamNetworkingMessagesSessionRequest_t>.Created==1,"lazy callback creation for authenticated Steam peer");
-        Request(999);Check(SteamNetworkingMessages.Accepts==0,"unknown Steam session not accepted");
-        peer.Ready=false;Request(222);Check(SteamNetworkingMessages.Accepts==0,"unauthenticated game peer not accepted");peer.Ready=true;
-        Request(222);Check(SteamNetworkingMessages.Accepts==1,"current game participant accepted");
+        Check(SteamNetworkingMessages.LastSent[29]==SteamRadioTransport.Probe,"both endpoints actively initiate the channel before sending playlist");
+        Check(SteamNetworkingMessages.Accepts==1,"pending session accepted even when its request callback was missed");
+        Check(!transport.TrySend(2,chunk,96*1024),"queued Steam send is not mistaken for delivered handshake");
+        Request(999);Check(SteamNetworkingMessages.Accepts==1,"unknown Steam session not accepted");
+        peer.Ready=false;Request(222);Check(SteamNetworkingMessages.Accepts==1,"unauthenticated game peer not accepted");peer.Ready=true;
+        Request(222);Check(SteamNetworkingMessages.Accepts==2,"current game participant accepted");
+        Incoming(222,RadioBulkFrame.Encode(10,2,1,new byte[]{2,SteamRadioTransport.ProbeReply}));
+        transport.Poll(delegate{throw new Exception("handshake leaked into radio service");});
         Check(transport.TrySend(2,chunk,96*1024),"audio enqueued over Steam Messages");
         Check(socket.Pending==0 && SteamNetworkingMessages.LastPeer==222,"separate send leaves game queue untouched");
         Check(SteamNetworkingMessages.LastChannel==SteamRadioTransport.Channel && SteamNetworkingMessages.LastFlags==41,"dedicated reliable asynchronous channel");
@@ -56,7 +61,7 @@ internal static class SteamTransportTests
         Incoming(222,frame);Incoming(222,frame);
         transport.Poll((uid,data)=>{received++;if(received==1)throw new Exception("consumer failure");});
         Check(received==2 && SteamNetworkingMessage_t.Messages.Count==0,"all native messages released after consumer exception");
-        Check(logs.Count==1,"send and receive failures logged with throttling");
+        Check(logs.FindAll(s=>s.Contains("Send returned") || s.Contains("consumer failure")).Count==1,"send and receive failures logged with throttling");
         for(int i=0;i<10;i++)Incoming(222,frame);
         received=0;transport.Poll((uid,data)=>received++);
         Check(received==8 && SteamNetworkingMessage_t.Messages.Count==2,"per-frame receive work bounded to eight messages");
@@ -80,12 +85,24 @@ internal static class SteamTransportTests
         ZNet.instance.Host=false;ZNet.instance.Uid=2;
         var server=new ZNetPeer{m_uid=1,m_socket=new ZSteamSocket{SteamId=111}};ZNet.instance.Peers.Add(server);
         transport.Poll(delegate{});Request(222);
-        Check(SteamNetworkingMessages.Accepts==1,"client does not accept another client's music session");
-        Request(111);Check(SteamNetworkingMessages.Accepts==2,"client accepts host only");
+        int accepted=SteamNetworkingMessages.Accepts;Request(222);
+        Check(SteamNetworkingMessages.Accepts==accepted,"client does not accept another client's music session");
+        Request(111);Check(SteamNetworkingMessages.Accepts==accepted+1,"client accepts host only");
+        Incoming(111,RadioBulkFrame.Encode(10,1,2,new byte[]{2,SteamRadioTransport.Probe}));
+        transport.Poll(delegate{throw new Exception("probe leaked into radio service");});
+        Check(SteamNetworkingMessages.LastSent[29]==SteamRadioTransport.ProbeReply,"incoming probe receives an explicit confirmation");
         Check(transport.TrySend(1,chunk,96*1024) && !transport.TrySend(2,chunk,96*1024),"client sends only to current host");
+        Callback<SteamNetworkingMessagesSessionFailed_t>.Instance.Action(new SteamNetworkingMessagesSessionFailed_t{m_info=new SteamNetConnectionInfo_t{m_identityRemote=new SteamNetworkingIdentity{Id=111},m_eEndReason=5003,m_szEndDebug="test failure"}});
+        Check(!transport.TrySend(1,chunk,96*1024),"failed session immediately revokes readiness");
+        Incoming(111,RadioBulkFrame.Encode(10,1,2,new byte[]{2,SteamRadioTransport.ProbeReply}));transport.Poll(delegate{});
+        Check(transport.TrySend(1,chunk,96*1024),"probe can recover a failed session without restarting game");
+        SteamNetworkingMessages.State=ESteamNetworkingConnectionState.k_ESteamNetworkingConnectionState_Connecting;
+        Check(!transport.TrySend(1,chunk,96*1024),"connecting native session cannot queue audio behind handshake");
+        SteamNetworkingMessages.State=ESteamNetworkingConnectionState.k_ESteamNetworkingConnectionState_Connected;
         server.m_socket=new TestSocket();Check(!transport.TrySend(1,chunk,96*1024),"non-Steam connection has no gameplay fallback");
         transport.Dispose();int sent=SteamNetworkingMessages.Sends;
         Check(!transport.TrySend(1,chunk,96*1024) && SteamNetworkingMessages.Sends==sent,"disposed transport cannot send");
         transport.Dispose();Check(Callback<SteamNetworkingMessagesSessionRequest_t>.Disposed==2,"dispose is idempotent");
+        Check(Callback<SteamNetworkingMessagesSessionFailed_t>.Disposed==2,"reset and dispose release failure callback too");
     }
 }

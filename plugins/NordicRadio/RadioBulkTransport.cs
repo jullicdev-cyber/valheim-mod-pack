@@ -3,7 +3,8 @@ using System.IO;
 
 namespace ValheimModPack.NordicRadio
 {
-    // Implementations must never send these bytes through Valheim's gameplay socket.
+    // Bulk frames use a separate connection. Recovery must fragment and ACK them
+    // below the game's ZDO queue budget; never enqueue a complete bulk frame there.
     // All transport calls happen on the game thread; native networking queues asynchronously.
     internal interface IRadioBulkTransport : IDisposable
     {

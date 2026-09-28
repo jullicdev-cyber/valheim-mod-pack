@@ -159,7 +159,7 @@ namespace ValheimModPack.NordicRadio
             else
             {
                 if (!receivedLibrary && realtime - sessionStarted > 30)
-                    libraryStatus = "Steam music channel unavailable. Check host/client radio versions and use Steam networking (no crossplay).";
+                    libraryStatus = "Waiting for host playlist; music connection recovery is in progress.";
                 // A reliable bulk send can still be lost when its connection dies.
                 // Periodically resync metadata after recovery, not just on first join.
                 if (realtime >= nextHello) { nextHello = realtime + (receivedLibrary ? 30 : 5); Send(server, new RadioMessage { Kind = RadioMessageKind.Hello }); }
