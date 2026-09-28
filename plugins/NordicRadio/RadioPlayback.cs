@@ -11,6 +11,9 @@ namespace ValheimModPack.NordicRadio
         private readonly RadioGain gain;
         private readonly float bufferSeconds;
         private bool paused, seeking;
+        private bool haveTimeline;
+        private double lastExpected;
+        private float lastTick;
         private float startedSeek, lastSeek, nextDrift;
         private int callbacksAtSeek, alignedFrames;
 
@@ -25,11 +28,11 @@ namespace ValheimModPack.NordicRadio
         {
             Silence();
             if (!paused) source.Pause();
-            paused = true; seeking = false;
+            paused = true; seeking = false; haveTimeline = false;
         }
         internal void Stop()
         {
-            Silence(); source.Stop(); paused = seeking = false; alignedFrames = 0;
+            Silence(); source.Stop(); paused = seeking = haveTimeline = false; alignedFrames = 0;
         }
         private void Silence() { gain.Silenced = true; source.volume = 0; }
         private double Position { get { return source.clip == null ? 0 : (double)source.timeSamples / Math.Max(1, source.clip.frequency); } }
@@ -53,7 +56,11 @@ namespace ValheimModPack.NordicRadio
             if (source.clip == null || !PlaybackMath.Finite(expected) || expected < 0 || expected >= source.clip.length)
             { Stop(); return false; }
             float now = Time.unscaledTime;
-            if (!seeking && (paused || !source.isPlaying)) Begin(expected);
+            // A host restart of the SAME track does not replace the clip. React to a timeline
+            // discontinuity immediately instead of playing the old segment for up to two seconds.
+            bool jumped = haveTimeline && Math.Abs((expected - lastExpected) - (now - lastTick)) > 0.4;
+            haveTimeline = true; lastExpected = expected; lastTick = now;
+            if (!seeking && (paused || !source.isPlaying || jumped)) Begin(expected);
             else if (!seeking && now >= nextDrift)
             {
                 nextDrift = now + 2;

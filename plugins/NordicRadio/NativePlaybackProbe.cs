@@ -56,12 +56,6 @@ namespace ValheimModPack.NordicRadioSmoke
                     if (source.isPlaying || source.clip != clip || Math.Abs(source.timeSamples - sample) > clip.frequency / 10)
                         failure = "Pause failed to retain clip or freeze decoder";
                 }
-                else if (phase == 2)
-                {
-                    // Let the production two-second drift interval elapse before changing the target.
-                    probe.Arm = false;
-                    yield return new WaitForSecondsRealtime(2.1f);
-                }
             }
             probe.Arm = false; stop.Invoke(transport, null);
             UnityEngine.Object.Destroy(holder);

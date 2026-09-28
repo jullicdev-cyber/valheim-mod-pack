@@ -63,6 +63,7 @@ namespace ValheimModPack.LoadoutSmoke
                 Check(plugin.Service != null, "Native RPC patch initialized");
                 report += RecycleNativeChecks.Run();
                 report += FloatingItemsNativeChecks.Run();
+                report += FermenterNativeChecks.Run();
                 object mapPlugin = Chainloader.PluginInfos["valheimmodpack.confirmpinremoval"].Instance;
                 Check(!(bool)mapPlugin.GetType().GetField("failed", All).GetValue(mapPlugin)
                     && mapPlugin.GetType().GetField("history", All).GetValue(mapPlugin) != null, "Map confirmation and history initialized");

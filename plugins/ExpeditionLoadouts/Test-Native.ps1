@@ -20,9 +20,20 @@ foreach ($path in @('Game/BepInEx/plugins/Jotunn.dll','Game/BepInEx/plugins/Valh
 foreach ($folder in @('XPortal','Vapok-AdventureBackpacks')) {
     Copy-Item -LiteralPath (Join-Path $root ('Game/BepInEx/plugins/'+$folder)) -Destination (Join-Path $smoke ('BepInEx/plugins/'+$folder)) -Recurse
 }
-# Include every vendor from the actual pack; use freshly built local DLLs above.
+# Include every vendor and local plugin from the actual pack. The explicit checks
+# above may lag newly added mods; they must not silently disappear from this fixture.
 foreach ($entry in Get-ChildItem -LiteralPath (Join-Path $root 'Game/BepInEx/plugins')) {
-    if ($entry.Name -like 'ValheimModPack-*') { continue }
+    if ($entry.Name -like 'ValheimModPack-*') {
+        foreach ($dll in Get-ChildItem -LiteralPath $entry.FullName -Filter '*.dll' -File -Recurse) {
+            $destination = Join-Path $smoke ('BepInEx/plugins/' + $dll.Name)
+            if (-not (Test-Path -LiteralPath $destination)) {
+                $built = Join-Path $root ('local-plugins/' + $dll.Name)
+                $source = if (Test-Path -LiteralPath $built) { $built } else { $dll.FullName }
+                Copy-Item -LiteralPath $source -Destination $destination
+            }
+        }
+        continue
+    }
     $destination = Join-Path $smoke ('BepInEx/plugins/' + $entry.Name)
     if (-not (Test-Path -LiteralPath $destination)) { Copy-Item -LiteralPath $entry.FullName -Destination $destination -Recurse }
 }
@@ -59,6 +70,7 @@ $argsList += Join-Path $root 'plugins/InterfaceInputFix/BindruneNativeChecks.cs'
 $argsList += Join-Path $root 'plugins/RenewableResourceTimers/NativeChecks.cs'
 $argsList += Join-Path $root 'scripts/RecycleNativeChecks.cs'
 $argsList += Join-Path $root 'scripts/FloatingItemsNativeChecks.cs'
+$argsList += Join-Path $root 'plugins/FermenterCompatibility/NativeChecks.cs'
 & (Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe') @argsList
 if ($LASTEXITCODE -ne 0) { throw 'Native probe compilation failed.' }
 $previousRoot = $env:VMP_QOL_SMOKE_ROOT
@@ -91,7 +103,7 @@ try {
     if (-not $result.StartsWith('PASS') -or $result.Contains('FAIL')) { throw 'Native verification failed.' }
     Move-Item -LiteralPath $resultFile -Destination (Join-Path $smoke ('result-phase-' + $phase + '.txt'))
     }
-    foreach ($name in @('ExpeditionLoadouts','ChestSearch','ConfirmMapPinRemoval','EAQSQuickStackBridge','InterfaceInputFix','RenewableResourceTimers','NordicRadio')) {
+    foreach ($name in @('ExpeditionLoadouts','ChestSearch','ConfirmMapPinRemoval','EAQSQuickStackBridge','InterfaceInputFix','RenewableResourceTimers','NordicRadio','WorldCharacters','FermenterCompatibility')) {
         Write-Output ($name + ' SHA256: ' + (Get-FileHash -LiteralPath (Join-Path $smoke "BepInEx/plugins/$name.dll")).Hash)
     }
 } finally {

@@ -63,6 +63,9 @@ internal static class PlaybackTransportTests
         Check(!playback.Tick(25.02) && gain.Silenced, "one aligned frame is insufficient");
         Check(Settle(playback, source, gain, 25.02), "buffered start eventually becomes audible");
         Check(!gain.Silenced, "PCM gate opens at stable position");
+        Check(!playback.Tick(5) && gain.Silenced, "same-track restart gates immediately instead of waiting for drift interval");
+        Check(source.timeSamples == 240000, "same-track restart seeks to new authoritative position immediately");
+        Check(Settle(playback, source, gain, 5), "same-track restart becomes audible after settling");
         int before = source.Cursor;
         playback.Pause(); playback.Pause();
         Check(source.Pauses == 1 && !source.isPlaying && gain.Silenced, "repeated pause is idempotent and silent");

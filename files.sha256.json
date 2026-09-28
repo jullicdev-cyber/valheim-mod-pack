@@ -76,6 +76,10 @@
     "sha256": "ec3ed1abc7cd254540716bdf7c14f184689c9a287402506b9bdb8e5beeb65ec5"
   },
   {
+    "path": "BepInEx/config/valheimmodpack.worldcharacters.cfg",
+    "sha256": "26d56ed6b1093be073bf421f09f5ca848c033683d798c500484d902113868f20"
+  },
+  {
     "path": "BepInEx/core/0Harmony.dll",
     "sha256": "1a21cc03424fc82c3dd1346905d16494536b9595ae4162228d99fb7c285c1031"
   },
@@ -264,16 +268,24 @@
     "sha256": "dddedf2d049a607e02cd8bbe0a363bfa11e21feef6ad1143edf16ad7812517b3"
   },
   {
+    "path": "BepInEx/plugins/ValheimModPack-FermenterCompatibility/FermenterCompatibility.dll",
+    "sha256": "3f187a5b0ac0b4835086d9c8cf76a4504db05d9c74ee217df470c986a70a5abb"
+  },
+  {
     "path": "BepInEx/plugins/ValheimModPack-InterfaceInputFix/InterfaceInputFix.dll",
     "sha256": "3ebf70e9860b7525df9bf9577abf37dc37d42eb4eec4de288ea435fe320bbbb9"
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-NordicRadio/NordicRadio.dll",
-    "sha256": "fa34b95ab58657edc763226d471d26ecc76d23c87a02e6b17330e49754ad5b30"
+    "sha256": "96c1c151395dc4495868b175d485a32d77f533d292e0183ef18f3d1cfd4f75d0"
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-RenewableResourceTimers/RenewableResourceTimers.dll",
     "sha256": "ce29acd594a726b78c029ed459eb513d0b1733b7041fe08cd956eae7c84d0f55"
+  },
+  {
+    "path": "BepInEx/plugins/ValheimModPack-WorldCharacters/WorldCharacters.dll",
+    "sha256": "c72679902b276d52ba22512f57359762ab6de2c64a9cc804961775ce53a7d3a5"
   },
   {
     "path": "BepInEx/plugins/ValheimModding-JsonDotNET/Newtonsoft.Json.dll",
@@ -530,13 +542,5 @@
   {
     "path": "winhttp.dll",
     "sha256": "93406d0a02e7c164b89828cbfe3b289930a112d2eca50bd4a52e72ece169e6a8"
-  },
-  {
-    "path": "BepInEx/config/valheimmodpack.worldcharacters.cfg",
-    "sha256": "26d56ed6b1093be073bf421f09f5ca848c033683d798c500484d902113868f20"
-  },
-  {
-    "path": "BepInEx/plugins/ValheimModPack-WorldCharacters/WorldCharacters.dll",
-    "sha256": "c72679902b276d52ba22512f57359762ab6de2c64a9cc804961775ce53a7d3a5"
   }
 ]

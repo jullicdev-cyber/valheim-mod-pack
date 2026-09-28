@@ -1,16 +1,21 @@
 [CmdletBinding()]
-param([Parameter(Mandatory=$true)][string]$GameDirectory, [switch]$BuildOnly)
+param([Parameter(Mandatory=$true)][string]$GameDirectory, [switch]$BuildOnly, [string]$PluginAssembly)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 if (-not $BuildOnly -and (Get-Process -Name valheim,valheim_server -ErrorAction SilentlyContinue)) { throw 'Close Valheim before native verification.' }
-& (Join-Path $PSScriptRoot 'Build.ps1') -GameDirectory $GameDirectory
+if (-not $PluginAssembly) {
+    & (Join-Path $PSScriptRoot 'Build.ps1') -GameDirectory $GameDirectory
+    $PluginAssembly = Join-Path $root 'local-plugins/WorldCharacters.dll'
+}
+$PluginAssembly = (Resolve-Path -LiteralPath $PluginAssembly).ProviderPath
 $smoke = Join-Path $root ('.cache/worldcharacters-native-' + [guid]::NewGuid().ToString('N').Substring(0,8))
 New-Item -ItemType Directory -Force -Path $smoke,(Join-Path $smoke 'Saves') | Out-Null
 Copy-Item -LiteralPath (Join-Path $root 'Game/BepInEx') -Destination (Join-Path $smoke 'BepInEx') -Recurse
 $target = Join-Path $smoke 'BepInEx/plugins/ValheimModPack-WorldCharacters'
 New-Item -ItemType Directory -Force $target | Out-Null
-Copy-Item -LiteralPath (Join-Path $root 'local-plugins/WorldCharacters.dll') -Destination (Join-Path $target 'WorldCharacters.dll')
-$refs = @('Game/BepInEx/core/BepInEx.dll','Game/BepInEx/core/0Harmony.dll','Game/BepInEx/plugins/Jotunn.dll','local-plugins/WorldCharacters.dll') | ForEach-Object { Join-Path $root $_ }
+Copy-Item -LiteralPath $PluginAssembly -Destination (Join-Path $target 'WorldCharacters.dll')
+$refs = @('Game/BepInEx/core/BepInEx.dll','Game/BepInEx/core/0Harmony.dll','Game/BepInEx/plugins/Jotunn.dll') | ForEach-Object { Join-Path $root $_ }
+$refs += $PluginAssembly
 $refs += @('assembly_valheim.dll','assembly_guiutils.dll','assembly_utils.dll','SoftReferenceableAssets.dll','UnityEngine.dll','UnityEngine.CoreModule.dll','netstandard.dll') | ForEach-Object { Join-Path $GameDirectory ('valheim_Data/Managed/'+$_) }
 $compiler = Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
 $argsList = @('/nologo','/codepage:65001','/target:library',('/out:'+(Join-Path $smoke 'BepInEx/plugins/WorldCharactersProbe.dll')))
