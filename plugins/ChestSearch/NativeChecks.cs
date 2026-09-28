@@ -2,6 +2,7 @@ using System;
 using System.Text;
 using System.Reflection;
 using BepInEx.Bootstrap;
+using HarmonyLib;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -40,7 +41,36 @@ namespace ValheimModPack.ChestSearch
                 }
             }
             return "ChestSearch API PASS; aliases=" + names.AliasCount + "; native item queries=" + matched
-                + "; accessible fresh loaded chests=" + readable + "; native UI checks=" + CheckUI() + "; warnings=" + warnings;
+                + "; accessible fresh loaded chests=" + readable + "; native UI checks=" + CheckUI()
+                + "; input hook checks=" + CheckInputHooks() + "; warnings=" + warnings;
+        }
+        private static bool ranOriginal;
+        private static void ObserveOriginal(bool __runOriginal) { ranOriginal = __runOriginal; }
+        private static int CheckInputHooks()
+        {
+            var plugin = (Plugin)Chainloader.PluginInfos[Plugin.Id].Instance;
+            var originalWindow = Get(plugin, "window");
+            var window = new SearchWindow(plugin);
+            var observer = new Harmony(Plugin.Id + ".native-input-probe"); int checks = 0;
+            try
+            {
+                foreach (string name in new[] { "GetButton", "GetButtonDown", "GetButtonUp" })
+                {
+                    var target = AccessTools.Method(typeof(ZInput), name, new[] { typeof(string) });
+                    Assert(Harmony.GetPatchInfo(target).Owners.Contains(Plugin.Id + ".input"), name + " hooked", ref checks);
+                    observer.Patch(target, prefix: new HarmonyMethod(typeof(NativeChecks), "ObserveOriginal") { priority = Priority.Last });
+                }
+                Assert(Harmony.GetPatchInfo(AccessTools.Method(typeof(PlayerController), "TakeInput", new[] { typeof(bool) }))
+                    .Owners.Contains(Plugin.Id + ".input"), "controller input hooked before FixedUpdate", ref checks);
+                Call(window, "BuildVisuals"); Set(plugin, "window", window);
+                ranOriginal = true; Assert(!ZInput.GetButton("Jump") && !ranOriginal, "held gameplay input consumed", ref checks);
+                ranOriginal = true; Assert(!ZInput.GetButtonDown("Jump") && !ranOriginal, "pressed gameplay input consumed", ref checks);
+                ranOriginal = true; Assert(!ZInput.GetButtonUp("Jump") && !ranOriginal, "released gameplay input consumed", ref checks);
+                ranOriginal = false; ZInput.GetButtonDown("JoyButtonB"); Assert(ranOriginal, "controller cancel preserved", ref checks);
+                window.Hide(); ranOriginal = false; ZInput.GetButtonDown("Jump"); Assert(ranOriginal, "normal native input restored after close", ref checks);
+                return checks;
+            }
+            finally { window.Hide(); Set(plugin, "window", originalWindow); observer.UnpatchSelf(); }
         }
         private static int CheckUI()
         {

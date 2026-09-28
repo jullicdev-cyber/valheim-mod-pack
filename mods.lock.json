@@ -1,5 +1,5 @@
 {
-  "packVersion": "1.14.2",
+  "packVersion": "1.14.3",
   "created": "2026-09-25",
   "targetGameVersion": "1.0.16",
   "packages": [
@@ -309,10 +309,10 @@
     },
     {
       "id": "ValheimModPack-ChestSearch",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "source": "local-plugins/ChestSearch.dll",
       "destination": "BepInEx/plugins/ValheimModPack-ChestSearch/ChestSearch.dll",
-      "sha256": "3643d2012d03da95cc0e4a1307fb6a7233d16f1cdd0999c2ea2fc7f447763527",
+      "sha256": "30a50d5ace309a78b520095e265f3a03be76bd78a691bcbd72b8a348445d130a",
       "dependencies": [
         "denikson-BepInExPack_Valheim-5.4.2351",
         "ValheimModding-Jotunn-2.30.2"
