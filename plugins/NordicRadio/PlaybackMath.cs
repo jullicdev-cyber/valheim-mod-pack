@@ -27,5 +27,10 @@ namespace ValheimModPack.NordicRadio
             double t = (distance - near) / (far - near);
             return (float)(near / distance * (1 - t * t));
         }
+        public static int SeekSample(double expected, int frequency, int samples)
+        {
+            if (!Finite(expected) || frequency <= 0 || samples <= 0) return 0;
+            return (int)Math.Max(0, Math.Min(samples - 1.0, Math.Floor(expected * frequency)));
+        }
     }
 }

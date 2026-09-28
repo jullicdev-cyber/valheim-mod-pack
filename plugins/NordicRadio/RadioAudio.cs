@@ -12,13 +12,15 @@ namespace ValheimModPack.NordicRadio
         private GameObject emitter;
         private AudioSource source;
         private RadioGain amplifier;
+        private RadioPlayback playback;
         private AudioClip clip;
         private UnityWebRequest request;
         private string track = "";
         private string failedTrack = "";
-        private float nextRetry, nextDrift, requestStarted;
+        private float nextRetry, requestStarted;
         private bool disposed;
         public bool Audible;
+        internal bool HasClip { get { return clip != null; } }
         internal float Audibility
         {
             get { return source != null && source.isPlaying && source.enabled && !source.mute
@@ -41,9 +43,15 @@ namespace ValheimModPack.NordicRadio
             var state = service.GetState(piece.Id);
             bool playing = state != null && state.Playing && !String.IsNullOrEmpty(state.TrackId);
             piece.SetLit(playing);
-            bool wanted = playing && Audible && Player.m_localPlayer != null && ZNet.instance != null
+            bool nearby = Audible && Player.m_localPlayer != null && ZNet.instance != null
                 && plugin.PersonalVolume > 0
                 && Vector3.Distance(plugin.ListenerPosition, piece.SoundPosition) < plugin.FarDistance;
+            if (nearby && state != null && !state.Playing && state.TrackId == track && clip != null && playback != null)
+            {
+                // Retain this decoder within the shared eight-source budget. Resume does not reopen the MP3.
+                playback.Pause(); return;
+            }
+            bool wanted = playing && nearby;
             if (!wanted)
             {
                 if (request != null) CancelRequest();
@@ -96,18 +104,7 @@ namespace ValheimModPack.NordicRadio
             }
             double position = PlaybackMath.Position(ZNet.instance.GetTimeSeconds(), state.StartedAt, state.Offset, state.Playing);
             // At the end, wait for the host's authoritative next-track message.
-            if (position >= clip.length) { source.Stop(); return; }
-            if (!source.isPlaying)
-            {
-                source.time = PlaybackMath.SeekPosition(position, clip.length);
-                source.Play(); nextDrift = Time.unscaledTime + 2;
-            }
-            if (Time.unscaledTime >= nextDrift)
-            {
-                nextDrift = Time.unscaledTime + 2;
-                if (PlaybackMath.NeedsSeek(source.time, position, clip.length))
-                    source.time = PlaybackMath.SeekPosition(position, clip.length);
-            }
+            if (!playback.Tick(position)) return;
             // Explicit distance gain gives a finite, configurable radius. Unity
             // still supplies stereo direction, but does not attenuate it twice.
             float gain = PlaybackMath.Attenuation(Vector3.Distance(plugin.ListenerPosition, piece.SoundPosition), plugin.NearDistance, plugin.FarDistance);
@@ -124,6 +121,7 @@ namespace ValheimModPack.NordicRadio
             source.priority = 128; source.volume = 0;
             amplifier = emitter.AddComponent<RadioGain>();
             amplifier.Gain = plugin.Amplification;
+            playback = new RadioPlayback(source, amplifier);
             source.rolloffMode = AudioRolloffMode.Custom;
             source.SetCustomCurve(AudioSourceCurveType.CustomRolloff, AnimationCurve.Linear(0, 1, 1, 1));
             if (AudioMan.instance != null) source.outputAudioMixerGroup = AudioMan.instance.m_ambientMixer;
@@ -136,6 +134,7 @@ namespace ValheimModPack.NordicRadio
         internal void Stop()
         {
             CancelRequest();
+            if (playback != null) playback.Stop();
             if (source != null) { source.Stop(); source.clip = null; source.volume = 0; }
             if (clip != null) { UnityEngine.Object.Destroy(clip); clip = null; }
             track = "";

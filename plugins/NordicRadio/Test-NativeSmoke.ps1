@@ -2,9 +2,12 @@
 param(
     [Parameter(Mandatory=$true)][string]$GameDirectory,
     [string]$PluginAssembly,
-    [string]$TestMp3
+    [string]$TestMp3,
+    # TestMp3 must be the three-tone fixture from Generate-SeekProbe.py.
+    [switch]$CheckPlaybackTransport
 )
 $ErrorActionPreference = 'Stop'
+if ($CheckPlaybackTransport -and -not $TestMp3) { throw 'Playback transport test requires the generated tone MP3.' }
 $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 if (-not $PluginAssembly) { $PluginAssembly = Join-Path $root 'local-plugins/NordicRadio.dll' }
 if (Get-Process -Name valheim,valheim_server -ErrorAction SilentlyContinue) { throw 'Close Valheim before running the native smoke check.' }
@@ -28,13 +31,16 @@ $refs += @('assembly_valheim.dll','assembly_guiutils.dll','assembly_utils.dll','
 $argsList = @('/nologo','/target:library','/codepage:65001',('/out:'+(Join-Path $smokeRoot 'BepInEx/plugins/SmokeProbe.dll')))
 $argsList += $refs | ForEach-Object { '/reference:'+$_ }
 $argsList += Join-Path $PSScriptRoot 'NativeSmokeProbe.cs'
+$argsList += Join-Path $PSScriptRoot 'NativePlaybackProbe.cs'
 & (Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe') @argsList
 if ($LASTEXITCODE -ne 0) { throw 'Native smoke probe compilation failed.' }
 $oldRoot = $env:NORDICRADIO_SMOKE_ROOT
 $oldMp3 = $env:NORDICRADIO_SMOKE_MP3
+$oldSeek = $env:NORDICRADIO_SMOKE_SEEK
 $process = $null
 try {
     $env:NORDICRADIO_SMOKE_ROOT = $smokeRoot
+    $env:NORDICRADIO_SMOKE_SEEK = if ($CheckPlaybackTransport) { '1' } else { '' }
     $env:NORDICRADIO_SMOKE_MP3 = if ($TestMp3) { (Resolve-Path -LiteralPath $TestMp3).ProviderPath } else { '' }
     if (Get-Process -Name valheim,valheim_server -ErrorAction SilentlyContinue) { throw 'Valheim started during setup; smoke launch cancelled.' }
     # Windows Doorstop supports this CLI override. The Linux DOORSTOP_TARGET_ASSEMBLY
@@ -56,4 +62,5 @@ try {
     if ($process -and -not $process.HasExited) { $process.Kill() }
     $env:NORDICRADIO_SMOKE_ROOT = $oldRoot
     $env:NORDICRADIO_SMOKE_MP3 = $oldMp3
+    $env:NORDICRADIO_SMOKE_SEEK = $oldSeek
 }

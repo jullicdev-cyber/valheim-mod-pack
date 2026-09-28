@@ -14,7 +14,7 @@ namespace ValheimModPack.NordicRadio
     public sealed class Plugin : BaseUnityPlugin
     {
         public const string Id = "valheimmodpack.nordicradio";
-        public const string Version = "1.2.0";
+        public const string Version = "1.2.1";
         public static Plugin Instance { get; private set; }
         public RadioService Service { get; private set; }
         public string DataRoot { get; private set; }
@@ -126,13 +126,18 @@ namespace ValheimModPack.NordicRadio
                             && Vector3.Distance(ListenerPosition, pair.Key.SoundPosition) <= FarDistance + 2)
                         {
                             var state = Service.GetState(pair.Key.Id);
-                            if (state != null && state.Playing) candidates.Add(pair.Key);
+                            if (state != null && (state.Playing || (pair.Value.HasClip && !String.IsNullOrEmpty(state.TrackId)))) candidates.Add(pair.Key);
                         }
                     }
                     if (Player.m_localPlayer != null)
                     {
                         Vector3 position = ListenerPosition;
-                        candidates.Sort((a,b) => (a.SoundPosition-position).sqrMagnitude.CompareTo((b.SoundPosition-position).sqrMagnitude));
+                        candidates.Sort((a,b) =>
+                        {
+                            bool aPlaying = Service.GetState(a.Id).Playing, bPlaying = Service.GetState(b.Id).Playing;
+                            if (aPlaying != bPlaying) return aPlaying ? -1 : 1;
+                            return (a.SoundPosition-position).sqrMagnitude.CompareTo((b.SoundPosition-position).sqrMagnitude);
+                        });
                         for (int i = 0; i < Math.Min(8, candidates.Count); i++) radios[candidates[i]].Audible = true;
                     }
                 }

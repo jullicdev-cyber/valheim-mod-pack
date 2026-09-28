@@ -217,6 +217,8 @@ namespace ValheimModPack.NordicRadioSmoke
             }
             catch (Exception error) { failure = "FAIL native streaming DSP: " + error; }
             UnityEngine.Object.Destroy(holder);
+            if (failure == null && Environment.GetEnvironmentVariable("NORDICRADIO_SMOKE_SEEK") == "1")
+                yield return StartCoroutine(NativePlaybackProbe.Run(clip, delegate(string result, bool ok) { Finish(report + result, ok ? 0 : 7); }));
             UnityEngine.Object.Destroy(clip);
             Finish(report + (failure ?? ""), failure == null ? 0 : 5);
         }

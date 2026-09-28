@@ -10,6 +10,7 @@ $exe = Join-Path $out 'PlaybackTests.exe'
 if ($LASTEXITCODE -ne 0) { throw 'Playback tests compilation failed' }
 & $exe
 if ($LASTEXITCODE -ne 0) { throw 'Playback timeline tests failed' }
+& (Join-Path $PSScriptRoot 'Test-PlaybackTransport.ps1')
 $gainExe = Join-Path $out 'AudioGainTests.exe'
 & $compiler /nologo /codepage:65001 /target:exe "/out:$gainExe" (Join-Path $PSScriptRoot 'PlaybackMath.cs') (Join-Path $PSScriptRoot 'AudioGainProcessor.cs') (Join-Path $PSScriptRoot 'AudioGainTests.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Audio gain tests compilation failed' }
