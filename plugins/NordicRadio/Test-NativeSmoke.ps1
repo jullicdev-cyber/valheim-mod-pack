@@ -3,6 +3,7 @@ param(
     [Parameter(Mandatory=$true)][string]$GameDirectory,
     [string]$PluginAssembly,
     [string]$TestMp3,
+    [switch]$BuildOnly,
     # TestMp3 must be the three-tone fixture from Generate-SeekProbe.py.
     [switch]$CheckPlaybackTransport
 )
@@ -10,7 +11,7 @@ $ErrorActionPreference = 'Stop'
 if ($CheckPlaybackTransport -and -not $TestMp3) { throw 'Playback transport test requires the generated tone MP3.' }
 $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 if (-not $PluginAssembly) { $PluginAssembly = Join-Path $root 'local-plugins/NordicRadio.dll' }
-if (Get-Process -Name valheim,valheim_server -ErrorAction SilentlyContinue) { throw 'Close Valheim before running the native smoke check.' }
+if (-not $BuildOnly -and (Get-Process -Name valheim,valheim_server -ErrorAction SilentlyContinue)) { throw 'Close Valheim before running the native smoke check.' }
 $smokeRoot = Join-Path $root ('.cache/nordic-radio-native-' + [Guid]::NewGuid().ToString('N').Substring(0,8))
 New-Item -ItemType Directory -Force -Path (Join-Path $smokeRoot 'BepInEx/plugins'),(Join-Path $smokeRoot 'BepInEx/config'),(Join-Path $smokeRoot 'Saves') | Out-Null
 Copy-Item -LiteralPath (Join-Path $root 'Game/BepInEx/core') -Destination (Join-Path $smokeRoot 'BepInEx/core') -Recurse
@@ -34,6 +35,7 @@ $argsList += Join-Path $PSScriptRoot 'NativeSmokeProbe.cs'
 $argsList += Join-Path $PSScriptRoot 'NativePlaybackProbe.cs'
 & (Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe') @argsList
 if ($LASTEXITCODE -ne 0) { throw 'Native smoke probe compilation failed.' }
+if ($BuildOnly) { Write-Output "Native smoke probe compiled, not executed: $smokeRoot"; return }
 $oldRoot = $env:NORDICRADIO_SMOKE_ROOT
 $oldMp3 = $env:NORDICRADIO_SMOKE_MP3
 $oldSeek = $env:NORDICRADIO_SMOKE_SEEK

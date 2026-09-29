@@ -1,5 +1,5 @@
 {
-  "packVersion": "1.14.6",
+  "packVersion": "1.14.7",
   "created": "2026-09-25",
   "targetGameVersion": "1.0.16",
   "packages": [
@@ -287,10 +287,10 @@
     },
     {
       "id": "ValheimModPack-NordicRadio",
-      "version": "1.3.2",
+      "version": "1.3.3",
       "source": "local-plugins/NordicRadio.dll",
       "destination": "BepInEx/plugins/ValheimModPack-NordicRadio/NordicRadio.dll",
-      "sha256": "e2030ef40b634b0e3b2f8b6aa406d2c4b4f2f3ac4fbc8b61837a886c92fac511",
+      "sha256": "b36180686795b2ed206eecc7b36108673f616ed5fb31bbda0013a5661735c76f",
       "dependencies": [
         "denikson-BepInExPack_Valheim-5.4.2351",
         "ValheimModding-Jotunn-2.30.2"
@@ -342,10 +342,10 @@
     },
     {
       "id": "ValheimModPack-WorldCharacters",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "source": "local-plugins/WorldCharacters.dll",
       "destination": "BepInEx/plugins/ValheimModPack-WorldCharacters/WorldCharacters.dll",
-      "sha256": "c72679902b276d52ba22512f57359762ab6de2c64a9cc804961775ce53a7d3a5",
+      "sha256": "5ccf3f884a8874b3b66253397aaf6e30f23a1dedfac71de5409bd3c112cc969c",
       "dependencies": [
         "denikson-BepInExPack_Valheim-5.4.2351"
       ]

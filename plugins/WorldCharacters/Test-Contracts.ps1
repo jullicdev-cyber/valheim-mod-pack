@@ -42,5 +42,25 @@ try {
     if (-not ($profile.Fields | Where-Object { $_.Name -eq 'm_playerData' -and $_.FieldType.FullName -eq 'System.Byte[]' })) { throw 'Player data field changed' }
     if (-not ($profile.Methods | Where-Object { $_.Name -eq 'GetWorldData' -and $_.Parameters.Count -eq 1 -and $_.Parameters[0].ParameterType.FullName -eq 'System.Int64' })) { throw 'World profile getter changed' }
     $count += 2
+    # The shutdown checkpoint reuses the character snapshot committed before the
+    # scene invalidates Player's ZDO. Fail if native lifecycle ordering changes.
+    $gameType = $game.MainModule.Types | Where-Object Name -eq 'Game'
+    $shuttingDown = @($gameType.Methods | Where-Object Name -eq 'IsShuttingDown')
+    if ($shuttingDown.Count -ne 1 -or -not $shuttingDown[0].IsPublic -or $shuttingDown[0].IsStatic -or $shuttingDown[0].ReturnType.FullName -ne 'System.Boolean') {
+        throw 'Game.IsShuttingDown contract changed'
+    }
+    $shutdown = $gameType.Methods | Where-Object Name -eq 'Shutdown'
+    $calls = @($shutdown.Body.Instructions | Where-Object { $_.Operand -is [Mono.Cecil.MethodReference] } | ForEach-Object { $_.Operand.DeclaringType.FullName + '.' + $_.Operand.Name })
+    $savePlayer = [array]::IndexOf($calls,'Game.SavePlayerProfile')
+    $stopScene = [array]::IndexOf($calls,'ZNetScene.Shutdown')
+    $saveWorld = [array]::IndexOf($calls,'ZNet.Shutdown')
+    if ($savePlayer -lt 0 -or $stopScene -le $savePlayer -or $saveWorld -le $stopScene) {
+        throw 'Native shutdown no longer saves character before scene teardown and world save'
+    }
+    $instructions = @($shutdown.Body.Instructions)
+    $flagWrite = @($instructions | Where-Object { $_.OpCode.Name -eq 'stfld' -and $_.Operand.Name -eq 'm_shuttingDown' })
+    $playerCall = @($instructions | Where-Object { $_.Operand -is [Mono.Cecil.MethodReference] -and $_.Operand.Name -eq 'SavePlayerProfile' })
+    if ($flagWrite.Count -ne 1 -or $flagWrite[0].Offset -ge $playerCall[0].Offset) { throw 'Native shutdown flag must precede the final character save' }
+    $count += 3
     Write-Output "PASS: $count native contracts (patch signatures and supported serialization versions). No game process started."
 } finally { $plugin.Dispose(); $game.Dispose() }

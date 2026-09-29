@@ -150,11 +150,44 @@ internal static class Tests
         var reconnect = new CharacterSession(session.State);
         Refuse(() => reconnect.MarkLoaded(session.Token), "old connection token invalid after reconnect");
     }
+    private static void Protection(string root)
+    {
+        using (var store = new StateStore(root))
+        {
+            var policy = new LocalProtectionPolicy(); var network = new object();
+            Check(!policy.Resolve(network,11,44,false,false,store), "new solo world remains vanilla by default");
+            Check(!policy.Resolve(network,11,44,false,true,store), "runtime config does not switch inventory mid-session");
+            Check(policy.Resolve(new object(),11,44,false,true,store), "new solo enrollment setting applies on next session");
+            Check(policy.Resolve(new object(),11,44,true,false,store), "multiplayer host is always enrolled");
+            var saved = State(11,"local-host",44); saved.Revision = 1; store.Save(saved,0);
+            network = new object();
+            Check(policy.Resolve(network,11,44,false,false,store), "existing protected character remains protected without Start Server");
+            Check(store.Read(11,"local-host",44).Player.SequenceEqual(saved.Player), "solo restore uses original protected inventory bytes");
+            Check(!policy.Resolve(network,12,44,false,false,store), "another solo world does not inherit protection");
+            Check(!policy.Resolve(network,11,45,false,false,store), "another solo character does not inherit protection");
+            Check(!policy.Resolve(network,0,44,false,false,store), "incomplete world identity is not cached");
+            Check(policy.Resolve(network,11,44,false,false,store), "real identity checked after incomplete startup");
+            string path = Path.Combine(root,"characters",StateCodec.Key(11,"local-host",44)+".wchar");
+            string moved = path + ".test-retained";
+            File.Move(path,moved);
+            Check(policy.Resolve(network,11,44,false,false,store), "resolved session does not reread state on hot path");
+            Check(!policy.Resolve(new object(),11,44,false,false,store), "new network session does not reuse old decision");
+            File.Move(moved,path); policy.Clear();
+            Check(policy.Resolve(network,11,44,false,false,store), "session reset rechecks stored enrollment");
+            File.WriteAllBytes(path,new byte[]{1,2,3}); policy.Clear();
+            Check(policy.Resolve(network,11,44,false,false,store), "corrupt state remains protected");
+            Refuse(()=>store.Read(11,"local-host",44), "corrupt protected state cannot become vanilla fallback");
+            File.Move(path,path+".bak"); policy.Clear();
+            Check(policy.Resolve(network,11,44,false,false,store), "backup-only state remains protected");
+            Refuse(()=>store.Read(11,"local-host",44), "backup-only protected state requires recovery");
+            Check(policy.Resolve(new object(),11,0,true,false,store), "dedicated server protects guests without local profile");
+        }
+    }
     private static int Main(string[] args)
     {
         try
         {
-            Codec(); Store(args[0]); Session();
+            Codec(); Store(args[0]); Session(); Protection(args[0] + "-protection");
             if (args.Length > 1 && File.Exists(args[1]))
             {
                 byte[] real = File.ReadAllBytes(args[1]); var items = NativeInventory.ReadPlayer(real);

@@ -77,7 +77,7 @@
   },
   {
     "path": "BepInEx/config/valheimmodpack.worldcharacters.cfg",
-    "sha256": "26d56ed6b1093be073bf421f09f5ca848c033683d798c500484d902113868f20"
+    "sha256": "440fea2a2bcc616038c6ec1e9e7281d09a771a6c3d9cc9421c0f5a62df5391bc"
   },
   {
     "path": "BepInEx/core/0Harmony.dll",
@@ -277,7 +277,7 @@
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-NordicRadio/NordicRadio.dll",
-    "sha256": "e2030ef40b634b0e3b2f8b6aa406d2c4b4f2f3ac4fbc8b61837a886c92fac511"
+    "sha256": "b36180686795b2ed206eecc7b36108673f616ed5fb31bbda0013a5661735c76f"
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-RenewableResourceTimers/RenewableResourceTimers.dll",
@@ -285,7 +285,7 @@
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-WorldCharacters/WorldCharacters.dll",
-    "sha256": "c72679902b276d52ba22512f57359762ab6de2c64a9cc804961775ce53a7d3a5"
+    "sha256": "5ccf3f884a8874b3b66253397aaf6e30f23a1dedfac71de5409bd3c112cc969c"
   },
   {
     "path": "BepInEx/plugins/ValheimModding-JsonDotNET/Newtonsoft.Json.dll",

@@ -99,7 +99,7 @@ namespace ValheimModPack.NordicRadioSmoke
                     if (!requirement.m_resItem || !expected.TryGetValue(requirement.m_resItem.name, out amount) || requirement.m_amount != amount)
                         throw new Exception("Portable recipe material/amount");
                 }
-                report += "PASS native portable idol: ObjectDB item, forge I recipe Wood10/FineWood5/Bronze2/SurtlingCore1, 128px icon, five equipped meshes, native 90-degree grip rotation, unchanged dropped visual/collider, original Hammer unchanged.\n";
+                report += "PASS native portable idol: ObjectDB item, forge I recipe Wood10/FineWood5/Bronze2/SurtlingCore1, 128px icon, five equipped meshes, native grip face=-Y/top=-Z in hand space, unchanged dropped visual/collider, original Hammer unchanged. This does not validate the animated player pose.\n";
             }
             catch (Exception error) { Finish(report + "FAIL portable idol: " + error, 6); yield break; }
             string mp3 = Environment.GetEnvironmentVariable("NORDICRADIO_SMOKE_MP3");
@@ -112,8 +112,9 @@ namespace ValheimModPack.NordicRadioSmoke
             Transform droppedModel = prefab.transform.Find("attach/SkaldIdolModel");
             if (!marker || !droppedModel || marker.childCount != 0 || marker.localPosition.sqrMagnitude > 0.000001f)
                 throw new Exception("Portable native equip offset marker");
-            if (Quaternion.Angle(marker.localRotation, Quaternion.Euler(0f, 90f, 0f)) > 0.01f)
-                throw new Exception("Portable grip must turn the idol face by 90 degrees around its vertical axis");
+            if ((marker.localRotation * Vector3.back - Vector3.down).sqrMagnitude > 0.000001f ||
+                (marker.localRotation * Vector3.up - Vector3.back).sqrMagnitude > 0.000001f)
+                throw new Exception("Portable grip must point the face down and top backward in hand space");
             if (Quaternion.Angle(droppedModel.localRotation, Quaternion.identity) > 0.01f ||
                 (droppedModel.localPosition - new Vector3(0f, -0.20f, -0.14f)).sqrMagnitude > 0.000001f)
                 throw new Exception("Portable dropped visual was changed by the grip rotation");
@@ -127,7 +128,8 @@ namespace ValheimModPack.NordicRadioSmoke
             try
             {
                 // Exercise the game's actual cloning/reset/equipoffset path;
-                // prefab transforms alone cannot prove it applies in the hand.
+                // this validates the hand-space contract, not an animated pose.
+                testRoot.transform.SetPositionAndRotation(new Vector3(2f, 3f, 4f), Quaternion.Euler(23f, 41f, -17f));
                 VisEquipment visuals = testRoot.AddComponent<VisEquipment>();
                 MethodInfo attachItem = typeof(VisEquipment).GetMethod("AttachItem", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                 if (attachItem == null) throw new Exception("Native VisEquipment.AttachItem API changed");
@@ -141,6 +143,9 @@ namespace ValheimModPack.NordicRadioSmoke
                     Quaternion.Angle(equipped.transform.localRotation, marker.rotation) > 0.01f)
                     throw new Exception("Native equipment did not apply the portable grip rotation");
                 Transform model = equipped.transform.Find("SkaldIdolModel");
+                if ((equipped.transform.TransformDirection(Vector3.back) + testRoot.transform.up).sqrMagnitude > 0.000001f ||
+                    (equipped.transform.TransformDirection(Vector3.up) + testRoot.transform.forward).sqrMagnitude > 0.000001f)
+                    throw new Exception("Native equipment grip axes differ from the expected hand-space directions");
                 Vector3 grip = model.TransformPoint(new Vector3(0f, 0.20f, 0.14f));
                 if ((grip - testRoot.transform.position).sqrMagnitude > 0.000001f)
                     throw new Exception("Portable rotation moved the rear grip out of the hand");

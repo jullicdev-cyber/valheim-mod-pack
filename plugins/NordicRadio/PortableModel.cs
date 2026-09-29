@@ -53,7 +53,11 @@ namespace ValheimModPack.NordicRadio
                 GameObject model = Child(attach.transform, "SkaldIdolModel");
                 model.transform.localPosition = new Vector3(0f, -0.20f, -0.14f);
                 GameObject equipOffset = Child(prefab.transform, "equipoffset");
-                equipOffset.transform.localRotation = Quaternion.Euler(0f, 90f, 0f);
+                // Relative to the previous grip: pitch the idol face (-Z) down
+                // 90 degrees about its own X, then turn left 90 about grip Y.
+                // The previous +90 Y turn cancels, leaving face=-Y and top=-Z
+                // in hand space. Rotation stays around the rear grip origin.
+                equipOffset.transform.localRotation = Quaternion.Euler(-90f, 0f, 0f);
                 List<Part> parts = BuildGeometry();
                 foreach (Part part in parts)
                 {

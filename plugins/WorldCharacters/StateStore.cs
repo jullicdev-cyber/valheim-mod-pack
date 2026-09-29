@@ -33,6 +33,23 @@ namespace ValheimModPack.WorldCharacters
                 return s;
             }
         }
+        // Presence, not validity: corrupt and backup-only records remain protected
+        // and are rejected by Read. File.Exists would hide permission/I/O errors.
+        public bool HasStoredState(long world, string owner, long character)
+        {
+            lock (sync)
+            {
+                string path = CharacterPath(world, owner, character);
+                return StoredEntryExists(path) || StoredEntryExists(path + ".bak");
+            }
+        }
+        private static bool StoredEntryExists(string path)
+        {
+            SafePath(path);
+            try { File.GetAttributes(path); return true; }
+            catch (FileNotFoundException) { return false; }
+            catch (DirectoryNotFoundException) { return false; }
+        }
         public void Save(CharacterState s, long expectedRevision)
         {
             lock (sync)

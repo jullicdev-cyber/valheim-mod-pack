@@ -13,7 +13,7 @@ namespace ValheimModPack.WorldCharacters
     [BepInIncompatibility("org.bepinex.plugins.servercharacters")]
     public sealed class Plugin : BaseUnityPlugin
     {
-        public const string Id = "valheimmodpack.worldcharacters", Version = "1.0.0";
+        public const string Id = "valheimmodpack.worldcharacters", Version = "1.0.1";
         private const string RpcName = "VMP_WorldCharacters_v1";
         internal static Plugin Instance;
         private StateStore store;
@@ -24,6 +24,7 @@ namespace ValheimModPack.WorldCharacters
         private readonly List<ZRpc> disconnect = new List<ZRpc>();
         private ConfigEntry<int> interval;
         private ConfigEntry<bool> protectSolo;
+        private readonly LocalProtectionPolicy protection = new LocalProtectionPolicy();
         private CharacterSession localHost;
         private Link server;
         private PlayerProfile protectedProfile;
@@ -56,7 +57,7 @@ namespace ValheimModPack.WorldCharacters
         {
             Instance = this;
             interval = Config.Bind("Saving", "SnapshotSeconds", 5, new ConfigDescription("Server snapshot interval. Minimum 2 seconds.", new AcceptableValueRange<int>(2, 30)));
-            protectSolo = Config.Bind("General", "ProtectSoloWorlds", false, "Also use world characters in local worlds started without Start Server. Multiplayer hosts are always protected.");
+            protectSolo = Config.Bind("General", "ProtectSoloWorlds", false, "Enroll new local worlds without Start Server. Existing protected characters stay protected in solo play. Takes effect when entering a world.");
             string dataRoot = Path.Combine(Path.GetDirectoryName(Paths.BepInExRootPath), "ValheimModpack", "WorldCharacters");
             store = new StateStore(dataRoot);
             harmony = new Harmony(Id); harmony.PatchAll(typeof(Plugin).Assembly);
@@ -71,7 +72,24 @@ namespace ValheimModPack.WorldCharacters
             byte[] result = new byte[length]; Buffer.BlockCopy(p.GetArray(), p.GetPos(), result, 0, length);
             p.SetPos(p.GetPos() + length); return result;
         }
-        private bool Hosting { get { return ZNet.instance && ZNet.instance.IsServer() && (ZNet.IsOpenServer() || protectSolo.Value); } }
+        private bool Hosting
+        {
+            get
+            {
+                if (!ZNet.instance || !ZNet.instance.IsServer()) return false;
+                try
+                {
+                    PlayerProfile profile = Game.instance ? Game.instance.GetPlayerProfile() : null;
+                    return protection.Resolve(ZNet.instance, ZNet.instance.GetWorldUID(), profile == null ? 0 : profile.GetPlayerID(),
+                        ZNet.IsOpenServer(), protectSolo.Value, store);
+                }
+                catch (Exception e)
+                {
+                    Fail("Cannot determine protected character state: " + e.Message);
+                    return true; // Never bypass protection because a state directory is unreadable.
+                }
+            }
+        }
         private bool Managed { get { return protectedProfile != null; } }
         internal bool BlockInput { get { return Managed && (!ready || failed || closing); } }
         private void Update()
@@ -303,6 +321,7 @@ namespace ValheimModPack.WorldCharacters
         private bool PrepareHost()
         {
             if (!Hosting || Managed) return !failed;
+            if (failed) return false;
             try
             {
                 protectedProfile = Game.instance.GetPlayerProfile(); long world = ZNet.instance.GetWorldUID();
@@ -404,6 +423,7 @@ namespace ValheimModPack.WorldCharacters
         }
         private void ResetSession()
         {
+            protection.Clear();
             links.Clear(); leases.Clear(); disconnect.Clear(); localHost = null; server = null; offered = null; protectedProfile = null;
             ready = failed = firstLoadSeen = saving = closing = continuingLogout = loadCompleted = exitOnUpdate = false;
             loadedPlayer = null; sent = acknowledged = 0; lastMapCapture = 0;
@@ -456,7 +476,10 @@ namespace ValheimModPack.WorldCharacters
                 if (!Instance.Hosting) return;
                 try
                 {
-                    Instance.Publish(false);
+                    // Game.Shutdown saves the character BEFORE ZNetScene.Shutdown
+                    // resets its ZDO, then saves the world. Use that committed state
+                    // here instead of trying to serialize the dismantled Player again.
+                    if (!Game.instance || !Game.instance.IsShuttingDown()) Instance.Publish(false);
                     long world = ZNet.instance.GetWorldUID(); byte[] bytes = Instance.store.CaptureCheckpoint(world);
                     lock (Instance.checkpointLock) { Instance.checkpointWorld = world; Instance.checkpointCandidate = bytes; }
                 }
