@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline installer for native Linux Valheim; only Python's standard library."""
+"""Install the Valheim pack and music on Linux; --skip-music supports offline installs."""
 import hashlib
 import json
 import re
@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import sys
 import tempfile
+import argparse
 from game_path import get_game_directory
 
 
@@ -135,16 +136,26 @@ def ensure_game_closed():
 def main():
     if sys.platform != 'linux':
         raise ValueError('Run this installer on Linux. On Windows use Install-Windows.cmd.')
-    if len(sys.argv) > 2:
-        raise ValueError('Usage: bash Install-Linux.sh [Valheim-directory]')
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('game_directory', nargs='?')
+    parser.add_argument('--music-url')
+    parser.add_argument('--skip-music', action='store_true')
+    args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
-    target = get_game_directory(root, sys.argv[1] if len(sys.argv) == 2 else None)
+    target = get_game_directory(root, args.game_directory)
     ensure_game_closed()
     original = install(root, target)
     print('Installed successfully. Backup:', original)
     print('Full game backup:', original.parent / 'full-backup')
     print('Steam launch options: ./valheim-modded.sh %command%')
     print('Set world Resources to x2 and Portals to Casual.')
+    if not args.skip_music:
+        from update_music import install_music
+        url = args.music_url or (root / 'music-source.txt').read_text(encoding='utf-8-sig').strip()
+        try:
+            install_music(target, url, ensure_game_closed)
+        except Exception as error:
+            raise ValueError('Mods installed successfully, but music update failed: ' + str(error) + '. Retry with Update-Music-Linux.sh.') from error
 
 
 if __name__ == '__main__':

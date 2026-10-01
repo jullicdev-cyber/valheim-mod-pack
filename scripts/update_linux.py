@@ -86,6 +86,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('game_directory', nargs='?')
     parser.add_argument('--download-only', action='store_true', help='Update this pack folder without installing into the game.')
+    parser.add_argument('--music-url')
+    parser.add_argument('--skip-music', action='store_true')
     args = parser.parse_args()
     if sys.platform != 'linux':
         raise ValueError('On Windows use Update-Windows.cmd.')
@@ -98,7 +100,12 @@ def main():
     if args.download_only:
         print('Pack folder updated. Game files were not changed.')
         return
-    subprocess.run([sys.executable, str(pack / 'scripts/install_linux.py'), str(target)], check=True)
+    command = [sys.executable, str(pack / 'scripts/install_linux.py'), str(target)]
+    if args.music_url:
+        command += ['--music-url', args.music_url]
+    if args.skip_music:
+        command += ['--skip-music']
+    subprocess.run(command, check=True)
 
 
 if __name__ == '__main__':

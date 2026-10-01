@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([string]$GameDirectory, [string]$SettingsDirectory)
+param([string]$GameDirectory, [string]$SettingsDirectory, [string]$MusicUrl, [switch]$SkipMusic)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'GamePath.ps1')
@@ -108,6 +108,12 @@ try {
     Write-Host "Installed successfully. Full backup: $snapshot"
     Write-Host "Replaced files for quick rollback: $original"
     Write-Host 'Start Valheim through Steam. Set world Resources to x2 and Portals to Casual.'
+    if (-not $SkipMusic) {
+        . (Join-Path $PSScriptRoot 'Music.ps1')
+        if (-not $MusicUrl) { $MusicUrl = (Get-Content -LiteralPath (Join-Path $root 'music-source.txt') -Raw).Trim() }
+        try { Install-RadioMusic $target $MusicUrl }
+        catch { throw "Mods installed successfully, but music update failed: $_. Retry with Update-Music-Windows.cmd." }
+    }
 } catch {
     Write-Error $_ -ErrorAction Continue
     exit 1

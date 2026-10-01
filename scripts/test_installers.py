@@ -108,7 +108,7 @@ class InstallTests(unittest.TestCase):
     def test_windows_pasted_prompt(self):
         pasted = 'Valheim directory (contains valheim.exe): ' * 2 + '"' + str(self.target) + '"'
         result = subprocess.run(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass',
-                                 '-File', str(ROOT / 'scripts/Install-Windows.ps1'),
+                                 '-File', str(ROOT / 'scripts/Install-Windows.ps1'), '-SkipMusic',
                                  '-SettingsDirectory', str(self.settings), '-GameDirectory', pasted], capture_output=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue((self.target / 'BepInEx/core/BepInEx.dll').exists())
@@ -124,7 +124,7 @@ class InstallTests(unittest.TestCase):
         self.make_symlink(self.target / 'BepInEx/relative.dll', 'old-plugin.txt')
         self.make_symlink(self.target / 'winhttp.dll', payload)
         result = subprocess.run(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass',
-                                 '-File', str(ROOT / 'scripts/Install-Windows.ps1'),
+                                 '-File', str(ROOT / 'scripts/Install-Windows.ps1'), '-SkipMusic',
                                  '-SettingsDirectory', str(self.settings), '-GameDirectory', str(self.target)], capture_output=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         backup = next((self.target / 'ValheimModpack-backups').iterdir())
@@ -141,7 +141,7 @@ class InstallTests(unittest.TestCase):
     def test_windows_dangling_link_preserves_game(self):
         self.make_symlink(self.target / 'BepInEx/missing.dll', self.target / 'not-present.dll')
         result = subprocess.run(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass',
-                                 '-File', str(ROOT / 'scripts/Install-Windows.ps1'),
+                                 '-File', str(ROOT / 'scripts/Install-Windows.ps1'), '-SkipMusic',
                                  '-SettingsDirectory', str(self.settings), '-GameDirectory', str(self.target)], capture_output=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual((self.target / 'BepInEx/old-plugin.txt').read_text(), 'old mod')
@@ -161,7 +161,7 @@ class InstallTests(unittest.TestCase):
         self.assertNotEqual(handle, wintypes.HANDLE(-1).value)
         try:
             result = subprocess.run(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass',
-                                     '-File', str(ROOT / 'scripts/Install-Windows.ps1'),
+                                     '-File', str(ROOT / 'scripts/Install-Windows.ps1'), '-SkipMusic',
                                      '-SettingsDirectory', str(self.settings), '-GameDirectory', str(self.target)], capture_output=True)
             self.assertNotEqual(result.returncode, 0)
         finally:
@@ -187,7 +187,7 @@ class InstallTests(unittest.TestCase):
     @unittest.skipUnless(sys.platform == 'win32', 'Windows PowerShell test')
     def test_windows_install_and_reinstall(self):
         command = ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
-                   str(ROOT / 'scripts/Install-Windows.ps1'), '-SettingsDirectory', str(self.settings), '-GameDirectory', str(self.target)]
+                   str(ROOT / 'scripts/Install-Windows.ps1'), '-SkipMusic', '-SettingsDirectory', str(self.settings), '-GameDirectory', str(self.target)]
         for _ in range(2):
             result = subprocess.run(command, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
