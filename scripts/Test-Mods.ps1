@@ -23,10 +23,10 @@ function Run-Suite([string]$Name,[string]$Script,[string[]]$Arguments=@()) {
 }
 Run-Suite 'pack-integrity' 'scripts/Verify.ps1'
 Run-Suite 'plugin-dependencies' 'scripts/Audit-Plugins.ps1'
-foreach($entry in @('WorldCharacters','ChestSearch','InterfaceInputFix','RenewableResourceTimers','ConfirmMapPinRemoval','NordicRadio')) {
+foreach($entry in @('WorldCharacters','ChestSearch','InterfaceInputFix','RenewableResourceTimers','ConfirmMapPinRemoval','NordicRadio','PortalFinder','PlayerSectorSync')) {
     Run-Suite $entry ('plugins/'+$entry+'/Test.ps1') @('-GameDirectory',$GameDirectory)
 }
-foreach($entry in @('EAQSQuickStackBridge/Test.ps1','ExpeditionLoadouts/Test-Backend.ps1','ExpeditionLoadouts/Test-Presets.ps1',
+foreach($entry in @('EAQSQuickStackBridge/Test.ps1','ExpeditionLoadouts/Test-Backend.ps1','ExpeditionLoadouts/Test-Presets.ps1','ExpeditionLoadouts/Test-Hotkeys.ps1',
     'ConfirmMapPinRemoval/Test-Presets.ps1','ConfirmMapPinRemoval/Test-PinPresetLocalization.ps1','ConfirmMapPinRemoval/Test-QuickPins.ps1')) {
     Run-Suite ($entry.Replace('/','-').Replace('.ps1','')) ('plugins/'+$entry)
 }

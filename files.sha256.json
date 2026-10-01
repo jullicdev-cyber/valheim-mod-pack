@@ -550,5 +550,9 @@
   {
     "path": "BepInEx/plugins/ValheimModPack-PortalFinder/PortalFinder.dll",
     "sha256": "1a48c95f89e2f3b7142de0c61358dbd44451ea384b6c9640dd47d77fbac40772"
+  },
+  {
+    "path": "BepInEx/plugins/ValheimModPack-PlayerSectorSync/PlayerSectorSync.dll",
+    "sha256": "8150996d84c51b891fff5619f6fd5b46b8a710222bb6b4578d53b7cec02c85e7"
   }
 ]

@@ -1,5 +1,5 @@
 {
-  "packVersion": "1.15.0",
+  "packVersion": "1.15.1",
   "created": "2026-09-25",
   "targetGameVersion": "1.0.16",
   "packages": [
@@ -372,6 +372,16 @@
         "denikson-BepInExPack_Valheim-5.4.2351",
         "ValheimModding-Jotunn-2.30.2",
         "SpikeHimself-XPortal-1.2.25"
+      ]
+    },
+    {
+      "id": "ValheimModPack-PlayerSectorSync",
+      "version": "1.0.0",
+      "source": "local-plugins/PlayerSectorSync.dll",
+      "destination": "BepInEx/plugins/ValheimModPack-PlayerSectorSync/PlayerSectorSync.dll",
+      "sha256": "8150996d84c51b891fff5619f6fd5b46b8a710222bb6b4578d53b7cec02c85e7",
+      "dependencies": [
+        "denikson-BepInExPack_Valheim-5.4.2351"
       ]
     }
   ]
