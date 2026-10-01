@@ -83,6 +83,7 @@ namespace ValheimModPack.WorldCharactersProbe
                 // Exercise PlayerProfile migration through the real native profile and WorldPlayerData types.
                 var profile = new PlayerProfile("WorldCharactersProbe", FileHelpers.FileSource.Local); profile.SetName("Миграция");
                 AccessTools.Field(typeof(PlayerProfile),"m_playerID").SetValue(profile,44L);
+                VerifyProtectedSaveTimer(profile);
                 byte[] payload;
                 using (var stream = new MemoryStream())
                 using (var writer = new BinaryWriter(stream))
@@ -91,7 +92,7 @@ namespace ValheimModPack.WorldCharactersProbe
                     writer.Write(saved.GetArray()); writer.Write(0); writer.Flush(); payload = stream.ToArray();
                 }
                 AccessTools.Field(typeof(PlayerProfile),"m_playerData").SetValue(profile,payload);
-                var state = (CharacterState)gameState.GetMethod("FromProfile").Invoke(null,new object[]{profile,123L,"host",fingerprint,false});
+                var state = (CharacterState)gameState.GetMethod("FromProfile").Invoke(null,new object[]{profile,123L,"host",fingerprint,false,true});
                 var encoded = StateCodec.Encode(state); state = StateCodec.Decode(encoded);
                 Check(state.WorldData.Length >= 59 && state.Player.SequenceEqual(payload), "native existing-profile migration preserves bytes");
                 gameState.GetMethod("Apply").Invoke(null,new object[]{profile,state});
@@ -111,6 +112,29 @@ namespace ValheimModPack.WorldCharactersProbe
             var extensions = a.GetType("Vapok.Common.Managers.ItemExtensions",true);
             object info = extensions.GetMethod("Data",new[]{typeof(ItemDrop.ItemData)}).Invoke(null,new object[]{item});
             return info.GetType().GetMethod("GetOrCreate").MakeGenericMethod(a.GetType("AdventureBackpacks.Components.BackpackComponent",true)).Invoke(info,new object[]{""});
+        }
+        private void VerifyProtectedSaveTimer(PlayerProfile profile)
+        {
+            // Call the replacement prefix directly: creating Game would run its
+            // Awake, while invoking the original would perform a native save.
+            // An unloaded protected fixture makes Publish return before I/O.
+            object plugin = Chainloader.PluginInfos[Plugin.Id].Instance;
+            FieldInfo protectedProfile = AccessTools.Field(typeof(Plugin),"protectedProfile");
+            FieldInfo ready = AccessTools.Field(typeof(Plugin),"ready");
+            object oldProfile = protectedProfile.GetValue(plugin), oldReady = ready.GetValue(plugin);
+            try
+            {
+                protectedProfile.SetValue(plugin,profile); ready.SetValue(plugin,false);
+                Type patch = typeof(Plugin).GetNestedType("SavePatch",BindingFlags.NonPublic);
+                MethodInfo prefix = patch.GetMethod("Prefix",BindingFlags.NonPublic | BindingFlags.Static);
+                ParameterInfo[] parameters = prefix.GetParameters();
+                Check(parameters.Length == 1 && parameters[0].Name == "___m_saveTimer"
+                    && parameters[0].ParameterType == typeof(float).MakeByRefType(), "protected save prefix injects native autosave timer by reference");
+                object[] arguments = new object[] { 30f };
+                Check(!(bool)prefix.Invoke(null,arguments) && (float)arguments[0] == 0f,
+                    "protected save resets autosave timer and skips original save without a live character");
+            }
+            finally { protectedProfile.SetValue(plugin,oldProfile); ready.SetValue(plugin,oldReady); }
         }
         private void Check(bool value,string reason) { if(!value) throw new Exception(reason); ++checks; }
         private void Finish(string result,int code) { if(done) return; done=true; File.WriteAllText(Path.Combine(Root,"result.txt"),result); Logger.LogInfo(result); Application.Quit(code); }

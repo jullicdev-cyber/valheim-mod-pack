@@ -23,6 +23,10 @@ try {
                 if ($name -in '__instance','__runOriginal','__exception') { continue }
                 $expected = $null
                 if ($name -eq '__result') { $expected = $target.ReturnType.FullName }
+                elseif ($name.StartsWith('___', [StringComparison]::Ordinal)) {
+                    $fieldName = $name.Substring(3)
+                    $expected = ($targetType.Fields | Where-Object Name -eq $fieldName).FieldType.FullName
+                }
                 elseif ($name -match '^__(\d+)$') { $expected = $target.Parameters[[int]$Matches[1]].ParameterType.FullName }
                 else { $expected = ($target.Parameters | Where-Object Name -eq $name).ParameterType.FullName }
                 $actual = $parameter.ParameterType.FullName.TrimEnd('&')
@@ -45,6 +49,13 @@ try {
     # The shutdown checkpoint reuses the character snapshot committed before the
     # scene invalidates Player's ZDO. Fail if native lifecycle ordering changes.
     $gameType = $game.MainModule.Types | Where-Object Name -eq 'Game'
+    # SavePlayerProfile is replaced for protected characters. Its native caller
+    # relies on this method resetting the instance timer after an autosave.
+    $saveTimer = @($gameType.Fields | Where-Object Name -eq 'm_saveTimer')
+    if ($saveTimer.Count -ne 1 -or $saveTimer[0].IsStatic -or $saveTimer[0].FieldType.FullName -ne 'System.Single') {
+        throw 'Game.m_saveTimer field contract changed'
+    }
+    $count++
     $shuttingDown = @($gameType.Methods | Where-Object Name -eq 'IsShuttingDown')
     if ($shuttingDown.Count -ne 1 -or -not $shuttingDown[0].IsPublic -or $shuttingDown[0].IsStatic -or $shuttingDown[0].ReturnType.FullName -ne 'System.Boolean') {
         throw 'Game.IsShuttingDown contract changed'

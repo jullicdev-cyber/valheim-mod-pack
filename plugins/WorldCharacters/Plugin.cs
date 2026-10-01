@@ -13,10 +13,18 @@ namespace ValheimModPack.WorldCharacters
     [BepInIncompatibility("org.bepinex.plugins.servercharacters")]
     public sealed class Plugin : BaseUnityPlugin
     {
-        public const string Id = "valheimmodpack.worldcharacters", Version = "1.0.1";
+        public const string Id = "valheimmodpack.worldcharacters", Version = "1.0.2";
         private const string RpcName = "VMP_WorldCharacters_v1";
+        private const int SnapshotQueueCapacity = 64;
         internal static Plugin Instance;
         private StateStore store;
+        private SnapshotWriter writer;
+        private int saveGeneration;
+        private long produced, localDurable;
+        private byte[] cachedWorldData;
+        private double lastCaptureMs, lastWriteMs;
+        private int lastPacketBytes;
+        private float nextSlowWarning;
         private Harmony harmony;
         private string fingerprint;
         private readonly Dictionary<ZRpc, Link> links = new Dictionary<ZRpc, Link>();
@@ -50,8 +58,7 @@ namespace ValheimModPack.WorldCharacters
             public float Created, LastMessage;
             public bool SentHello, Rejected;
             public long World;
-            public float BurstStart;
-            public int BurstCount;
+            public readonly SnapshotRateLimit SnapshotBudget = new SnapshotRateLimit(SnapshotQueueCapacity);
         }
         private void Awake()
         {
@@ -60,8 +67,9 @@ namespace ValheimModPack.WorldCharacters
             protectSolo = Config.Bind("General", "ProtectSoloWorlds", false, "Enroll new local worlds without Start Server. Existing protected characters stay protected in solo play. Takes effect when entering a world.");
             string dataRoot = Path.Combine(Path.GetDirectoryName(Paths.BepInExRootPath), "ValheimModpack", "WorldCharacters");
             store = new StateStore(dataRoot);
+            writer = new SnapshotWriter(SnapshotQueueCapacity);
             harmony = new Harmony(Id); harmony.PatchAll(typeof(Plugin).Assembly);
-            new Terminal.ConsoleCommand("wc", "World Characters: status, pending, inspect/approve/fresh/reject <id>", (Terminal.ConsoleEvent)Command);
+            new Terminal.ConsoleCommand("wc", "World Characters: status, timings, pending, inspect/approve/fresh/reject <id>", (Terminal.ConsoleEvent)Command);
             Logger.LogInfo("World Characters ready. Server data: " + dataRoot);
         }
         private string Fingerprint { get { return fingerprint ?? (fingerprint = GameState.BuildFingerprint()); } }
@@ -94,6 +102,7 @@ namespace ValheimModPack.WorldCharacters
         internal bool BlockInput { get { return Managed && (!ready || failed || closing); } }
         private void Update()
         {
+            DrainWrites();
             if (exitOnUpdate)
             {
                 exitOnUpdate = false;
@@ -121,14 +130,41 @@ namespace ValheimModPack.WorldCharacters
                 nextSave = now + interval.Value;
                 try { Publish(false); } catch (Exception e) { Fail("Character save failed: " + e.Message); }
             }
-            if (closing && (localHost != null || acknowledged >= sent || now - closingAt > 8))
+            // A final capture may still be queued and not yet sent. Never let
+            // acknowledged >= sent bypass its local durable write.
+            bool locallySaved = localHost != null ? localHost.LastSequence == localHost.AcceptedSequence : localDurable >= produced;
+            if (closing && locallySaved && (localHost != null || acknowledged >= produced || now - closingAt > 8))
             {
-                if (acknowledged < sent && localHost == null) Logger.LogWarning("Logout snapshot was not acknowledged. Recovery copy retained; it is NOT automatically imported.");
+                if (acknowledged < produced && localHost == null) Logger.LogWarning("Logout snapshot was not acknowledged. Recovery copy retained; it is NOT automatically imported.");
                 closing = false; ready = false; continuingLogout = true;
                 try { if (Game.instance) Game.instance.Logout(logoutSave, logoutScene); }
                 finally { continuingLogout = false; }
             }
         }
+        private void DrainWrites()
+        {
+            if (writer == null) return;
+            try { writer.Drain(); }
+            catch (Exception e) { Fail("Saved snapshot completion failed: " + e.Message); }
+        }
+        private void FlushWrites()
+        {
+            if (writer == null) return;
+            writer.Barrier(); DrainWrites();
+        }
+        private void SavedTiming(double milliseconds)
+        {
+            lastWriteMs = milliseconds;
+            if (milliseconds >= 50 && Time.realtimeSinceStartup >= nextSlowWarning)
+            {
+                nextSlowWarning = Time.realtimeSinceStartup + 30;
+                Logger.LogWarning("Background snapshot took " + milliseconds.ToString("F1") + " ms. Game-thread capture: " + lastCaptureMs.ToString("F1") + " ms.");
+            }
+        }
+        private static long RetainedBytes(CharacterState state)
+        { return 4L * (state.Player.Length + state.WorldData.Length + 512); }
+        private static bool Connected(Link link)
+        { return link != null && !link.Rejected && link.Peer != null && link.Peer.m_rpc != null && link.Peer.m_rpc.IsConnected(); }
         private void OnGUI()
         {
             if (String.IsNullOrEmpty(message)) return;
@@ -274,16 +310,35 @@ namespace ValheimModPack.WorldCharacters
             if (kind == 4)
             {
                 string token = p.ReadString(); long sequence = p.ReadLong(); bool final = p.ReadBool(); bool includesMap = p.ReadBool();
-                float now = Time.realtimeSinceStartup;
-                if (now - link.BurstStart >= 1) { link.BurstStart = now; link.BurstCount = 0; }
-                if (++link.BurstCount > 5) throw new InvalidDataException("Too many snapshots in one second.");
-                CharacterState update = StateCodec.Decode(PacketBytes(p));
-                if (!includesMap) update.WorldData = StateCodec.RetainMap(update.WorldData, link.Session.State.WorldData);
-                CharacterState next = link.Session.Next(token, sequence, update);
-                next.Build = Fingerprint;
-                store.Save(next, link.Session.State.Revision);
-                link.Session.Committed(next, sequence, final); link.LastMessage = Time.realtimeSinceStartup;
-                Send(link, 5, reply => { reply.Write(sequence); reply.Write(next.Revision); });
+                // Durable completions can arrive together after a slow disk or
+                // shutdown barrier. Allow the bounded backlog, while retaining
+                // the five-per-second sustained limit for an active session.
+                if (!link.SnapshotBudget.TryTake(Time.realtimeSinceStartup))
+                    throw new InvalidDataException("Too many character snapshots.");
+                byte[] packet = PacketBytes(p);
+                CharacterState update = StateCodec.Decode(packet);
+                if (!includesMap) update.WorldData = link.Session.RetainAcceptedMap(update.WorldData);
+                update.Build = Fingerprint;
+                long retained = RetainedBytes(update);
+                // Admission is exclusively on the Unity thread. Capacity cannot
+                // grow between this check and enqueue; workers only release it.
+                if (!writer.CanEnqueue(retained)) throw new IOException("Snapshot writer is overloaded; last durable character retained.");
+                CharacterState next = link.Session.Stage(token, sequence, update, final);
+                int generation = saveGeneration;
+                if (!writer.TryEnqueue(retained, () => { store.Save(next, next.Revision - 1); return next; }, (result, error, elapsed) =>
+                {
+                    if (generation != saveGeneration) return;
+                    SavedTiming(elapsed);
+                    if (error != null) { Reject(link, "Character disk save failed; previous revision retained: " + error.Message); return; }
+                    try
+                    {
+                        link.Session.Committed((CharacterState)result, sequence, final);
+                        if (Connected(link)) Send(link, 5, reply => { reply.Write(sequence); reply.Write(next.Revision); });
+                    }
+                    catch (Exception e) { Reject(link, "Character commit failed: " + e.Message); }
+                })) throw new IOException("Snapshot writer stopped accepting saves.");
+                lastPacketBytes = packet.Length;
+                link.LastMessage = Time.realtimeSinceStartup;
                 return;
             }
             if (kind == 6) { Reject(link, "Client reports incomplete character load."); return; }
@@ -364,44 +419,95 @@ namespace ValheimModPack.WorldCharacters
                 GameState.VerifyLoaded(player, offered);
                 if (localHost != null) localHost.MarkLoaded(localHost.Token);
                 else Send(server, 3, p => p.Write(server.Token));
+                cachedWorldData = (byte[])offered.WorldData.Clone();
                 ready = true; nextSave = Time.realtimeSinceStartup + interval.Value;
                 Logger.LogInfo("Restored protected character " + offered.Name + " world=" + offered.World + " revision=" + offered.Revision);
             }
             catch (Exception e) { Fail("Restore validation failed. Previous save retained: " + e.Message); }
         }
-        private void Publish(bool final, bool saveMap = false)
+        private void Publish(bool final, bool saveMap = false, bool mandatory = false)
         {
             if (!ready || failed || saving || (closing && !final)) return;
+            if (localHost != null && localHost.AcceptedFinal) return;
+            // Keep at most one ordinary snapshot in flight per local character.
+            // Death, native saves and logout still capture every mandatory state.
+            if (!final && !mandatory && (localHost != null ? localHost.AcceptedSequence > localHost.LastSequence : produced > acknowledged)) return;
             // During death/respawn the local Player temporarily does not exist. Its last native
             // profile snapshot is sent by the SavePlayerData hook before destruction instead.
             if (!Player.m_localPlayer && !final) return;
             saving = true;
+            var captureClock = System.Diagnostics.Stopwatch.StartNew();
             try
             {
+                if (!writer.CanEnqueue(512))
+                {
+                    if (!final && !mandatory) return;
+                    FlushWrites();
+                    if (failed) throw new IOException("Previous character save failed.");
+                }
                 bool includesMap = final || saveMap || lastMapCapture <= 0 || Time.realtimeSinceStartup - lastMapCapture >= 60;
                 if (includesMap && Minimap.instance) { Minimap.instance.SaveMapData(); lastMapCapture = Time.realtimeSinceStartup; }
-                CharacterState update = GameState.FromProfile(protectedProfile, offered.World, offered.Owner, Fingerprint, Player.m_localPlayer != null);
+                CharacterState update = GameState.FromProfile(protectedProfile, offered.World, offered.Owner, Fingerprint, Player.m_localPlayer != null, includesMap);
+                if (includesMap) cachedWorldData = update.WorldData;
+                byte[] mapSource = cachedWorldData ?? new byte[0];
+                long retained = RetainedBytes(update) + (includesMap ? 0 : 4L * mapSource.Length);
+                if (!writer.CanEnqueue(retained))
+                {
+                    if (!final && !mandatory) return;
+                    FlushWrites();
+                    if (failed || !writer.CanEnqueue(retained)) throw new IOException("Snapshot writer is overloaded; previous saved character retained.");
+                }
+                int generation = saveGeneration;
                 if (localHost != null)
                 {
-                    CharacterState next = localHost.Next(localHost.Token, localHost.LastSequence + 1, update);
-                    store.Save(next, localHost.State.Revision);
-                    localHost.Committed(next, localHost.LastSequence + 1, final); offered = next;
+                    if (!includesMap) update.WorldData = StateCodec.RetainMap(update.WorldData, mapSource);
+                    CharacterSession session = localHost;
+                    long sequence = session.AcceptedSequence + 1;
+                    CharacterState next = session.Stage(session.Token, sequence, update, final);
+                    if (!writer.TryEnqueue(retained, () => { store.Save(next, next.Revision - 1); return next; }, (result, error, elapsed) =>
+                    {
+                        if (generation != saveGeneration) return;
+                        SavedTiming(elapsed);
+                        if (error != null) { Fail("Host character disk save failed; earlier revision retained: " + error.Message); return; }
+                        session.Committed((CharacterState)result, sequence, final); offered = session.State;
+                    })) throw new IOException("Snapshot writer stopped accepting saves.");
                 }
                 else
                 {
                     if (server == null || server.Rejected) throw new IOException("Server connection is unavailable.");
-                    // A recovery copy is evidence for manual recovery, never an automatically trusted upload after reconnect.
-                    store.Archive("client-recovery", update);
-                    long sequence = ++sent;
-                    if (!includesMap) update.WorldData = StateCodec.WithoutMap(update.WorldData);
-                    Send(server, 4, p => { p.Write(server.Token); p.Write(sequence); p.Write(final); p.Write(includesMap); p.Write(StateCodec.Encode(update)); });
+                    Link link = server;
+                    long sequence = produced + 1;
+                    if (!writer.TryEnqueue(retained, () =>
+                    {
+                        // Recovery contains the last captured map, but position-only
+                        // RPCs avoid copying that map on the Unity thread.
+                        CharacterState recovery = update.Copy();
+                        if (!includesMap) recovery.WorldData = StateCodec.RetainMap(update.WorldData, mapSource);
+                        store.Archive("client-recovery", recovery);
+                        return StateCodec.Encode(update);
+                    }, (result, error, elapsed) =>
+                    {
+                        if (generation != saveGeneration || !ReferenceEquals(server, link)) return;
+                        SavedTiming(elapsed);
+                        if (error != null) { Fail("Local recovery save failed: " + error.Message); return; }
+                        localDurable = sequence;
+                        byte[] packet = (byte[])result; lastPacketBytes = packet.Length;
+                        if (!Connected(link)) return;
+                        try
+                        {
+                            Send(link, 4, p => { p.Write(link.Token); p.Write(sequence); p.Write(final); p.Write(includesMap); p.Write(packet); });
+                            sent = sequence;
+                        }
+                        catch (Exception e) { Fail("Saved snapshot could not reach host: " + e.Message); }
+                    })) throw new IOException("Snapshot writer stopped accepting saves.");
+                    produced = sequence;
                 }
             }
-            finally { saving = false; }
+            finally { captureClock.Stop(); lastCaptureMs = captureClock.Elapsed.TotalMilliseconds; saving = false; }
         }
         private bool BeforeLogout(bool save, bool changeScene)
         {
-            if (continuingLogout || !ready || failed || localHost != null) return true;
+            if (continuingLogout || !ready || failed) return true;
             if (!closing)
             {
                 try { Publish(true); closing = true; closingAt = Time.realtimeSinceStartup; logoutSave = save; logoutScene = changeScene; }
@@ -411,6 +517,8 @@ namespace ValheimModPack.WorldCharacters
         }
         private void Removed(ZNetPeer peer)
         {
+            // Lease release and reconnect must observe all admitted durable writes.
+            FlushWrites();
             Link link;
             if (!links.TryGetValue(peer.m_rpc, out link)) return;
             if (link.Session != null)
@@ -423,17 +531,22 @@ namespace ValheimModPack.WorldCharacters
         }
         private void ResetSession()
         {
+            FlushWrites(); ++saveGeneration;
             protection.Clear();
             links.Clear(); leases.Clear(); disconnect.Clear(); localHost = null; server = null; offered = null; protectedProfile = null;
             ready = failed = firstLoadSeen = saving = closing = continuingLogout = loadCompleted = exitOnUpdate = false;
             loadedPlayer = null; sent = acknowledged = 0; lastMapCapture = 0;
+            produced = localDurable = 0; cachedWorldData = null;
         }
         private void Command(Terminal.ConsoleEventArgs args)
         {
             try
             {
-                if (args.Length < 2 || args[1] == "status")
-                { args.Context.AddString("World Characters " + Version + ": protected=" + Managed + " loaded=" + ready + " failed=" + failed + " pending saves=" + (sent - acknowledged)); return; }
+                if (args.Length < 2 || args[1] == "status" || args[1] == "timings")
+                {
+                    args.Context.AddString("World Characters " + Version + ": protected=" + Managed + " loaded=" + ready + " failed=" + failed + " pending saves=" + (produced - acknowledged));
+                    args.Context.AddString("Capture=" + lastCaptureMs.ToString("F2") + " ms; background write=" + lastWriteMs.ToString("F2") + " ms; packet=" + lastPacketBytes + " bytes; queue=" + writer.PendingCount + " jobs / " + writer.PendingBytes + " bytes."); return;
+                }
                 if (!Hosting) throw new InvalidOperationException("Run administration commands on the local host or dedicated server console.");
                 if (args[1] == "pending")
                 {
@@ -464,7 +577,11 @@ namespace ValheimModPack.WorldCharacters
             }
             catch (Exception e) { args.Context.AddString("World Characters: " + e.Message); }
         }
-        private void OnDestroy() { if (harmony != null) harmony.UnpatchSelf(); if (store != null) store.Dispose(); if (Instance == this) Instance = null; }
+        private void OnDestroy()
+        {
+            if (writer != null) { FlushWrites(); writer.Dispose(); }
+            if (harmony != null) harmony.UnpatchSelf(); if (store != null) store.Dispose(); if (Instance == this) Instance = null;
+        }
 
         // PrepareSave runs on the main thread after any previous save thread has joined.
         // Capture accepted character revisions at the same boundary as the world snapshot.
@@ -479,7 +596,9 @@ namespace ValheimModPack.WorldCharacters
                     // Game.Shutdown saves the character BEFORE ZNetScene.Shutdown
                     // resets its ZDO, then saves the world. Use that committed state
                     // here instead of trying to serialize the dismantled Player again.
-                    if (!Game.instance || !Game.instance.IsShuttingDown()) Instance.Publish(false);
+                    if (!Game.instance || !Game.instance.IsShuttingDown()) Instance.Publish(false, false, true);
+                    Instance.FlushWrites();
+                    if (Instance.failed) throw new IOException("Character writer failed; checkpoint not committed.");
                     long world = ZNet.instance.GetWorldUID(); byte[] bytes = Instance.store.CaptureCheckpoint(world);
                     lock (Instance.checkpointLock) { Instance.checkpointWorld = world; Instance.checkpointCandidate = bytes; }
                 }
@@ -544,10 +663,17 @@ namespace ValheimModPack.WorldCharacters
         [HarmonyPatch(typeof(Game), "SavePlayerProfile")]
         private static class SavePatch
         {
-            private static bool Prefix()
+            private static bool Prefix(ref float ___m_saveTimer)
             {
                 if (!Instance.Managed) return true;
-                try { Instance.Publish(false, true); } catch (Exception e) { Instance.Fail(e.Message); }
+                // Native SavePlayerProfile resets this timer. Skipping the
+                // original without resetting it triggers autosave every frame.
+                ___m_saveTimer = 0;
+                try
+                {
+                    Instance.Publish(false, true, true);
+                    if (Game.instance && Game.instance.IsShuttingDown()) Instance.FlushWrites();
+                } catch (Exception e) { Instance.Fail(e.Message); }
                 return false;
             }
         }
@@ -557,7 +683,7 @@ namespace ValheimModPack.WorldCharacters
             private static void Postfix(PlayerProfile __instance)
             {
                 if (!ReferenceEquals(__instance, Instance.protectedProfile) || !Instance.ready || Instance.saving || Instance.closing) return;
-                try { Instance.Publish(false); } catch (Exception e) { Instance.Fail(e.Message); }
+                try { Instance.Publish(false, false, true); } catch (Exception e) { Instance.Fail(e.Message); }
             }
         }
         [HarmonyPatch(typeof(PlayerProfile), "SavePlayerToDisk")]

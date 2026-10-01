@@ -285,7 +285,7 @@
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-WorldCharacters/WorldCharacters.dll",
-    "sha256": "5ccf3f884a8874b3b66253397aaf6e30f23a1dedfac71de5409bd3c112cc969c"
+    "sha256": "0a0f81d3365a061848d68504b5bc0ba6672acc064fe96bb46e460f676aa2953d"
   },
   {
     "path": "BepInEx/plugins/ValheimModding-JsonDotNET/Newtonsoft.Json.dll",

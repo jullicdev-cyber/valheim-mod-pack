@@ -84,7 +84,12 @@ namespace ValheimModPack.WorldCharacters
                     for (int j = 0; j < 3; ++j)
                     { float value = r.ReadSingle(); if (Single.IsNaN(value) || Single.IsInfinity(value)) throw new InvalidDataException("Invalid world profile position."); }
                 }
-                ReadBytes(r, 10 * 1024 * 1024);
+                // The map is opaque bytes. Validate its envelope without copying
+                // it again whenever a snapshot's positions are checked or merged.
+                int mapLength = r.ReadInt32();
+                if (mapLength < 0 || mapLength > 10 * 1024 * 1024 || mapLength > stream.Length - stream.Position)
+                    throw new InvalidDataException("Invalid field length.");
+                stream.Position += mapLength;
                 if (stream.Position != stream.Length) throw new InvalidDataException("Trailing world profile data.");
             }
         }

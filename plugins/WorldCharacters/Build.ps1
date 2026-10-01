@@ -11,7 +11,7 @@ foreach ($ref in $refs) { if (-not (Test-Path -LiteralPath $ref)) { throw "Missi
 New-Item -ItemType Directory -Force (Split-Path $OutputFile -Parent) | Out-Null
 $argsList = @('/nologo','/codepage:65001','/target:library','/optimize+',('/out:' + $OutputFile))
 $argsList += $refs | ForEach-Object { '/reference:' + $_ }
-$argsList += @('State.cs','NativeInventory.cs','StateStore.cs','Session.cs','GameState.cs','Plugin.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
+$argsList += @('State.cs','NativeInventory.cs','StateStore.cs','Session.cs','SnapshotWriter.cs','SnapshotRateLimit.cs','GameState.cs','Plugin.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
 & $compiler @argsList
 if ($LASTEXITCODE -ne 0) { throw 'WorldCharacters compilation failed.' }
 Write-Output "Built WorldCharacters: $OutputFile"

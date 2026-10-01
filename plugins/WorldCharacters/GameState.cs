@@ -23,7 +23,7 @@ namespace ValheimModPack.WorldCharacters
             }
             return StateCodec.Hash(System.Text.Encoding.UTF8.GetBytes(String.Join("\n", lines.ToArray())));
         }
-        public static CharacterState FromProfile(PlayerProfile profile, long world, string owner, string build, bool live)
+        public static CharacterState FromProfile(PlayerProfile profile, long world, string owner, string build, bool live, bool includeMap = true)
         {
             if (profile == null) throw new InvalidOperationException("Character profile is unavailable.");
             byte[] payload;
@@ -39,7 +39,7 @@ namespace ValheimModPack.WorldCharacters
             }
             else payload = (byte[])Data.GetValue(profile) ?? new byte[0];
             return new CharacterState { World = world, Owner = owner, Character = profile.GetPlayerID(), Name = profile.GetName(),
-                Build = build, Player = (byte[])payload.Clone(), WorldData = CaptureWorld(profile, world) };
+                Build = build, Player = (byte[])payload.Clone(), WorldData = CaptureWorld(profile, world, includeMap) };
         }
         public static void Apply(PlayerProfile profile, CharacterState state)
         {
@@ -78,7 +78,7 @@ namespace ValheimModPack.WorldCharacters
             }
         }
         private static object GetWorld(PlayerProfile profile, long world) { return WorldData.Invoke(profile, new object[] {world}); }
-        private static byte[] CaptureWorld(PlayerProfile profile, long world)
+        private static byte[] CaptureWorld(PlayerProfile profile, long world, bool includeMap)
         {
             object data = GetWorld(profile, world);
             using (var stream = new MemoryStream())
@@ -91,7 +91,7 @@ namespace ValheimModPack.WorldCharacters
                     Vector3 point = (Vector3)Field(data, "m_" + prefix + "Point").GetValue(data);
                     w.Write(point.x); w.Write(point.y); w.Write(point.z);
                 }
-                StateCodec.WriteBytes(w, (byte[])Field(data, "m_mapData").GetValue(data) ?? new byte[0]);
+                StateCodec.WriteBytes(w, includeMap ? ((byte[])Field(data, "m_mapData").GetValue(data) ?? new byte[0]) : new byte[0]);
                 w.Flush(); return stream.ToArray();
             }
         }
