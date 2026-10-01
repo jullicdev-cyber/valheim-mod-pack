@@ -58,7 +58,9 @@ try {
 } finally { $utils.Dispose(); $game.Dispose() }
 
 # Compile optional runtime probes, but never start a game process here.
-$probe = Join-Path (Split-Path $PluginAssembly -Parent) 'ChestSearchNativeChecks.dll'
+$probeDirectory = Join-Path $root ('.cache/chest-input-contracts-' + [guid]::NewGuid().ToString('N').Substring(0,8))
+New-Item -ItemType Directory -Force -Path $probeDirectory | Out-Null
+$probe = Join-Path $probeDirectory 'ChestSearchNativeChecks.dll'
 $refs = @($PluginAssembly)
 $refs += @('Game/BepInEx/core/BepInEx.dll','Game/BepInEx/core/0Harmony.dll','Game/BepInEx/plugins/Jotunn.dll') | ForEach-Object { Join-Path $root $_ }
 $refs += @('assembly_valheim.dll','assembly_guiutils.dll','assembly_utils.dll','SoftReferenceableAssets.dll','UnityEngine.dll','UnityEngine.CoreModule.dll','UnityEngine.PhysicsModule.dll','UnityEngine.InputLegacyModule.dll','UnityEngine.UI.dll','UnityEngine.UIModule.dll','UnityEngine.TextRenderingModule.dll','netstandard.dll') | ForEach-Object { Join-Path $managed $_ }
