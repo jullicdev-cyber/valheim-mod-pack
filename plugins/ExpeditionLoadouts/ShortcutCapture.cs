@@ -3,10 +3,10 @@ using System.Collections.Generic;
 using BepInEx.Configuration;
 using UnityEngine;
 
-namespace ValheimModPack.ChestSearch
+namespace ValheimModPack.ExpeditionLoadouts
 {
     // Keep ownership of the opening stroke through key-up, including the release
-    // frame. Otherwise closing a modal while F is held can activate its game action.
+    // frame. Otherwise closing a modal while the opening key is held can activate its game action.
     internal sealed class ShortcutCapture
     {
         private KeyCode key;

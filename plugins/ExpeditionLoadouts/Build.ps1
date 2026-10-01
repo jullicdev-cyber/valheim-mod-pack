@@ -12,7 +12,7 @@ foreach ($ref in $refs) { if (-not (Test-Path -LiteralPath $ref)) { throw "Missi
 New-Item -ItemType Directory -Force (Split-Path $OutputFile -Parent) | Out-Null
 $argsList = @('/nologo','/codepage:65001','/target:library','/optimize+',('/out:' + $OutputFile))
 $argsList += $refs | ForEach-Object { '/reference:' + $_ }
-$argsList += @('Plugin.cs','PresetStore.cs','LoadoutWindow.cs','SupplyTarget.cs','TransferPolicy.cs','ChestService.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
+$argsList += @('Plugin.cs','ShortcutCapture.cs','GameplayInputCache.cs','PresetStore.cs','LoadoutWindow.cs','SupplyTarget.cs','TransferPolicy.cs','ChestService.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
 & $compiler @argsList
 if ($LASTEXITCODE -ne 0) { throw 'ExpeditionLoadouts compilation failed.' }
 Write-Output "Built ExpeditionLoadouts: $OutputFile"

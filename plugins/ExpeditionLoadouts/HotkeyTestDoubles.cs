@@ -5,7 +5,7 @@ using System.Reflection;
 using UnityEngine;
 namespace UnityEngine
 {
-    public enum KeyCode { None, F, G, K, Escape, Space, LeftControl, RightControl, LeftShift, RightShift, LeftAlt, RightAlt, LeftCommand, RightCommand, LeftWindows, RightWindows, AltGr }
+    public enum KeyCode { None, F, L, G, K, Escape, Space, LeftControl, RightControl, LeftShift, RightShift, LeftAlt, RightAlt, LeftCommand, RightCommand, LeftWindows, RightWindows, AltGr }
     public class Component { public GameObject gameObject = new GameObject(false); }
     public class Behaviour : Component { public bool enabled = true; public bool isActiveAndEnabled = true; }
     public class GameObject
@@ -25,11 +25,19 @@ namespace UnityEngine
     public static class Mathf { public static float Clamp(float value, float low, float high) { return Math.Max(low, Math.Min(high, value)); } }
 }
 namespace UnityEngine.UI { public class InputField : Behaviour { public bool isFocused; } }
+namespace TMPro { public class TMP_InputField : Behaviour { public bool isFocused { get; set; } } }
 namespace UnityEngine.EventSystems { public class EventSystem { public static EventSystem current; public GameObject currentSelectedGameObject; } }
 namespace BepInEx
 {
     public class BepInPlugin : Attribute { public BepInPlugin(string id, string name, string version) { } }
-    public class BepInDependency : Attribute { public BepInDependency(string id, string version) { } }
+    [AttributeUsage(AttributeTargets.Class, AllowMultiple = true)]
+    public class BepInDependency : Attribute
+    {
+        public enum DependencyFlags { SoftDependency }
+        public BepInDependency(string id, string version) { }
+        public BepInDependency(string id, DependencyFlags flags) { }
+    }
+    public static class Paths { public static string BepInExRootPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "expedition-fixture", "BepInEx"); }
     public class BaseUnityPlugin : Behaviour { public readonly Configuration.ConfigFile Config = new Configuration.ConfigFile(); public readonly TestLogger Logger = new TestLogger(); }
     public class TestLogger { public void LogInfo(object value) { } public void LogWarning(object value) { } public void LogError(object value) { throw new Exception("Unexpected plugin error: " + value); } }
 }
@@ -37,7 +45,8 @@ namespace BepInEx.Configuration
 {
     public class ConfigEntry<T>
     {
-        private T value; public event EventHandler SettingChanged;
+        private T value;
+        public event EventHandler SettingChanged;
         public T Value { get { return value; } set { this.value = value; if (SettingChanged != null) SettingChanged(this, EventArgs.Empty); } }
     }
     public class ConfigDescription { public ConfigDescription(string text, object range) { } }
@@ -51,6 +60,7 @@ namespace BepInEx.Configuration
         public KeyCode MainKey { get; private set; } public IEnumerable<KeyCode> Modifiers { get; private set; }
         public KeyboardShortcut(KeyCode key, params KeyCode[] modifiers) : this() { MainKey = key; Modifiers = modifiers; }
         public bool IsDown() { if (!Input.GetKeyDown(MainKey)) return false; foreach (var key in Modifiers) if (!Input.GetKey(key)) return false; return true; }
+        public bool IsPressed() { if (!Input.GetKey(MainKey)) return false; foreach (var key in Modifiers) if (!Input.GetKey(key)) return false; return true; }
     }
 }
 namespace Jotunn.Utils
@@ -58,7 +68,15 @@ namespace Jotunn.Utils
     public enum CompatibilityLevel { NotEnforced } public enum VersionStrictness { None }
     public class NetworkCompatibility : Attribute { public NetworkCompatibility(CompatibilityLevel level, VersionStrictness strictness) { } }
 }
-namespace Jotunn.Managers { public static class GUIManager { public static GameObject CustomGUIFront = new GameObject(); } }
+namespace Jotunn.Managers
+{
+    public static class GUIManager
+    {
+        public static GameObject CustomGUIFront = new GameObject();
+        public static int InputBlocks;
+        public static void BlockInput(bool block) { InputBlocks += block ? 1 : -1; }
+    }
+}
 namespace HarmonyLib
 {
     public static class Priority { public const int First = 800; }
@@ -88,7 +106,7 @@ namespace HarmonyLib
 }
 public class Player
 {
-    public static Player m_localPlayer; public bool Dead, Teleporting, Sleeping, Cutscene; public int GuardianStarts;
+    public static Player m_localPlayer; public long Id = 123; public long GetPlayerID() { return Id; } public bool Dead, Teleporting, Sleeping, Cutscene; public int GuardianStarts;
     public bool IsDead() { return Dead; } public bool IsTeleporting() { return Teleporting; } public bool IsSleeping() { return Sleeping; } public bool InCutscene() { return Cutscene; }
     // The real Player.Update has a separate TakeInput gate before the GP branch;
     // PlayerController.TakeInput belongs to FixedUpdate and does not protect it.
@@ -148,20 +166,43 @@ public static class Console { public static bool Visible; public static bool IsV
 public class Chat { public static Chat instance; public bool Focus; public bool HasFocus() { return Focus; } }
 public class Minimap { public enum MapMode { Small, Large } public static Minimap instance; public MapMode m_mode; }
 public class Localization { public static Localization instance; public static event Action OnLanguageChange; public string GetSelectedLanguage() { return "English"; } }
-namespace ValheimModPack.ChestSearch
+namespace ValheimModPack.ExpeditionLoadouts
 {
-    public enum ItemSort { Name }
-    public class NativeChestReader { }
-    public class SearchService { public SearchService(NativeChestReader reader, NameIndex names) { } }
-    public class NameIndex { public NameIndex(Action<string> warning) { } public void Clear() { } }
-    public class SearchResult { }
-    public class ItemSearchResult { public string Key; public List<SearchResult> Chests = new List<SearchResult>(); }
-    public class ChestMarker { public ChestMarker(Plugin plugin) { } public void Tick() { } public bool Show(SearchResult item, string key = null) { return true; } public void Clear() { } }
-    public class SearchWindow
+    public class PresetStore
     {
-        public bool IsVisible; public int Opens; public SearchWindow(Plugin plugin) { }
-        public void Tick() { }
-        public void Show() { if (InventoryGui.IsVisible()) throw new Exception("Inventory still visible"); IsVisible = true; Opens++; }
-        public void Hide() { IsVisible = false; }
+        public bool ReadOnly; public string LoadError; public long PlayerId;
+        public PresetStore(string directory, long playerId) { PlayerId = playerId; }
+    }
+    public class ChestService
+    {
+        public int Ticks, Cancels, Disposes;
+        public ChestService(BepInEx.TestLogger logger) { }
+        public void Tick() { Ticks++; }
+        public void Cancel() { Cancels++; }
+        public void Dispose() { Disposes++; }
+    }
+    public class LoadoutWindow
+    {
+        private readonly Plugin plugin;
+        public bool IsVisible; public int Opens;
+        public LoadoutWindow(Plugin plugin) { this.plugin = plugin; }
+        public void Tick()
+        {
+            if (IsVisible && (!Plugin.ValidPlayer(Player.m_localPlayer) || Input.GetKeyDown(KeyCode.Escape)
+                || Menu.IsVisible() || StoreGui.IsVisible() || Hud.IsPieceSelectionVisible()
+                || PlayerCustomizaton.IsBarberGuiVisible() || ZInput.s_IsRebindActive)) Hide();
+        }
+        public void Show()
+        {
+            if (InventoryGui.IsVisible()) throw new Exception("Inventory still visible");
+            if (plugin.Store == null) throw new Exception("Preset store not initialized");
+            Hide(); IsVisible = true; Opens++; Jotunn.Managers.GUIManager.BlockInput(true);
+        }
+        public void Hide()
+        {
+            if (IsVisible) Jotunn.Managers.GUIManager.BlockInput(false);
+            IsVisible = false;
+            if (plugin.Service != null) plugin.Service.Cancel();
+        }
     }
 }

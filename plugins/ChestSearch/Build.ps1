@@ -12,7 +12,7 @@ foreach ($ref in $refs) { if (-not (Test-Path -LiteralPath $ref)) { throw "Missi
 New-Item -ItemType Directory -Force -Path (Split-Path $OutputFile -Parent) | Out-Null
 $argsList = @('/nologo','/codepage:65001','/target:library','/optimize+',('/out:' + $OutputFile))
 $argsList += $refs | ForEach-Object { '/reference:' + $_ }
-$argsList += @('Plugin.cs','NativeChestReader.cs','SearchText.cs','NameIndex.cs','SearchService.cs','SearchWindow.cs','ChestMarker.cs','InputBlockLease.cs','ShortcutCapture.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
+$argsList += @('Plugin.cs','NativeChestReader.cs','SearchText.cs','NameIndex.cs','SearchService.cs','SearchWindow.cs','ChestMarker.cs','InputBlockLease.cs','ShortcutCapture.cs','GameplayInputCache.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
 & $compiler @argsList
 if ($LASTEXITCODE -ne 0) { throw 'ChestSearch compilation failed' }
 Write-Output "Built ChestSearch: $OutputFile"

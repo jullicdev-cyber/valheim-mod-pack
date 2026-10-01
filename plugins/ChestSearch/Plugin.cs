@@ -17,7 +17,7 @@ namespace ValheimModPack.ChestSearch
     public sealed class Plugin : BaseUnityPlugin
     {
         public const string Id = "valheimmodpack.chestsearch";
-        public const string Version = "1.2.0";
+        public const string Version = "1.2.1";
         public NativeChestReader Reader { get; private set; }
         public SearchService Search { get; private set; }
         public string LastQuery = "";
@@ -56,6 +56,8 @@ namespace ValheimModPack.ChestSearch
             try
             {
                 shortcut = Config.Bind("General", "OpenShortcut", new KeyboardShortcut(KeyCode.F, KeyCode.LeftControl), "Open chest search in gameplay or inventory. Modifier sides are interchangeable; the opening shortcut consumes gameplay input. Rebind with Bindrune.");
+                shortcut.SettingChanged += ShortcutChanged;
+                capture.Prime(shortcut.Value, Time.frameCount, readHeld);
                 radius = Config.Bind("General", "SearchRadius", 30f, new ConfigDescription("Loaded ordinary player-built chests within this distance (metres).", new AcceptableValueRange<float>(5, 80)));
                 markerSeconds = Config.Bind("General", "MarkerSeconds", 20f, new ConfigDescription("Lifetime of the local chest marker (seconds).", new AcceptableValueRange<float>(5, 60)));
                 Reader = new NativeChestReader();
@@ -70,6 +72,12 @@ namespace ValheimModPack.ChestSearch
                         prefix: new HarmonyMethod(typeof(Plugin), "BeforeGameButton") { priority = Priority.First });
                 inputPatches.Patch(AccessTools.Method(typeof(PlayerController), "TakeInput", new[] { typeof(bool) }),
                     prefix: new HarmonyMethod(typeof(Plugin), "BeforePlayerInput") { priority = Priority.First });
+                foreach (string method in new[] { "TakeInput", "StartGuardianPower" })
+                    inputPatches.Patch(AccessTools.Method(typeof(Player), method, Type.EmptyTypes),
+                        prefix: new HarmonyMethod(typeof(Plugin), "BeforeLocalPlayerInput") { priority = Priority.First });
+                foreach (string method in new[] { "Update", "FixedUpdate" })
+                    inputPatches.Patch(AccessTools.Method(typeof(ZInput), method, new[] { typeof(float) }),
+                        postfix: new HarmonyMethod(typeof(Plugin), "AfterNativeInput") { priority = Priority.First });
                 ready = true;
                 Logger.LogInfo("ChestSearch " + Version + " ready. Search shortcut works in gameplay and inventory; opening input is consumed.");
             }
@@ -92,11 +100,13 @@ namespace ValheimModPack.ChestSearch
             if (!ready || !isActiveAndEnabled) return;
             if (!ReferenceEquals(capturePlayer, null) && (!ReferenceEquals(capturePlayer, Player.m_localPlayer)
                 || !ReferenceEquals(captureNetwork, ZNet.instance)))
-            { capture.Reset(); ClearPending(); window.Hide(); capturePlayer = null; captureNetwork = null; }
+            { capture.Reset(); capture.Prime(shortcut.Value, Time.frameCount, readHeld); ClearPending(); window.Hide(); capturePlayer = null; captureNetwork = null; }
             bool consumed = capture.Blocked(Time.frameCount, readHeld);
+            bool pressed = capture.Pressed(shortcut.Value, Time.frameCount, readDown, readHeld);
             if (window.IsVisible || pendingPlayer != null || consumed
-                || !ShortcutCapture.Pressed(shortcut.Value, readDown, readHeld) || !CanOpen()) return;
+                || !pressed || !CanOpen()) return;
             capture.Claim(shortcut.Value.MainKey);
+            GameplayInputCache.ConsumeAll();
             capturePlayer = pendingPlayer = Player.m_localPlayer; captureNetwork = pendingNetwork = ZNet.instance;
             waitingForInventory = false; openAfterFrame = Time.frameCount + 1; openDeadline = Time.unscaledTime + 1;
         }
@@ -113,6 +123,18 @@ namespace ValheimModPack.ChestSearch
         {
             // The modal must still receive its controller Cancel button.
             if (__0 == "JoyButtonB" || active == null || !active.BlocksGameplay()) return true;
+            GameplayInputCache.Consume(__0);
+            __result = false; return false;
+        }
+        private static void AfterNativeInput()
+        {
+            if (active != null && active.BlocksGameplay()) GameplayInputCache.ConsumeAll();
+        }
+        private static bool BeforeLocalPlayerInput(Player __instance, ref bool __result)
+        {
+            // Player.Update has its own input gate and GP branch, independent
+            // of PlayerController.FixedUpdate. Also guard direct local GP calls.
+            if (active == null || !ReferenceEquals(__instance, Player.m_localPlayer) || !active.BlocksGameplay()) return true;
             __result = false; return false;
         }
         private static bool BeforePlayerInput(Player ___m_character, ref bool __result)
@@ -147,6 +169,11 @@ namespace ValheimModPack.ChestSearch
             catch (Exception error) { ClearPending(); if (window != null) window.Hide(); Report(error); }
         }
         private void ClearPending() { pendingPlayer = null; pendingNetwork = null; waitingForInventory = false; }
+        private void ShortcutChanged(object sender, EventArgs args)
+        {
+            ClearPending(); capture.Reset(); capture.Prime(shortcut.Value, Time.frameCount, readHeld);
+            capturePlayer = null; captureNetwork = null;
+        }
         private bool CanOpen()
         {
             var player = Player.m_localPlayer;
@@ -222,6 +249,7 @@ namespace ValheimModPack.ChestSearch
         private void Shutdown()
         {
             ready = false; OnDisable();
+            if (shortcut != null) shortcut.SettingChanged -= ShortcutChanged;
             if (names != null) Localization.OnLanguageChange -= names.Clear;
             if (inputPatches != null) inputPatches.UnpatchSelf();
             if (ReferenceEquals(active, this)) active = null;

@@ -91,6 +91,7 @@ namespace ValheimModPack.ExpeditionLoadouts
         private bool Valid()
         {
             return Plugin.ValidPlayer(owner) && ReferenceEquals(network, ZNet.instance) && plugin.Store != null
+                && !ZInput.s_IsRebindActive && !StoreGui.IsVisible() && !Hud.IsPieceSelectionVisible() && !PlayerCustomizaton.IsBarberGuiVisible()
                 && !UnifiedPopup.IsVisible() && !Menu.IsVisible() && !InventoryGui.IsVisible() && !global::Console.IsVisible()
                 && (Chat.instance == null || !Chat.instance.HasFocus())
                 && (TextInput.instance == null || TextInput.instance.m_panel == null || !TextInput.instance.m_panel.activeInHierarchy)

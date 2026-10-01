@@ -1,5 +1,5 @@
 {
-  "packVersion": "1.14.9",
+  "packVersion": "1.15.0",
   "created": "2026-09-25",
   "targetGameVersion": "1.0.16",
   "packages": [
@@ -298,10 +298,10 @@
     },
     {
       "id": "ValheimModPack-ExpeditionLoadouts",
-      "version": "1.2.0",
+      "version": "1.2.1",
       "source": "local-plugins/ExpeditionLoadouts.dll",
       "destination": "BepInEx/plugins/ValheimModPack-ExpeditionLoadouts/ExpeditionLoadouts.dll",
-      "sha256": "dddedf2d049a607e02cd8bbe0a363bfa11e21feef6ad1143edf16ad7812517b3",
+      "sha256": "9822a9ffbe11eb562649802a98226f13851365695ce21f3ada0c3eb282c8dd18",
       "dependencies": [
         "denikson-BepInExPack_Valheim-5.4.2351",
         "ValheimModding-Jotunn-2.30.2"
@@ -309,10 +309,10 @@
     },
     {
       "id": "ValheimModPack-ChestSearch",
-      "version": "1.2.0",
+      "version": "1.2.1",
       "source": "local-plugins/ChestSearch.dll",
       "destination": "BepInEx/plugins/ValheimModPack-ChestSearch/ChestSearch.dll",
-      "sha256": "30a50d5ace309a78b520095e265f3a03be76bd78a691bcbd72b8a348445d130a",
+      "sha256": "014739f9478e3f37790c4a34305bf3faff60c2bb536fe6cd9f8df67cbf934eaa",
       "dependencies": [
         "denikson-BepInExPack_Valheim-5.4.2351",
         "ValheimModding-Jotunn-2.30.2"
@@ -360,6 +360,18 @@
         "denikson-BepInExPack_Valheim-5.4.2351",
         "Azumatt-AzuCraftyBoxes-1.8.24",
         "Grantapher-ValheimPlus_Grantapher_Temporary-10.2.0"
+      ]
+    },
+    {
+      "id": "ValheimModPack-PortalFinder",
+      "version": "1.0.0",
+      "source": "local-plugins/PortalFinder.dll",
+      "destination": "BepInEx/plugins/ValheimModPack-PortalFinder/PortalFinder.dll",
+      "sha256": "1a48c95f89e2f3b7142de0c61358dbd44451ea384b6c9640dd47d77fbac40772",
+      "dependencies": [
+        "denikson-BepInExPack_Valheim-5.4.2351",
+        "ValheimModding-Jotunn-2.30.2",
+        "SpikeHimself-XPortal-1.2.25"
       ]
     }
   ]

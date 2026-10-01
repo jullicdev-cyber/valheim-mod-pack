@@ -1,0 +1,27 @@
+[CmdletBinding()]
+param([Parameter(Mandatory=$true)][string]$GameDirectory)
+$ErrorActionPreference = 'Stop'
+$root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+$folder = Join-Path $root ('.cache/portal-finder-tests-' + [guid]::NewGuid().ToString('N').Substring(0,8))
+New-Item -ItemType Directory -Force -Path $folder | Out-Null
+$compiler = Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
+$runner = Join-Path $folder 'PortalSearchTests.exe'
+$sources = @('PortalSearch.cs','PortalSearchTests.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
+& $compiler /nologo /codepage:65001 /target:exe "/out:$runner" @sources
+if ($LASTEXITCODE -ne 0) { throw 'Portal search test compilation failed.' }
+& $runner
+if ($LASTEXITCODE -ne 0) { throw 'Portal search tests failed.' }
+$registryRunner = Join-Path $folder 'PortalRegistryTests.exe'
+$registrySources = @('PortalSearch.cs','PortalRegistry.cs','PortalRegistryTestDoubles.cs','PortalRegistryTests.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
+& $compiler /nologo /codepage:65001 /target:exe "/out:$registryRunner" @registrySources
+if ($LASTEXITCODE -ne 0) { throw 'Portal registry test compilation failed.' }
+& $registryRunner
+if ($LASTEXITCODE -ne 0) { throw 'Portal registry tests failed.' }
+$uiRunner = Join-Path $folder 'PortalUiTests.exe'
+$uiSources = @('Plugin.cs','PortalRegistry.cs','PortalSearch.cs','Shortcut.cs','PortalUiTestDoubles.cs','PortalUiTests.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
+& $compiler /nologo /codepage:65001 /target:exe "/out:$uiRunner" @uiSources
+if ($LASTEXITCODE -ne 0) { throw 'Portal UI test compilation failed.' }
+& $uiRunner
+if ($LASTEXITCODE -ne 0) { throw 'Portal UI tests failed.' }
+& (Join-Path $PSScriptRoot 'Build.ps1') -GameDirectory $GameDirectory -OutputFile (Join-Path $folder 'PortalFinder.dll')
+& (Join-Path $PSScriptRoot 'Test-Contracts.ps1') -GameDirectory $GameDirectory -PluginFile (Join-Path $folder 'PortalFinder.dll')

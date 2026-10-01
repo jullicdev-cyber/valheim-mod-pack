@@ -62,6 +62,12 @@ namespace ValheimModPack.ChestSearch
                 }
                 Assert(Harmony.GetPatchInfo(AccessTools.Method(typeof(PlayerController), "TakeInput", new[] { typeof(bool) }))
                     .Owners.Contains(Plugin.Id + ".input"), "controller input hooked before FixedUpdate", ref checks);
+                foreach (string name in new[] { "TakeInput", "StartGuardianPower" })
+                    Assert(Harmony.GetPatchInfo(AccessTools.Method(typeof(Player), name, Type.EmptyTypes))
+                        .Owners.Contains(Plugin.Id + ".input"), "local Player." + name + " guarded", ref checks);
+                foreach (string name in new[] { "Update", "FixedUpdate" })
+                    Assert(Harmony.GetPatchInfo(AccessTools.Method(typeof(ZInput), name, new[] { typeof(float) }))
+                        .Owners.Contains(Plugin.Id + ".input"), "native ZInput." + name + " sampled", ref checks);
                 Call(window, "BuildVisuals"); Set(plugin, "window", window);
                 ranOriginal = true; Assert(!ZInput.GetButton("Jump") && !ranOriginal, "held gameplay input consumed", ref checks);
                 ranOriginal = true; Assert(!ZInput.GetButtonDown("Jump") && !ranOriginal, "pressed gameplay input consumed", ref checks);

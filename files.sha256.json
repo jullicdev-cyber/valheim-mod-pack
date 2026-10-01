@@ -21,7 +21,7 @@
   },
   {
     "path": "BepInEx/config/Bindrune/known.txt",
-    "sha256": "f8aad3965c970c90a54f9e96635d3a1c2bb6e9495d5bfac761e5a1ce6603eadf"
+    "sha256": "027fc7a616727f7289a92d8b800ebf55452838b5d827f31977003a662f75b67a"
   },
   {
     "path": "BepInEx/config/Gonfreecss.ResourceDropModifier.cfg",
@@ -65,7 +65,7 @@
   },
   {
     "path": "BepInEx/config/valheimmodpack.expeditionloadouts.cfg",
-    "sha256": "77c8ad627c2465be5f72f3011b77a5cfaebf98dfcfe1ae1fc0533cb8ecf13f14"
+    "sha256": "3afe10fcd896ffc7350fdee49ebb62c9077c9c24dfe88b053bc6c0dd0c2a8db6"
   },
   {
     "path": "BepInEx/config/valheimmodpack.nordicradio.cfg",
@@ -253,7 +253,7 @@
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-ChestSearch/ChestSearch.dll",
-    "sha256": "30a50d5ace309a78b520095e265f3a03be76bd78a691bcbd72b8a348445d130a"
+    "sha256": "014739f9478e3f37790c4a34305bf3faff60c2bb536fe6cd9f8df67cbf934eaa"
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-ConfirmMapPinRemoval/ConfirmMapPinRemoval.dll",
@@ -265,7 +265,7 @@
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-ExpeditionLoadouts/ExpeditionLoadouts.dll",
-    "sha256": "dddedf2d049a607e02cd8bbe0a363bfa11e21feef6ad1143edf16ad7812517b3"
+    "sha256": "9822a9ffbe11eb562649802a98226f13851365695ce21f3ada0c3eb282c8dd18"
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-FermenterCompatibility/FermenterCompatibility.dll",
@@ -542,5 +542,13 @@
   {
     "path": "winhttp.dll",
     "sha256": "93406d0a02e7c164b89828cbfe3b289930a112d2eca50bd4a52e72ece169e6a8"
+  },
+  {
+    "path": "BepInEx/config/valheimmodpack.portalfinder.cfg",
+    "sha256": "d40825d6d3c245220d066b88564d89fca6ea8960e197d84018868225c9061edc"
+  },
+  {
+    "path": "BepInEx/plugins/ValheimModPack-PortalFinder/PortalFinder.dll",
+    "sha256": "1a48c95f89e2f3b7142de0c61358dbd44451ea384b6c9640dd47d77fbac40772"
   }
 ]

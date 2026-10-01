@@ -14,4 +14,5 @@ if ($LASTEXITCODE -ne 0) { throw 'ChestSearch test compilation failed' }
 if ($LASTEXITCODE -ne 0) { throw 'ChestSearch tests failed' }
 & (Join-Path $PSScriptRoot 'Test-Hotkeys.ps1')
 & (Join-Path $PSScriptRoot 'Build.ps1') -GameDirectory $GameDirectory -OutputFile (Join-Path $outputDirectory 'ChestSearch.dll')
+& (Join-Path $PSScriptRoot 'Test-NativeInput.ps1') -GameDirectory $GameDirectory -PluginAssembly (Join-Path $outputDirectory 'ChestSearch.dll')
 Write-Output 'Actual game/Jotunn API compilation passed. Native rendering, keyboard input and live replicated-container behavior require an in-game check.'
