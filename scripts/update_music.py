@@ -1,9 +1,9 @@
 """Download a ZIP music library and install it transactionally, using only stdlib."""
 import argparse
-from datetime import datetime
 import hashlib
 from html.parser import HTMLParser
 import http.cookiejar
+import os
 from pathlib import Path, PurePosixPath
 import re
 import shutil
@@ -155,45 +155,91 @@ def _install_music(game, url, ensure_closed, downloader):
     game = Path(game)
     radio = game / 'NordicRadio'
     music = radio / 'Music'
-    backups = radio / 'Music-backups'
-    for path in (radio, music, backups):
+    record = radio / 'last-music-install.txt'
+    for path in (radio, music, record):
         unlinked(path)
     radio.mkdir(exist_ok=True)
-    backups.mkdir(exist_ok=True)
-    job = Path(tempfile.mkdtemp(prefix=datetime.now().strftime('%Y%m%d-%H%M%S-'), dir=backups))
+    job = Path(tempfile.mkdtemp(prefix='.music-update-', dir=radio))
     stage = job / 'staged'
     archive = job / 'music.zip'
-    downloader(url, archive)
-    if music.exists():
-        # Never follow linked entries while copying personal files.
-        for path in music.rglob('*'):
-            unlinked(path)
-        shutil.copytree(music, stage)
-    else:
-        stage.mkdir()
-    count = extract_music(archive, stage)
-    ensure_closed()
-    for path in (radio, music, backups):
-        unlinked(path)
     original = job / 'original'
-    moved = False
+    original_record = job / 'original-install.txt'
+    prepared_record = job / 'install.txt'
+    recovery = False
     try:
+        downloader(url, archive)
         if music.exists():
-            music.rename(original)
-            moved = True
-        stage.rename(music)
-    except Exception:
-        if moved:
-            original.rename(music)
-        raise
-    digest = hashlib.sha256()
-    with archive.open('rb') as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
-            digest.update(chunk)
-    (job / 'INSTALL.txt').write_text('Source: ' + url + '\nZIP SHA256: ' + digest.hexdigest() + '\nTracks: ' + str(count) + '\nBackup: original/\n', encoding='utf-8')
-    archive.unlink()
-    print('Music installed:', count, 'tracks. Folder:', music, '\nBackup:', original if moved else job)
-    return count
+            # Never follow linked entries while copying personal files.
+            for path in music.rglob('*'):
+                unlinked(path)
+            shutil.copytree(music, stage)
+        else:
+            stage.mkdir()
+        count = extract_music(archive, stage)
+        digest = hashlib.sha256()
+        with archive.open('rb') as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+                digest.update(chunk)
+        prepared_record.write_text('Source: ' + url + '\nZIP SHA256: ' + digest.hexdigest()
+                                   + '\nTracks: ' + str(count) + '\n', encoding='utf-8')
+        ensure_closed()
+        for path in (radio, music, record):
+            unlinked(path)
+        # Preserve originals if an interrupt also interrupts rollback itself.
+        recovery = True
+        try:
+            if music.exists():
+                music.rename(original)
+            if record.exists():
+                record.rename(original_record)
+            stage.rename(music)
+            prepared_record.rename(record)
+        except BaseException as error:
+            failures = []
+            for active, failed, changed in ((record, job / 'failed-install.txt', not prepared_record.exists() and record.exists()),
+                                           (music, job / 'failed', not stage.exists() and music.exists())):
+                if changed:
+                    try:
+                        active.rename(failed)
+                    except BaseException as failure:
+                        failures.append(str(failure))
+            for saved, target, changed in ((original, music, original.exists()), (original_record, record, original_record.exists())):
+                if changed:
+                    try:
+                        if target.exists():
+                            raise OSError('Rollback destination is occupied: ' + str(target))
+                        saved.rename(target)
+                    except BaseException as failure:
+                        failures.append(str(failure))
+            if failures:
+                recovery = True
+                (job / 'RECOVERY.txt').write_text('Music rollback failed. Original music is in original/; '
+                    'the previous install record is original-install.txt when present. Close the updater '
+                    'and restore these entries to NordicRadio after moving conflicting destinations aside.\n'
+                    + '\n'.join(failures) + '\n', encoding='utf-8')
+                raise OSError('Music rollback failed; recovery files retained at ' + str(job)) from error
+            recovery = False
+            raise
+        recovery = False
+        print('Music installed:', count, 'tracks. Folder:', music)
+        return count
+    finally:
+        if recovery:
+            instructions = job / 'RECOVERY.txt'
+            if not instructions.exists():
+                instructions.write_text('Music transaction was interrupted. Original music is in original/ '
+                    'and the previous install record is original-install.txt when present. Close the updater '
+                    'before restoring these entries to NordicRadio.\n', encoding='utf-8')
+        else:
+            # Delete only this newly created job, never older user backups.
+            if job.resolve().parent != radio.resolve() or not job.name.startswith('.music-update-'):
+                raise ValueError('Music cleanup outside its transaction refused.')
+            def writable_remove(function, path, error):
+                if not Path(path).is_relative_to(job) or function not in (os.unlink, os.remove, os.rmdir):
+                    raise error[1]
+                os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+                function(path)
+            shutil.rmtree(job, onerror=writable_remove)
 
 
 def main():

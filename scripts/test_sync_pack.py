@@ -30,7 +30,7 @@ def fixture(root, version, content):
     (root / 'mods.lock.json').write_text(json.dumps({'packVersion': version, 'packages': []}))
     (root / 'files.sha256.json').write_text(json.dumps([{'path': 'plugins/test.dll', 'sha256': hashlib.sha256(content).hexdigest()}]))
     (root / 'README.md').write_text('Release ' + version)
-    (root / '.gitignore').write_text('.updates/\nlocal-settings.json\nNordicRadio/\n.cache/\n')
+    (root / '.gitignore').write_text('.updates/\nlocal-settings.json\nNordicRadio/\n.cache/\nbackups/\n')
     (root / '.gitattributes').write_text('* -text\n')
 
 
@@ -38,7 +38,9 @@ class SyncTests(unittest.TestCase):
     windows = False
 
     def setUp(self):
-        self.base = Path(tempfile.mkdtemp(prefix='sync-русский пробел-', dir=ROOT / '.cache'))
+        self.tmp = tempfile.TemporaryDirectory(prefix='sync-русский пробел-', dir=ROOT / '.cache')
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
         self.root, self.remote, self.snapshot = (self.base / name for name in ('pack', 'remote', 'snapshot'))
         fixture(self.root, '1.0.0', b'old')
         fixture(self.remote, '1.1.0', b'new')
@@ -52,6 +54,10 @@ class SyncTests(unittest.TestCase):
         (self.root / 'ValheimModpack/WorldCharacters/characters').mkdir(parents=True)
         (self.root / 'ValheimModpack/WorldCharacters/characters/preserved.wchar').write_bytes(b'world character save')
         (self.root / 'notes.txt').write_text('unrelated')
+        (self.root / 'backups/user').mkdir(parents=True)
+        (self.root / 'backups/user/archive.zip').write_bytes(b'user backup')
+        (self.root / '.updates/manual-old').mkdir(parents=True)
+        (self.root / '.updates/manual-old/keep.txt').write_text('old user archive')
 
     def run_update(self, mode='git', fail=False):
         if self.windows:
@@ -64,7 +70,7 @@ class SyncTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             return
         action = lambda: sync_pack.sync_pack(self.root, lambda _: self.snapshot, verify_pack, expand_archive,
-                git=None if mode in ('zip','rollback') else shutil.which('git'), repository=str(self.remote))
+                git=None if mode in ('zip','rollback','rollback-failed','interrupt') else shutil.which('git'), repository=str(self.remote))
         if fail:
             with self.assertRaises((ValueError, OSError)):
                 action()
@@ -76,18 +82,25 @@ class SyncTests(unittest.TestCase):
         self.assertEqual((self.root / 'NordicRadio/Music/personal.mp3').read_bytes(), b'music')
         self.assertEqual((self.root / 'ValheimModpack/WorldCharacters/characters/preserved.wchar').read_bytes(), b'world character save')
         self.assertEqual((self.root / 'notes.txt').read_text(), 'unrelated')
+        self.assertEqual((self.root / 'backups/user/archive.zip').read_bytes(), b'user backup')
+        self.assertEqual((self.root / '.updates/manual-old/keep.txt').read_text(), 'old user archive')
         self.assertFalse((self.root / '.updates/update.lock').exists())
 
-    def test_zip_without_git_replaces_current_folder_and_backs_up(self):
+    def cleaned(self):
+        for prefix in ('replace-', 'pull-', 'clone-'):
+            self.assertFalse(list((self.root / '.updates').glob(prefix + '*')))
+
+    def test_zip_without_git_replaces_current_folder_and_cleans_up(self):
         (self.root / 'Game/plugins/obsolete.dll').write_bytes(b'old mod')
         self.run_update('zip')
         verify_pack(self.root)
         self.assertFalse((self.root / 'Game/plugins/obsolete.dll').exists())
-        self.assertTrue(list((self.root / '.updates').glob('replace-*/original/Game/plugins/obsolete.dll')))
+        self.cleaned()
         self.assertFalse((self.root / '.git').exists())
         self.preserved()
         self.run_update('zip')
         self.preserved()
+        self.cleaned()
 
     def test_zip_becomes_git_then_real_pull_updates_it(self):
         self.run_update()
@@ -99,7 +112,7 @@ class SyncTests(unittest.TestCase):
         self.run_update()
         self.assertEqual(git(self.root, 'rev-parse', 'HEAD'), git(self.remote, 'rev-parse', 'HEAD'))
         self.assertEqual((self.root / 'Game/plugins/test.dll').read_bytes(), b'newer')
-        self.assertTrue(list((self.root / '.updates').glob('pull-*/original/VERSION')))
+        self.cleaned()
         self.preserved()
 
     def test_local_git_changes_are_not_overwritten(self):
@@ -135,6 +148,7 @@ class SyncTests(unittest.TestCase):
         git(self.remote, 'commit', '-m', 'bad fixture')
         self.run_update(fail=True)
         self.assertEqual(git(self.root, 'rev-parse', 'HEAD'), before)
+        self.cleaned()
 
     def test_replacement_failure_rolls_back(self):
         if self.windows:
@@ -150,6 +164,116 @@ class SyncTests(unittest.TestCase):
         self.assertEqual((self.root / 'Game/plugins/test.dll').read_bytes(), b'old')
         self.assertEqual((self.root / 'README.md').read_text(), 'Release 1.0.0')
         self.preserved()
+        self.cleaned()
+
+    def test_replacement_rollback_failure_retains_originals_and_instructions(self):
+        if self.windows:
+            self.run_update('rollback-failed', fail=True)
+        else:
+            rename = Path.rename
+            def failing(path, target):
+                if path.name == 'Game' and path.parent.name in ('staged', 'original'):
+                    raise OSError('Injected replacement and rollback failure')
+                return rename(path, target)
+            with patch.object(Path, 'rename', failing):
+                self.run_update('rollback-failed', fail=True)
+        job, = (self.root / '.updates').glob('replace-*')
+        self.assertEqual((job / 'original/Game/plugins/test.dll').read_bytes(), b'old')
+        self.assertTrue((job / 'RECOVERY.txt').is_file())
+        self.preserved()
+
+    def test_interrupted_replacement_restores_originals(self):
+        if self.windows:
+            self.run_update('interrupt', fail=True)
+        else:
+            rename = Path.rename
+            def interrupted(path, target):
+                if path.name == 'Game' and path.parent.name == 'staged':
+                    raise KeyboardInterrupt()
+                return rename(path, target)
+            with patch.object(Path, 'rename', interrupted), self.assertRaises(KeyboardInterrupt):
+                self.run_update('interrupt')
+        self.assertEqual((self.root / 'Game/plugins/test.dll').read_bytes(), b'old')
+        self.preserved()
+        self.cleaned()
+
+    def test_interrupt_after_original_move_restores_originals(self):
+        if self.windows:
+            self.skipTest('Python interruption injection')
+        rename = Path.rename
+        def interrupted(path, target):
+            result = rename(path, target)
+            if path == self.root / 'Game':
+                raise KeyboardInterrupt()
+            return result
+        with patch.object(Path, 'rename', interrupted), self.assertRaises(KeyboardInterrupt):
+            self.run_update('zip')
+        self.assertEqual((self.root / 'Game/plugins/test.dll').read_bytes(), b'old')
+        self.preserved()
+        self.cleaned()
+
+    def test_interrupt_during_rollback_keeps_originals(self):
+        if self.windows:
+            self.skipTest('Python interruption injection')
+        rename = Path.rename
+        def interrupted(path, target):
+            if path.name == 'Game' and path.parent.name in ('staged', 'original'):
+                raise KeyboardInterrupt()
+            return rename(path, target)
+        with patch.object(Path, 'rename', interrupted):
+            self.run_update('zip', fail=True)
+        job, = (self.root / '.updates').glob('replace-*')
+        self.assertEqual((job / 'original/Game/plugins/test.dll').read_bytes(), b'old')
+        self.assertTrue((job / 'RECOVERY.txt').is_file())
+        self.preserved()
+
+    def new_upstream(self):
+        fixture(self.remote, '1.2.0', b'newer')
+        git(self.remote, 'add', '.')
+        git(self.remote, 'commit', '-m', 'new upstream')
+
+    def test_git_post_pull_failure_restores_old_commit_without_archive(self):
+        self.run_update()
+        old = git(self.root, 'rev-parse', 'HEAD')
+        self.new_upstream()
+        if self.windows:
+            self.run_update('pull-verify-failed', fail=True)
+        else:
+            original_verify = verify_pack
+            def verify(path):
+                if Path(path) == self.root:
+                    raise ValueError('Injected verification failure after Git pull')
+                return original_verify(path)
+            with patch.object(sys.modules[__name__], 'verify_pack', verify):
+                self.run_update('pull-verify-failed', fail=True)
+        self.assertEqual(git(self.root, 'rev-parse', 'HEAD'), old)
+        self.assertEqual((self.root / 'Game/plugins/test.dll').read_bytes(), b'new')
+        self.preserved()
+        self.cleaned()
+
+    def test_git_rollback_failure_retains_only_recovery_job(self):
+        self.run_update()
+        old = git(self.root, 'rev-parse', 'HEAD')
+        self.new_upstream()
+        if self.windows:
+            self.run_update('pull-rollback-failed', fail=True)
+        else:
+            original_git = sync_pack.git_run
+            original_verify = verify_pack
+            def verify(path):
+                if Path(path) == self.root:
+                    raise ValueError('Injected verification failure')
+                return original_verify(path)
+            def failing(executable, root, *arguments):
+                if arguments[0] == 'reset':
+                    raise OSError('Injected rollback failure')
+                return original_git(executable, root, *arguments)
+            with patch.object(sync_pack, 'git_run', failing), patch.object(sys.modules[__name__], 'verify_pack', verify):
+                self.run_update('pull-rollback-failed', fail=True)
+        job, = (self.root / '.updates').glob('pull-*')
+        self.assertIn(old, (job / 'RECOVERY.txt').read_text(encoding='utf-8-sig'))
+        self.assertFalse((job / 'original').exists())
+        self.preserved()
 
     def test_another_update_lock_is_respected(self):
         (self.root / '.updates/update.lock').mkdir(parents=True)
@@ -161,6 +285,13 @@ class SyncTests(unittest.TestCase):
         (self.snapshot / 'local-settings.json').write_text('overwrite attempt')
         self.run_update('zip', fail=True)
         self.preserved()
+
+    def test_standalone_backups_in_snapshot_rejected(self):
+        (self.snapshot / 'backups').mkdir()
+        (self.snapshot / 'backups/overwrite.zip').write_bytes(b'overwrite attempt')
+        self.run_update('zip', fail=True)
+        self.preserved()
+        self.cleaned()
 
     def test_diverged_history_is_not_reset(self):
         self.run_update()

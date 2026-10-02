@@ -3,6 +3,7 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -37,14 +38,42 @@ class MusicTests(unittest.TestCase):
         return music.install_music(self.game, 'http://example.test/music.zip', lambda: None,
                                    lambda url, out: shutil.copyfile(self.archive, out))
 
-    def test_nested_zip_merge_and_backup(self):
+    def clean_transaction(self):
+        self.assertFalse(list((self.game / 'NordicRadio').glob('.music-update-*')))
+        self.assertFalse((self.game / 'NordicRadio/.music-update.lock').exists())
+
+    def test_nested_zip_merge_and_cleanup(self):
         self.make_zip([('music/новая.mp3', b'new track'), ('replace.mp3', b'replaced'), ('readme.txt', b'ignored')])
         self.assertEqual(self.install(), 2)
         self.assertEqual((self.folder / 'новая.mp3').read_bytes(), b'new track')
         self.assertEqual((self.folder / 'личная.mp3').read_bytes(), b'keep personal')
-        original = next((self.game / 'NordicRadio/Music-backups').glob('*/original'))
-        self.assertEqual((original / 'replace.mp3').read_bytes(), b'old track')
+        self.assertEqual((self.folder / 'replace.mp3').read_bytes(), b'replaced')
+        self.assertFalse((self.game / 'NordicRadio/Music-backups').exists())
         self.assertFalse((self.folder / 'readme.txt').exists())
+        self.clean_transaction()
+        record = self.game / 'NordicRadio/last-music-install.txt'
+        self.assertIn('ZIP SHA256: ', record.read_text())
+        self.make_zip([('second.mp3', b'second track')])
+        self.install()
+        self.assertIn('Tracks: 1', record.read_text())
+        self.clean_transaction()
+
+    def test_existing_user_backups_are_untouched(self):
+        old = self.game / 'NordicRadio/Music-backups/saved/original.mp3'
+        old.parent.mkdir(parents=True)
+        old.write_bytes(b'user backup')
+        self.make_zip([('new.mp3', b'new track')])
+        self.install()
+        self.assertEqual(old.read_bytes(), b'user backup')
+        self.clean_transaction()
+
+    def test_read_only_personal_track_does_not_leak_transaction(self):
+        personal = self.folder / 'личная.mp3'
+        personal.chmod(stat.S_IREAD)
+        self.make_zip([('new.mp3', b'new track')])
+        self.install()
+        self.assertEqual(personal.read_bytes(), b'keep personal')
+        self.clean_transaction()
 
     def test_invalid_archives_preserve_library(self):
         for entries in [[('../evil.mp3', b'evil')], [('x/a.mp3', b'aaaa'), ('y/A.mp3', b'bbbb')], [('README.txt', b'empty')], [('CON.mp3', b'aaaa')], [('/absolute.mp3', b'aaaa')]]:
@@ -54,6 +83,7 @@ class MusicTests(unittest.TestCase):
                     self.install()
                 self.assertEqual((self.folder / 'replace.mp3').read_bytes(), b'old track')
                 self.assertEqual(len(list(self.folder.iterdir())), 2)
+                self.clean_transaction()
 
     def test_failed_download_preserves_library(self):
         def fail(url, destination):
@@ -61,6 +91,7 @@ class MusicTests(unittest.TestCase):
         with self.assertRaises(OSError):
             music.install_music(self.game, 'https://example.test/a.zip', lambda: None, fail)
         self.assertEqual((self.folder / 'replace.mp3').read_bytes(), b'old track')
+        self.clean_transaction()
 
     def test_concurrent_update_rejected(self):
         (self.game / 'NordicRadio/.music-update.lock').mkdir()
@@ -68,6 +99,7 @@ class MusicTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.install()
         self.assertFalse((self.folder / 'new.mp3').exists())
+        self.assertTrue((self.game / 'NordicRadio/.music-update.lock').exists())
 
     def test_game_started_during_download(self):
         self.make_zip([('new.mp3', b'new track')])
@@ -79,6 +111,7 @@ class MusicTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             music.install_music(self.game, 'https://example.test/a.zip', check, lambda url, out: shutil.copyfile(self.archive, out))
         self.assertFalse((self.folder / 'new.mp3').exists())
+        self.clean_transaction()
 
     def test_rename_failure_restores_original(self):
         self.make_zip([('new.mp3', b'new track')])
@@ -90,6 +123,75 @@ class MusicTests(unittest.TestCase):
         with patch.object(Path, 'rename', failing), self.assertRaises(OSError):
             self.install()
         self.assertEqual((self.folder / 'replace.mp3').read_bytes(), b'old track')
+        self.clean_transaction()
+
+    def test_record_failure_restores_music_and_previous_record(self):
+        record = self.game / 'NordicRadio/last-music-install.txt'
+        record.write_text('previous install')
+        self.make_zip([('new.mp3', b'new track')])
+        rename = Path.rename
+        def failing(path, target):
+            if path.name == 'install.txt':
+                raise OSError('record locked')
+            return rename(path, target)
+        with patch.object(Path, 'rename', failing), self.assertRaises(OSError):
+            self.install()
+        self.assertEqual(record.read_text(), 'previous install')
+        self.assertEqual((self.folder / 'replace.mp3').read_bytes(), b'old track')
+        self.assertFalse((self.folder / 'new.mp3').exists())
+        self.clean_transaction()
+
+    def test_interrupted_replacement_rolls_back(self):
+        self.make_zip([('new.mp3', b'new track')])
+        rename = Path.rename
+        def interrupted(path, target):
+            if path.name == 'staged':
+                raise KeyboardInterrupt()
+            return rename(path, target)
+        with patch.object(Path, 'rename', interrupted), self.assertRaises(KeyboardInterrupt):
+            self.install()
+        self.assertEqual((self.folder / 'replace.mp3').read_bytes(), b'old track')
+        self.clean_transaction()
+
+    def test_failed_rollback_retains_original_and_recovery(self):
+        self.make_zip([('new.mp3', b'new track')])
+        rename = Path.rename
+        def failing(path, target):
+            if path.name in ('staged', 'original'):
+                raise OSError('locked replacement and rollback')
+            return rename(path, target)
+        with patch.object(Path, 'rename', failing), self.assertRaisesRegex(OSError, 'recovery files retained'):
+            self.install()
+        job, = (self.game / 'NordicRadio').glob('.music-update-*')
+        self.assertEqual((job / 'original/replace.mp3').read_bytes(), b'old track')
+        self.assertTrue((job / 'RECOVERY.txt').is_file())
+        self.assertFalse((self.game / 'NordicRadio/.music-update.lock').exists())
+
+    def test_interrupt_after_original_move_restores_music(self):
+        self.make_zip([('new.mp3', b'new track')])
+        rename = Path.rename
+        def interrupted(path, target):
+            result = rename(path, target)
+            if path == self.folder:
+                raise KeyboardInterrupt()
+            return result
+        with patch.object(Path, 'rename', interrupted), self.assertRaises(KeyboardInterrupt):
+            self.install()
+        self.assertEqual((self.folder / 'replace.mp3').read_bytes(), b'old track')
+        self.clean_transaction()
+
+    def test_interrupt_during_rollback_keeps_original_music(self):
+        self.make_zip([('new.mp3', b'new track')])
+        rename = Path.rename
+        def interrupted(path, target):
+            if path.name in ('staged', 'original'):
+                raise KeyboardInterrupt()
+            return rename(path, target)
+        with patch.object(Path, 'rename', interrupted), self.assertRaisesRegex(OSError, 'recovery files retained'):
+            self.install()
+        job, = (self.game / 'NordicRadio').glob('.music-update-*')
+        self.assertEqual((job / 'original/replace.mp3').read_bytes(), b'old track')
+        self.assertTrue((job / 'RECOVERY.txt').is_file())
 
     def test_linked_music_rejected(self):
         try:

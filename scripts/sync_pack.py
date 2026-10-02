@@ -3,12 +3,13 @@ import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import tempfile
 from contextlib import contextmanager
 
 REPOSITORY = 'https://github.com/jullicdev-cyber/valheim-mod-pack.git'
-PROTECTED = {'.git', '.updates', '.cache', 'dist', 'local-settings.json', 'NordicRadio', 'ValheimModpack'}
+PROTECTED = {'.git', '.updates', '.cache', 'dist', 'backups', 'local-settings.json', 'NordicRadio', 'ValheimModpack'}
 LEGACY_NAMES = set('''.gitattributes .gitignore CHANGELOG.md COMPATIBILITY.md Game INVENTORY-DIAGNOSTIC.md
 Install-Linux.sh Install-Windows.cmd MOD-REVIEW.md README.md Set-GamePath-Linux.sh
 Set-GamePath-Windows.cmd Update-Linux.sh Update-Windows.cmd VALIDATION.md VERSION audit config
@@ -55,7 +56,7 @@ def managed_names(root, pack):
 
 
 def replace_pack(root, pack, verify, include_git=False):
-    """Stage copies, move originals aside, then replace. Retain rollback evidence."""
+    """Keep originals only during replacement; retain them if rollback fails."""
     root, pack = Path(root).resolve(), Path(pack).resolve()
     verify(pack)
     names, affected = managed_names(root, pack)
@@ -68,38 +69,88 @@ def replace_pack(root, pack, verify, include_git=False):
         unlinked(root / name)
     for name in names:
         unlinked(pack / name)
+    manifest = root / '.updates/managed-names.json'
+    old_manifest = manifest.read_bytes() if manifest.exists() else None
     job = Path(tempfile.mkdtemp(prefix='replace-', dir=root / '.updates'))
     staged, original, failed = (job / n for n in ('staged', 'original', 'failed'))
-    for directory in (staged, original, failed):
-        directory.mkdir()
-    for name in names:
-        source = pack / name
-        if source.is_dir():
-            shutil.copytree(source, staged / name)
-        else:
-            shutil.copy2(source, staged / name)
-    (job / 'RECOVERY.txt').write_text('Close the updater before recovery. Previous replaced entries are in original/.\n'
-        'Restore them to the pack root, moving the corresponding new entries aside first.\n'
-        'Personal root directories and local-settings.json were not replaced.\n', encoding='utf-8')
     saved, installed = [], []
+    recovery = False
     try:
-        for name in sorted(affected):
-            if (root / name).exists():
-                (root / name).rename(original / name)
-                saved.append(name)
-            if name in names:
-                (staged / name).rename(root / name)
-                installed.append(name)
-        verify(root)
-    except Exception:
-        for name in reversed(installed):
-            (root / name).rename(failed / name)
-        for name in saved:
-            (original / name).rename(root / name)
-        raise
-    (root / '.updates/managed-names.json').write_text(json.dumps(sorted(names - {'.git'})) + '\n', encoding='utf-8')
-    print('Pack folder updated. Previous files:', original)
-    return root
+        for directory in (staged, original, failed):
+            directory.mkdir()
+        for name in names:
+            source = pack / name
+            if source.is_dir():
+                shutil.copytree(source, staged / name)
+            else:
+                shutil.copy2(source, staged / name)
+        recovery = True
+        try:
+            for name in sorted(affected):
+                if (root / name).exists():
+                    saved.append(name)
+                    (root / name).rename(original / name)
+                if name in names:
+                    installed.append(name)
+                    (staged / name).rename(root / name)
+            verify(root)
+            manifest.write_text(json.dumps(sorted(names - {'.git'})) + '\n', encoding='utf-8')
+        except BaseException as error:
+            failures = []
+            for name in reversed(installed):
+                try:
+                    if not (staged / name).exists() and (root / name).exists():
+                        (root / name).rename(failed / name)
+                except BaseException as failure:
+                    failures.append(str(failure))
+            for name in saved:
+                try:
+                    if (original / name).exists():
+                        if (root / name).exists():
+                            raise OSError('Rollback destination is occupied: ' + str(root / name))
+                        (original / name).rename(root / name)
+                except BaseException as failure:
+                    failures.append(str(failure))
+            try:
+                if old_manifest is None:
+                    manifest.unlink(missing_ok=True)
+                else:
+                    manifest.write_bytes(old_manifest)
+            except BaseException as failure:
+                failures.append(str(failure))
+            if failures:
+                recovery = True
+                (job / 'RECOVERY.txt').write_text('Pack rollback failed. Previous replaced entries are in original/.\n'
+                    'Close the updater, move conflicting new entries aside, and restore original/ to the pack root.\n'
+                    'Personal root folders were not replaced.\n' + '\n'.join(failures) + '\n', encoding='utf-8')
+                raise OSError('Pack rollback failed; recovery files retained at ' + str(job)) from error
+            recovery = False
+            raise
+        recovery = False
+        print('Pack folder updated.')
+        return root
+    finally:
+        if recovery:
+            instructions = job / 'RECOVERY.txt'
+            if not instructions.exists():
+                instructions.write_text('Pack transaction was interrupted. Previous replaced entries are in original/.\n'
+                    'Close the updater and restore original/ entries after moving conflicting new entries aside.\n', encoding='utf-8')
+        else:
+            remove_job(root, job)
+
+
+def remove_job(root, job):
+    root, job = Path(root).resolve(), Path(job).resolve()
+    if job.parent != root / '.updates':
+        raise ValueError('Update cleanup outside its transaction refused.')
+    unlinked(job)
+    def writable_remove(function, path, error):
+        # Git object files are read-only on Windows, including temporary clones.
+        if not Path(path).is_relative_to(job) or function not in (os.unlink, os.remove, os.rmdir):
+            raise error[1]
+        os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+        function(path)
+    shutil.rmtree(job, onerror=writable_remove)
 
 
 def git_run(git, root, *arguments):
@@ -136,9 +187,12 @@ def sync_pack(root, download, verify, expand, git='auto', repository=REPOSITORY)
             print('ZIP folder detected: connecting this folder to the GitHub repository.')
             job = Path(tempfile.mkdtemp(prefix='clone-', dir=updates))
             pack = job / 'pack'
-            git_run(executable, root, 'clone', '--branch', 'main', '--single-branch', '--depth', '1', repository, str(pack))
-            verify(pack)
-            return replace_pack(root, pack, verify, include_git=True)
+            try:
+                git_run(executable, root, 'clone', '--branch', 'main', '--single-branch', '--depth', '1', repository, str(pack))
+                verify(pack)
+                return replace_pack(root, pack, verify, include_git=True)
+            finally:
+                remove_job(root, job)
 
         top = Path(git_run(executable, root, 'rev-parse', '--show-toplevel')).resolve()
         if top != root:
@@ -159,25 +213,42 @@ def sync_pack(root, download, verify, expand, git='auto', repository=REPOSITORY)
         git_run(executable, root, 'merge-base', '--is-ancestor', old, commit)
         job = Path(tempfile.mkdtemp(prefix='pull-', dir=updates))
         archive = job / 'pack.zip'
-        git_run(executable, root, 'archive', '--format=zip', '--prefix=valheim-mod-pack-' + commit + '/', '-o', str(archive), commit)
-        pack = expand(archive, job / 'pack', commit)
-        verify(pack)
-        # A complete copy of managed files precedes pull. Git itself refuses untracked collisions.
-        _, affected = managed_names(root, pack)
-        original = job / 'original'
-        original.mkdir()
-        for name in sorted(affected):
-            source = root / name
-            unlinked(source)
-            if source.is_dir():
-                shutil.copytree(source, original / name)
-            elif source.exists():
-                shutil.copy2(source, original / name)
-        (job / 'RECOVERY.txt').write_text('Previous Git commit: ' + old + '\nPrevious files: original/\n', encoding='utf-8')
-        # Fetch/pull exactly the commit that was verified, even if main moves meanwhile.
-        git_run(executable, root, 'pull', '--ff-only', '--no-rebase', 'origin', commit)
-        if git_run(executable, root, 'rev-parse', 'HEAD') != commit:
-            raise ValueError('Git did not advance to the verified commit; installation stopped.')
-        verify(root)
-        print('Git pull completed. Previous files:', original)
-        return root
+        recovery = attempted = False
+        try:
+            git_run(executable, root, 'archive', '--format=zip', '--prefix=valheim-mod-pack-' + commit + '/', '-o', str(archive), commit)
+            pack = expand(archive, job / 'pack', commit)
+            verify(pack)
+            _, affected = managed_names(root, pack)
+            for name in affected:
+                unlinked(root / name)
+            recovery = True
+            try:
+                # Git retains the old commit itself; no full filesystem copy is needed.
+                attempted = True
+                git_run(executable, root, 'pull', '--ff-only', '--no-rebase', 'origin', commit)
+                if git_run(executable, root, 'rev-parse', 'HEAD') != commit:
+                    raise ValueError('Git did not advance to the verified commit; installation stopped.')
+                verify(root)
+            except BaseException as error:
+                if attempted:
+                    try:
+                        git_run(executable, root, 'reset', '--hard', old)
+                    except BaseException as failure:
+                        recovery = True
+                        (job / 'RECOVERY.txt').write_text('Git rollback failed. Previous commit: ' + old
+                            + '\nSave any new local changes before restoring that commit. Personal root folders were not replaced.\n'
+                            + str(failure) + '\n', encoding='utf-8')
+                        raise OSError('Git rollback failed; recovery instructions retained at ' + str(job)) from error
+                recovery = False
+                raise
+            recovery = False
+            print('Git pull completed.')
+            return root
+        finally:
+            if recovery:
+                instructions = job / 'RECOVERY.txt'
+                if not instructions.exists():
+                    instructions.write_text('Git update was interrupted. Previous commit: ' + old
+                        + '\nClose the updater and save any new local changes before restoring that commit.\n', encoding='utf-8')
+            else:
+                remove_job(root, job)

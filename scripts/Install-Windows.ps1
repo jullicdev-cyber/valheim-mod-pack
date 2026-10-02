@@ -4,21 +4,21 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'GamePath.ps1')
 
-function Assert-BackupEntry($Entry) {
+function Assert-InstallEntry($Entry) {
     if ($Entry.Attributes -band [IO.FileAttributes]::ReparsePoint) {
         if ($Entry.PSIsContainer -or $Entry.LinkType -ne 'SymbolicLink') {
             throw "Unsupported directory link or reparse point: $($Entry.FullName)"
         }
-        # File links from Vortex are backed up as independent file contents.
+        # Vortex file links are accepted; directory links are never traversed.
         # Opening now also detects dangling links before any installation changes.
         $stream = [IO.File]::OpenRead($Entry.FullName)
         $stream.Dispose()
     } elseif ($Entry.PSIsContainer) {
-        foreach ($child in Get-ChildItem -LiteralPath $Entry.FullName -Force) { Assert-BackupEntry $child }
+        foreach ($child in Get-ChildItem -LiteralPath $Entry.FullName -Force) { Assert-InstallEntry $child }
     }
 }
 
-function Copy-BackupEntry($Entry, [string]$Destination) {
+function Copy-PersonalEntry($Entry, [string]$Destination) {
     $path = Join-Path $Destination $Entry.Name
     if ($Entry.Attributes -band [IO.FileAttributes]::ReparsePoint) {
         # Do not recreate links that depend on Vortex's staging directory.
@@ -29,11 +29,36 @@ function Copy-BackupEntry($Entry, [string]$Destination) {
         } finally { $inputStream.Dispose() }
     } elseif ($Entry.PSIsContainer) {
         New-Item -ItemType Directory -Path $path -Force | Out-Null
-        foreach ($child in Get-ChildItem -LiteralPath $Entry.FullName -Force) { Copy-BackupEntry $child $path }
+        foreach ($child in Get-ChildItem -LiteralPath $Entry.FullName -Force) { Copy-PersonalEntry $child $path }
     } else {
         Copy-Item -LiteralPath $Entry.FullName -Destination $path -Force
     }
 }
+
+function Assert-CleanupEntry($Entry) {
+    if ($Entry.PSIsContainer) {
+        if ($Entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Cannot clean a linked directory: $($Entry.FullName)" }
+        foreach ($child in Get-ChildItem -LiteralPath $Entry.FullName -Force) { Assert-CleanupEntry $child }
+    }
+    # File symlinks are removed as links; their staging targets remain untouched.
+}
+
+function Remove-InstallTransaction([string]$Directory, [string]$GameRoot) {
+    $absolute = [IO.Path]::GetFullPath($Directory).TrimEnd('\','/')
+    $boundary = [IO.Path]::GetFullPath($GameRoot).TrimEnd('\','/') + [IO.Path]::DirectorySeparatorChar
+    if (-not $absolute.StartsWith($boundary, [StringComparison]::OrdinalIgnoreCase) -or
+        (Split-Path $absolute -Leaf) -notmatch '^\.valheim-modpack-install-[a-f0-9]{8}$') {
+        throw "Refusing to remove an unexpected transaction path: $absolute"
+    }
+    $entry = Get-Item -LiteralPath $absolute -Force -ErrorAction SilentlyContinue
+    if ($null -ne $entry) {
+        Assert-CleanupEntry $entry
+        Remove-Item -LiteralPath $absolute -Recurse -Force
+    }
+}
+
+$transaction = $null
+$retainRecovery = $false
 
 try {
     $target = Get-GameDirectory -PackRoot $root -GameDirectory $GameDirectory -SettingsDirectory $SettingsDirectory
@@ -43,24 +68,20 @@ try {
     $names = @('BepInEx', 'winhttp.dll', 'doorstop_config.ini', '.doorstop_version')
     foreach ($name in $names) {
         $path = Join-Path $target $name
-        if (Test-Path -LiteralPath $path) {
-            Assert-BackupEntry (Get-Item -LiteralPath $path -Force)
-        }
+        $entry = Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+        if ($null -ne $entry) { Assert-InstallEntry $entry }
     }
     & (Join-Path $PSScriptRoot 'Verify.ps1')
-    $backupRoot = Join-Path $target 'ValheimModpack-backups'
-    if ((Test-Path -LiteralPath $backupRoot) -and ((Get-Item -LiteralPath $backupRoot -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Backup directory must not be a link.' }
-    $existing = @(Get-ChildItem -LiteralPath $target -Force | Where-Object Name -ne 'ValheimModpack-backups')
-    # Inspect one directory at a time; never descend through a directory link.
-    foreach ($item in $existing) { Assert-BackupEntry $item }
-    $backup = Join-Path $backupRoot ((Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0,8))
-    $stage = Join-Path $backup 'staged'
-    $original = Join-Path $backup 'original'
-    $snapshot = Join-Path $backup 'full-backup'
-    New-Item -ItemType Directory -Path $stage, $original, $snapshot -Force | Out-Null
-    Write-Host "Creating full backup: $snapshot"
-    foreach ($item in $existing) { Copy-BackupEntry $item $snapshot }
-    Set-Content -LiteralPath (Join-Path $backup 'BACKUP-COMPLETE.txt') -Value 'Full backup completed before installation.'
+    # Staging and rename-only rollback stay on the game volume. This is temporary,
+    # not an automatic retained backup of the entire game directory.
+    $candidate = Join-Path $target ('.valheim-modpack-install-' + [guid]::NewGuid().ToString('N').Substring(0,8))
+    if (Test-Path -LiteralPath $candidate) { throw 'Installation transaction path already exists.' }
+    # Assign cleanup ownership only after creating our directory exclusively.
+    New-Item -ItemType Directory -Path $candidate | Out-Null
+    $transaction = $candidate
+    $stage = Join-Path $transaction 'staged'
+    $original = Join-Path $transaction 'original'
+    New-Item -ItemType Directory -Path $stage, $original -Force | Out-Null
     # Complete copying before changing any existing files.
     foreach ($name in $names) { Copy-Item -LiteralPath (Join-Path $source $name) -Destination $stage -Recurse -Force }
     # Preserve Quick Stack's personal favorites and the two legacy Azu files
@@ -70,7 +91,7 @@ try {
         $stagedConfig = Join-Path $stage 'BepInEx/config'
         foreach ($personal in Get-ChildItem -LiteralPath $previousConfig -File -Force) {
             if ($personal.Name -match '^(QuickStackStore|AzuAutoStore|AzuExtendedPlayerInventory)_player_-?\d+\.dat$') {
-                Copy-BackupEntry $personal $stagedConfig
+                Copy-PersonalEntry $personal $stagedConfig
             }
         }
     }
@@ -84,13 +105,21 @@ try {
         New-Item -ItemType Directory -Force -Path $personalParent | Out-Null
         Copy-Item -LiteralPath $personalPath -Destination (Join-Path $stage $relative)
     }
-    if (Get-Process -Name valheim,valheim_server -ErrorAction SilentlyContinue) { throw 'Game started during backup; installation stopped.' }
+    if (Get-Process -Name valheim,valheim_server -ErrorAction SilentlyContinue) { throw 'Game started during staging; installation stopped.' }
     $saved = @()
     $installed = @()
     try {
+        # Keep originals through raw interruption as well as caught move failures.
+        $retainRecovery = $true
+        @("Target: $target", 'Installation is in progress or was interrupted.',
+            'Close Valheim before recovery. Do not delete this directory until recovery is verified.',
+            "Original replaced entries are in: $original",
+            "New payload awaiting installation is in: $stage",
+            'Move conflicting game entries aside, then restore remaining original/ entries to the game root.') |
+            Set-Content -LiteralPath (Join-Path $transaction 'RECOVERY.txt') -Encoding UTF8
         foreach ($name in $names) {
             $path = Join-Path $target $name
-            if (Test-Path -LiteralPath $path) {
+            if ($null -ne (Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue)) {
                 Move-Item -LiteralPath $path -Destination (Join-Path $original $name)
                 $saved += $name
             }
@@ -98,15 +127,48 @@ try {
             $installed += $name
         }
     } catch {
-        $failed = Join-Path $backup 'failed-install'
-        New-Item -ItemType Directory -Path $failed -Force | Out-Null
-        foreach ($name in $installed) { Move-Item -LiteralPath (Join-Path $target $name) -Destination (Join-Path $failed $name) }
-        foreach ($name in $saved) { Move-Item -LiteralPath (Join-Path $original $name) -Destination (Join-Path $target $name) }
-        throw
+        $installationError = $_
+        $rollbackErrors = @()
+        $failed = Join-Path $transaction 'failed-install'
+        try { New-Item -ItemType Directory -Path $failed -Force | Out-Null }
+        catch { $rollbackErrors += $_.Exception.Message }
+        foreach ($name in $installed) {
+            try { Move-Item -LiteralPath (Join-Path $target $name) -Destination (Join-Path $failed $name) }
+            catch { $rollbackErrors += $_.Exception.Message }
+        }
+        foreach ($name in $saved) {
+            try {
+                $restore = Join-Path $target $name
+                if ($null -ne (Get-Item -LiteralPath $restore -Force -ErrorAction SilentlyContinue)) { throw "Restore destination is still occupied: $restore" }
+                Move-Item -LiteralPath (Join-Path $original $name) -Destination $restore
+            } catch { $rollbackErrors += $_.Exception.Message }
+        }
+        # A stop between a successful rename and tracking its name must never
+        # make cleanup discard an unrecorded original.
+        $remainingOriginals = @(Get-ChildItem -LiteralPath $original -Force)
+        if ($remainingOriginals.Count -gt 0) {
+            $rollbackErrors += ('Original entries still require recovery: ' + (($remainingOriginals | ForEach-Object Name) -join ', '))
+        }
+        if ($rollbackErrors.Count -gt 0) {
+            $retainRecovery = $true
+            $recovery = @("Target: $target", "Installation error: $($installationError.Exception.Message)",
+                'Automatic rollback did not complete. Close Valheim before recovery.',
+                "Original replaced entries remaining for recovery: $original",
+                "New entries moved aside: $failed",
+                'Move any conflicting game entries aside, then restore the remaining entries from original/ to the game root.',
+                'Do not delete this transaction directory until you have verified recovery.',
+                ('Rollback errors: ' + ($rollbackErrors -join ' | ')))
+            try { $recovery | Set-Content -LiteralPath (Join-Path $transaction 'RECOVERY.txt') -Encoding UTF8 }
+            catch { Write-Warning 'Could not write RECOVERY.txt; keep the transaction directory shown below.' }
+            throw "Installation failed and rollback needs attention. Recovery files retained at $transaction. $($rollbackErrors -join ' | ')"
+        }
+        $retainRecovery = $false
+        throw $installationError
     }
-    @("Installed: $(Get-Date -Format o)", "Target: $target", "Replaced entries: $($saved -join ', ')", 'Rollback: close the game, move the installed entries aside, then copy original/* back to the game directory.') | Set-Content -LiteralPath (Join-Path $backup 'INSTALL.txt')
-    Write-Host "Installed successfully. Full backup: $snapshot"
-    Write-Host "Replaced files for quick rollback: $original"
+    $retainRecovery = $false
+    Remove-InstallTransaction $transaction $target
+    $transaction = $null
+    Write-Host 'Installed successfully. Temporary installation files removed.'
     Write-Host 'Start Valheim through Steam. Set world Resources to x2 and Portals to Casual.'
     if (-not $SkipMusic) {
         . (Join-Path $PSScriptRoot 'Music.ps1')
@@ -117,4 +179,12 @@ try {
 } catch {
     Write-Error $_ -ErrorAction Continue
     exit 1
+} finally {
+    if ($transaction -and $retainRecovery) {
+        Write-Warning "Installation recovery files retained at $transaction. Keep this directory and follow RECOVERY.txt before removing it."
+    }
+    if ($transaction -and -not $retainRecovery) {
+        try { Remove-InstallTransaction $transaction $target }
+        catch { Write-Warning "Temporary installation files could not be removed: $transaction. $($_.Exception.Message)" }
+    }
 }

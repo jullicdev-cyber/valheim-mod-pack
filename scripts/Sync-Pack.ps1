@@ -1,6 +1,6 @@
 # In-place updates for Windows PowerShell 5.1; Python is not required.
 $script:PackRepository = 'https://github.com/jullicdev-cyber/valheim-mod-pack.git'
-$script:PackProtected = @('.git','.updates','.cache','dist','local-settings.json','NordicRadio','ValheimModpack')
+$script:PackProtected = @('.git','.updates','.cache','dist','backups','local-settings.json','NordicRadio','ValheimModpack')
 $script:PackLegacyNames = @('.gitattributes','.gitignore','CHANGELOG.md','COMPATIBILITY.md','Game','INVENTORY-DIAGNOSTIC.md','Install-Linux.sh','Install-Windows.cmd','MOD-REVIEW.md','README.md','Set-GamePath-Linux.sh','Set-GamePath-Windows.cmd','Update-Linux.sh','Update-Windows.cmd','VALIDATION.md','VERSION','audit','config','files.sha256.json','local-plugins','mods.lock.json','plugins','reference','scripts','third-party','world-settings.json')
 
 function Assert-UnlinkedUpdatePath([string]$Path) {
@@ -51,6 +51,14 @@ function Move-PackEntry([string]$From, [string]$To, [string]$Root) {
     Move-Item -LiteralPath $From -Destination $To -ErrorAction Stop
 }
 
+function Remove-PackUpdateJob([string]$Root, [string]$Job) {
+    $base = [IO.Path]::GetFullPath((Join-Path $Root '.updates')).TrimEnd('\','/')
+    $target = [IO.Path]::GetFullPath($Job)
+    if ((Split-Path $target -Parent) -ne $base) { throw 'Update cleanup outside its transaction refused.' }
+    Assert-UnlinkedUpdatePath $target
+    Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction Stop
+}
+
 function Set-PackFolder([string]$Root, [string]$Pack, [switch]$IncludeGit) {
     Test-UpdatePack $Pack
     $managed = Get-PackManagedNames $Root $Pack
@@ -61,33 +69,66 @@ function Set-PackFolder([string]$Root, [string]$Pack, [switch]$IncludeGit) {
     }
     foreach ($name in $affected) { Assert-UnlinkedUpdatePath (Join-Path $Root $name) }
     foreach ($name in $names) { Assert-UnlinkedUpdatePath (Join-Path $Pack $name) }
+    $manifest = Join-Path $Root '.updates/managed-names.json'
+    $oldManifest = if (Test-Path -LiteralPath $manifest) { [IO.File]::ReadAllBytes($manifest) } else { $null }
     $job = New-PackUpdateJob $Root 'replace'
     $stage = Join-Path $job 'staged'; $original = Join-Path $job 'original'; $failed = Join-Path $job 'failed'
-    New-Item -ItemType Directory -Path $stage,$original,$failed | Out-Null
-    foreach ($name in $names) { Copy-Item -LiteralPath (Join-Path $Pack $name) -Destination (Join-Path $stage $name) -Recurse -Force }
-    'Previous replaced entries are in original/. Close the updater, move corresponding new entries aside, then restore original/ to the pack root. Personal root folders and local-settings.json were not replaced.' | Set-Content -LiteralPath (Join-Path $job 'RECOVERY.txt')
-    $saved = @(); $installed = @()
+    $saved = @(); $installed = @(); $recovery = $false
     try {
-        foreach ($name in ($affected | Sort-Object -Unique)) {
-            if (Test-Path -LiteralPath (Join-Path $Root $name)) {
-                Move-PackEntry (Join-Path $Root $name) (Join-Path $original $name) $Root
-                $saved += $name
+        New-Item -ItemType Directory -Path $stage,$original,$failed | Out-Null
+        foreach ($name in $names) { Copy-Item -LiteralPath (Join-Path $Pack $name) -Destination (Join-Path $stage $name) -Recurse -Force }
+        $recovery = $true
+        try {
+            foreach ($name in ($affected | Sort-Object -Unique)) {
+                if (Test-Path -LiteralPath (Join-Path $Root $name)) {
+                    $saved += $name
+                    Move-PackEntry (Join-Path $Root $name) (Join-Path $original $name) $Root
+                }
+                if ($names -contains $name) {
+                    $installed += $name
+                    Move-PackEntry (Join-Path $stage $name) (Join-Path $Root $name) $Root
+                }
             }
-            if ($names -contains $name) {
-                Move-PackEntry (Join-Path $stage $name) (Join-Path $Root $name) $Root
-                $installed += $name
+            Test-UpdatePack $Root
+            $record = @($names | Where-Object { $_ -ne '.git' } | Sort-Object)
+            ConvertTo-Json -InputObject $record | Set-Content -LiteralPath $manifest -Encoding UTF8
+        } catch {
+            $cause = $_; $failures = @()
+            foreach ($name in $installed) {
+                try {
+                    if (-not (Test-Path -LiteralPath (Join-Path $stage $name)) -and (Test-Path -LiteralPath (Join-Path $Root $name))) { Move-PackEntry (Join-Path $Root $name) (Join-Path $failed $name) $Root }
+                } catch { $failures += $_.Exception.Message }
             }
+            foreach ($name in $saved) {
+                try {
+                    if (Test-Path -LiteralPath (Join-Path $original $name)) {
+                        if (Test-Path -LiteralPath (Join-Path $Root $name)) { throw "Rollback destination is occupied: $name" }
+                        Move-PackEntry (Join-Path $original $name) (Join-Path $Root $name) $Root
+                    }
+                } catch { $failures += $_.Exception.Message }
+            }
+            try {
+                if ($null -eq $oldManifest) {
+                    if (Test-Path -LiteralPath $manifest) { Remove-Item -LiteralPath $manifest -ErrorAction Stop }
+                } else { [IO.File]::WriteAllBytes($manifest, [byte[]]$oldManifest) }
+            } catch { $failures += $_.Exception.Message }
+            if ($failures.Count) {
+                $recovery = $true
+                @('Pack rollback failed. Previous replaced entries are in original/.', 'Close the updater, move conflicting new entries aside, and restore original/ to the pack root.', 'Personal root folders were not replaced.', $failures) | Set-Content -LiteralPath (Join-Path $job 'RECOVERY.txt') -Encoding UTF8
+                throw "Pack rollback failed; recovery files retained at $job. Initial failure: $($cause.Exception.Message)"
+            }
+            $recovery = $false
+            throw $cause
         }
-        Test-UpdatePack $Root
-    } catch {
-        foreach ($name in $installed) { Move-PackEntry (Join-Path $Root $name) (Join-Path $failed $name) $Root }
-        foreach ($name in $saved) { Move-PackEntry (Join-Path $original $name) (Join-Path $Root $name) $Root }
-        throw
+        $recovery = $false
+        Write-Host 'Pack folder updated.'
+        return $Root
+    } finally {
+        if ($recovery) {
+            $instructions = Join-Path $job 'RECOVERY.txt'
+            if (-not (Test-Path -LiteralPath $instructions)) { [IO.File]::WriteAllText($instructions, 'Pack transaction was interrupted. Previous replaced entries are in original/. Close the updater and restore original/ after moving conflicting new entries aside.') }
+        } else { Remove-PackUpdateJob $Root $job }
     }
-    $record = @($names | Where-Object { $_ -ne '.git' } | Sort-Object)
-    ConvertTo-Json -InputObject $record | Set-Content -LiteralPath (Join-Path $Root '.updates/managed-names.json') -Encoding UTF8
-    Write-Host "Pack folder updated. Previous files: $original"
-    return $Root
 }
 
 function Invoke-PackGit([string]$Git, [string]$Root, [string[]]$Arguments) {
@@ -141,9 +182,11 @@ function Sync-PackFolder([string]$Root, [string]$Git = 'auto', [string]$Reposito
             Write-Host 'ZIP folder detected: connecting this folder to the GitHub repository.'
             $job = New-PackUpdateJob $Root 'clone'
             $pack = Join-Path $job 'pack'
-            Invoke-PackGit $Git $Root @('clone','--branch','main','--single-branch','--depth','1',$Repository,$pack) | Out-Null
-            Test-UpdatePack $pack
-            return Set-PackFolder $Root $pack -IncludeGit
+            try {
+                Invoke-PackGit $Git $Root @('clone','--branch','main','--single-branch','--depth','1',$Repository,$pack) | Out-Null
+                Test-UpdatePack $pack
+                return Set-PackFolder $Root $pack -IncludeGit
+            } finally { Remove-PackUpdateJob $Root $job }
         }
         $top = Invoke-PackGit $Git $Root @('rev-parse','--show-toplevel')
         if ([IO.Path]::GetFullPath($top) -ne $Root) { throw 'Run the updater from the root of the pack repository.' }
@@ -158,22 +201,38 @@ function Sync-PackFolder([string]$Root, [string]$Git = 'auto', [string]$Reposito
         $old = Invoke-PackGit $Git $Root @('rev-parse','HEAD')
         Invoke-PackGit $Git $Root @('merge-base','--is-ancestor',$old,$commit) | Out-Null
         $job = New-PackUpdateJob $Root 'pull'; $archive = Join-Path $job 'pack.zip'
-        Invoke-PackGit $Git $Root @('archive','--format=zip',('--prefix=valheim-mod-pack-'+$commit+'/'),'-o',$archive,$commit) | Out-Null
-        $pack = Expand-PackArchive $archive (Join-Path $job 'pack') $commit
-        Test-UpdatePack $pack
-        $managed = Get-PackManagedNames $Root $pack
-        $original = Join-Path $job 'original'
-        New-Item -ItemType Directory -Path $original | Out-Null
-        foreach ($name in $managed.Affected) {
-            $source = Join-Path $Root $name
-            Assert-UnlinkedUpdatePath $source
-            if (Test-Path -LiteralPath $source) { Copy-Item -LiteralPath $source -Destination (Join-Path $original $name) -Recurse -Force }
+        $recovery = $false
+        try {
+            Invoke-PackGit $Git $Root @('archive','--format=zip',('--prefix=valheim-mod-pack-'+$commit+'/'),'-o',$archive,$commit) | Out-Null
+            $pack = Expand-PackArchive $archive (Join-Path $job 'pack') $commit
+            Test-UpdatePack $pack
+            $managed = Get-PackManagedNames $Root $pack
+            foreach ($name in $managed.Affected) { Assert-UnlinkedUpdatePath (Join-Path $Root $name) }
+            $recovery = $true
+            try {
+                # Git itself retains the old commit, so no full filesystem backup is needed.
+                Invoke-PackGit $Git $Root @('pull','--ff-only','--no-rebase','origin',$commit) | Out-Null
+                if ((Invoke-PackGit $Git $Root @('rev-parse','HEAD')) -ne $commit) { throw 'Git did not advance to the verified commit; installation stopped.' }
+                Test-UpdatePack $Root
+            } catch {
+                $cause = $_
+                try { Invoke-PackGit $Git $Root @('reset','--hard',$old) | Out-Null }
+                catch {
+                    $recovery = $true
+                    @("Git rollback failed. Previous commit: $old", 'Save any new local changes before restoring that commit. Personal root folders were not replaced.', $_.Exception.Message) | Set-Content -LiteralPath (Join-Path $job 'RECOVERY.txt') -Encoding UTF8
+                    throw "Git rollback failed; recovery instructions retained at $job. Initial failure: $($cause.Exception.Message)"
+                }
+                $recovery = $false
+                throw $cause
+            }
+            $recovery = $false
+            Write-Host 'Git pull completed.'
+            return $Root
+        } finally {
+            if ($recovery) {
+                $instructions = Join-Path $job 'RECOVERY.txt'
+                if (-not (Test-Path -LiteralPath $instructions)) { [IO.File]::WriteAllText($instructions, "Git update was interrupted. Previous commit: $old. Close the updater and save any new local changes before restoring that commit.") }
+            } else { Remove-PackUpdateJob $Root $job }
         }
-        "Previous Git commit: $old`nPrevious files: original/" | Set-Content -LiteralPath (Join-Path $job 'RECOVERY.txt')
-        Invoke-PackGit $Git $Root @('pull','--ff-only','--no-rebase','origin',$commit) | Out-Null
-        if ((Invoke-PackGit $Git $Root @('rev-parse','HEAD')) -ne $commit) { throw 'Git did not advance to the verified commit; installation stopped.' }
-        Test-UpdatePack $Root
-        Write-Host "Git pull completed. Previous files: $original"
-        return $Root
     } finally { Remove-Item -LiteralPath $lock -ErrorAction Stop }
 }

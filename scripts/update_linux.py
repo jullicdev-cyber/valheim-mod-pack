@@ -13,7 +13,7 @@ from urllib.request import Request, urlopen
 import zipfile
 from game_path import get_game_directory
 from install_linux import ensure_game_closed, verify_pack
-from sync_pack import sync_pack
+from sync_pack import sync_pack, unlinked
 
 REPO = 'jullicdev-cyber/valheim-mod-pack'
 
@@ -67,19 +67,81 @@ def download_pack(root):
         raise ValueError('GitHub returned an invalid commit.')
     updates.mkdir(exist_ok=True)
     job = Path(tempfile.mkdtemp(prefix=commit[:12] + '-', dir=updates))
-    archive = job / 'pack.zip'
-    print('Downloading main at', commit)
-    with fetch('https://codeload.github.com/' + REPO + '/zip/' + commit) as response, archive.open('wb') as stream:
-        shutil.copyfileobj(response, stream)
-    pack = expand_archive(archive, job / 'pack', commit)
-    if not (pack / 'scripts/install_linux.py').is_file():
-        raise ValueError('Downloaded Linux installer is missing.')
-    verify_pack(pack)
-    version = (pack / 'VERSION').read_text(encoding='utf-8-sig').strip()
-    (updates / 'latest.json').write_text(json.dumps({'commit': commit, 'version': version, 'directory': str(pack)},
-                                                  ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-    print('Downloaded and verified pack', version, 'at', pack)
-    return pack
+    try:
+        archive = job / 'pack.zip'
+        print('Downloading main at', commit)
+        with fetch('https://codeload.github.com/' + REPO + '/zip/' + commit) as response, archive.open('wb') as stream:
+            shutil.copyfileobj(response, stream)
+        pack = expand_archive(archive, job / 'pack', commit)
+        if not (pack / 'scripts/install_linux.py').is_file():
+            raise ValueError('Downloaded Linux installer is missing.')
+        verify_pack(pack)
+        version = (pack / 'VERSION').read_text(encoding='utf-8-sig').strip()
+        latest = updates / 'latest.json'
+        unlinked(latest)
+        record = job / 'latest.json'
+        record.write_text(json.dumps({'commit': commit, 'version': version, 'directory': str(pack)},
+                                   ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+        record.replace(latest)
+        print('Downloaded and verified pack', version, 'at', pack)
+        return pack
+    except BaseException:
+        # A stop after publishing the record must not leave it pointing to a
+        # deleted download. Earlier successful records remain untouched.
+        latest = updates / 'latest.json'
+        try:
+            if latest.exists():
+                unlinked(latest)
+                record = json.loads(latest.read_text(encoding='utf-8-sig'))
+                if record.get('directory') == str(job / 'pack'):
+                    latest.unlink()
+        except (OSError, ValueError, TypeError, AttributeError) as error:
+            print('Could not clean download bookkeeping:', error, file=sys.stderr)
+        try:
+            remove_download_job(root, job)
+        except (OSError, ValueError) as error:
+            print('Could not remove temporary download:', job, error, file=sys.stderr)
+        raise
+
+
+def remove_download_job(root, job):
+    """Remove only a job created by this downloader, never previous archives."""
+    updates = Path(root).resolve() / '.updates'
+    if updates.is_symlink() or (updates.exists() and getattr(updates.lstat(), 'st_file_attributes', 0) & 0x400):
+        raise ValueError('Linked download cleanup directory refused.')
+    job = Path(job).absolute()
+    if job.parent != updates or not re.fullmatch(r'[0-9a-f]{12}-[A-Za-z0-9_-]+', job.name):
+        raise ValueError('Download cleanup outside its temporary job refused.')
+    if job.exists() or job.is_symlink():
+        unlinked(job)
+        shutil.rmtree(job)
+
+
+def finish_download_jobs(root, jobs, synced):
+    if not jobs:
+        return
+    latest = root / '.updates/latest.json'
+    if latest.exists():
+        try:
+            unlinked(latest)
+            record = json.loads(latest.read_text(encoding='utf-8-sig'))
+            if record.get('directory') in {str(job / 'pack') for job in jobs}:
+                if synced:
+                    record['directory'] = str(root)
+                    pending = jobs[-1] / 'latest.json'
+                    pending.write_text(json.dumps(record, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+                    pending.replace(latest)
+                else:
+                    latest.unlink()
+        except (OSError, ValueError, TypeError, AttributeError) as error:
+            print('Could not update download bookkeeping:', error, file=sys.stderr)
+            print('Temporary downloads retained to keep the previous record valid:', *jobs, file=sys.stderr)
+            return
+    for job in jobs:
+        try:
+            remove_download_job(root, job)
+        except (OSError, ValueError) as error:
+            print('Could not remove temporary download:', job, error, file=sys.stderr)
 
 
 def main():
@@ -96,16 +158,26 @@ def main():
     if not args.download_only:
         target = get_game_directory(root, args.game_directory)
         ensure_game_closed()
-    pack = sync_pack(root, download_pack, verify_pack, expand_archive)
-    if args.download_only:
-        print('Pack folder updated. Game files were not changed.')
-        return
-    command = [sys.executable, str(pack / 'scripts/install_linux.py'), str(target)]
-    if args.music_url:
-        command += ['--music-url', args.music_url]
-    if args.skip_music:
-        command += ['--skip-music']
-    subprocess.run(command, check=True)
+    jobs = []
+    synced = False
+    def download_current(folder):
+        result = download_pack(folder)
+        jobs.append(result.parent)
+        return result
+    try:
+        pack = sync_pack(root, download_current, verify_pack, expand_archive)
+        synced = True
+        if args.download_only:
+            print('Pack folder updated. Game files were not changed.')
+            return
+        command = [sys.executable, str(pack / 'scripts/install_linux.py'), str(target)]
+        if args.music_url:
+            command += ['--music-url', args.music_url]
+        if args.skip_music:
+            command += ['--skip-music']
+        subprocess.run(command, check=True)
+    finally:
+        finish_download_jobs(root, jobs, synced)
 
 
 if __name__ == '__main__':

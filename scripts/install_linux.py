@@ -39,30 +39,88 @@ def install(root, target):
     source = root / 'Game'
     verify_pack(root)
     names = ['BepInEx', 'doorstop_libs', 'start_game_bepinex.sh', '.doorstop_version', 'valheim-modded.sh']
-    for name in names + ['ValheimModpack-backups']:
+    for name in names:
         if (target / name).is_symlink():
             raise ValueError('Refusing linked target: ' + name)
-    backups = target / 'ValheimModpack-backups'
-    backups.mkdir(exist_ok=True)
-    backup = Path(tempfile.mkdtemp(prefix='install-', dir=str(backups)))
-    stage, original = backup / 'staged', backup / 'original'
-    stage.mkdir()
-    original.mkdir()
-    snapshot = backup / 'full-backup'
-    snapshot.mkdir()
-    print('Creating full backup:', snapshot)
-    for src in target.iterdir():
-        if src.name == 'ValheimModpack-backups':
-            continue
-        destination = snapshot / src.name
-        if src.is_symlink():
-            # Preserve the link itself; never traverse outside the selected game.
-            destination.symlink_to(src.readlink(), target_is_directory=src.is_dir())
-        elif src.is_dir():
-            shutil.copytree(src, destination, symlinks=True)
-        else:
-            shutil.copy2(src, destination)
-    (backup / 'BACKUP-COMPLETE.txt').write_text('Full backup completed before installation.\n', encoding='utf-8')
+    # Same-volume renames allow rollback without making a permanent game backup.
+    transaction = Path(tempfile.mkdtemp(prefix='.valheim-modpack-install-', dir=str(target)))
+    stage, original = transaction / 'staged', transaction / 'original'
+    saved, installed = [], []
+    try:
+        stage.mkdir()
+        original.mkdir()
+        prepare_install(source, target, stage, names)
+        if sys.platform == 'linux':
+            ensure_game_closed()
+        for name in names:
+            path = target / name
+            if path.exists():
+                saved.append(name)
+                path.rename(original / name)
+            installed.append(name)
+            (stage / name).rename(path)
+    except BaseException as error:
+        rollback_errors = []
+        failed = transaction / 'failed-install'
+        if installed:
+            try:
+                failed.mkdir(exist_ok=True)
+            except OSError as rollback_error:
+                rollback_errors.append(str(rollback_error))
+        for name in reversed(installed):
+            try:
+                # A signal can arrive after rename succeeds but before Python
+                # resumes. Track intent first and inspect where the entry is.
+                path = target / name
+                if not (stage / name).exists() and (path.exists() or path.is_symlink()):
+                    path.rename(failed / name)
+            except OSError as rollback_error:
+                rollback_errors.append(name + ': ' + str(rollback_error))
+        for name in reversed(saved):
+            try:
+                previous = original / name
+                if previous.exists() or previous.is_symlink():
+                    if (target / name).exists() or (target / name).is_symlink():
+                        raise OSError('Target is occupied; original retained.')
+                    previous.rename(target / name)
+            except OSError as rollback_error:
+                rollback_errors.append(name + ': ' + str(rollback_error))
+        try:
+            if original.exists() and any(original.iterdir()):
+                rollback_errors.append('Previous entries remain in original/; recovery files retained.')
+        except OSError as rollback_error:
+            rollback_errors.append('Cannot verify restored originals: ' + str(rollback_error))
+        if rollback_errors:
+            instructions = ('Installation failed and automatic rollback was incomplete.\n'
+                            'Target: ' + str(target) + '\n'
+                            'Close the game. Recover the previous entries from original/.\n'
+                            'New entries moved aside are in failed-install/.\n'
+                            'Do not delete this directory until recovery is complete.\n'
+                            'Errors: ' + '\n'.join(rollback_errors) + '\n')
+            try:
+                (transaction / 'RECOVERY.txt').write_text(instructions, encoding='utf-8')
+            except OSError:
+                pass
+            raise OSError('Installation failed; rollback incomplete. Recovery files retained: ' + str(transaction)) from error
+        remove_transaction(transaction, target)
+        raise
+    try:
+        remove_transaction(transaction, target)
+    except OSError as error:
+        raise OSError('Mods installed, but temporary installation files could not be removed: ' + str(transaction)) from error
+
+
+def remove_transaction(transaction, target):
+    """Only remove the fresh transaction directly inside this selected game."""
+    transaction, target = Path(transaction), Path(target)
+    if transaction.is_symlink() or transaction.resolve().parent != target.resolve():
+        raise ValueError('Unsafe installation transaction path.')
+    if not transaction.name.startswith('.valheim-modpack-install-'):
+        raise ValueError('Invalid installation transaction directory.')
+    shutil.rmtree(transaction)
+
+
+def prepare_install(source, target, stage, names):
     for name in names[:-1]:
         src = source / name
         if src.is_dir():
@@ -98,29 +156,6 @@ def install(root, target):
     wrapper = stage / 'valheim-modded.sh'
     wrapper.write_text('#!/bin/sh\ncd -- "$(dirname -- "$0")" || exit 1\nexec ./start_game_bepinex.sh "$@"\n', encoding='utf-8')
     wrapper.chmod(0o755)
-    if sys.platform == 'linux':
-        ensure_game_closed()
-    saved, installed = [], []
-    try:
-        for name in names:
-            path = target / name
-            if path.exists():
-                path.rename(original / name)
-                saved.append(name)
-            (stage / name).rename(path)
-            installed.append(name)
-    except Exception:
-        failed = backup / 'failed-install'
-        failed.mkdir()
-        for name in installed:
-            (target / name).rename(failed / name)
-        for name in saved:
-            (original / name).rename(target / name)
-        raise
-    (backup / 'INSTALL.txt').write_text(
-        'Target: ' + str(target) + '\nReplaced entries: ' + ', '.join(saved) +
-        '\nRollback: close the game, move installed entries aside, then copy original/* back.\n', encoding='utf-8')
-    return original
 
 
 def ensure_game_closed():
@@ -144,9 +179,8 @@ def main():
     root = Path(__file__).resolve().parent.parent
     target = get_game_directory(root, args.game_directory)
     ensure_game_closed()
-    original = install(root, target)
-    print('Installed successfully. Backup:', original)
-    print('Full game backup:', original.parent / 'full-backup')
+    install(root, target)
+    print('Installed successfully. Temporary rollback files removed.')
     print('Steam launch options: ./valheim-modded.sh %command%')
     print('Set world Resources to x2 and Portals to Casual.')
     if not args.skip_music:

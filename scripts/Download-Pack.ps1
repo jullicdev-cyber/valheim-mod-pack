@@ -59,7 +59,12 @@ function Get-LatestPack([string]$PackRoot) {
     $commit = [string]$head.sha
     if ($commit -notmatch '^[0-9a-f]{40}$') { throw 'GitHub returned an invalid commit.' }
     $job = Join-Path $updates ($commit.Substring(0,12) + '-' + [guid]::NewGuid().ToString('N').Substring(0,8))
-    New-Item -ItemType Directory -Path $job -Force | Out-Null
+    New-Item -ItemType Directory -Path $updates -Force | Out-Null
+    # Own cleanup only after exclusive creation; never reuse an existing job.
+    New-Item -ItemType Directory -Path $job | Out-Null
+    if ($null -eq $script:PackDownloadJobs) { $script:PackDownloadJobs = [Collections.Generic.List[string]]::new() }
+    $script:PackDownloadJobs.Add($job)
+    try {
     $archive = Join-Path $job 'pack.zip'
     Write-Host "Downloading main at $commit ..."
     Save-PackArchive "https://codeload.github.com/jullicdev-cyber/valheim-mod-pack/zip/$commit" $archive
@@ -71,7 +76,43 @@ function Get-LatestPack([string]$PackRoot) {
     $version = (Get-Content -LiteralPath (Join-Path $pack 'VERSION') -Raw).Trim()
     $lock = Get-Content -LiteralPath (Join-Path $pack 'mods.lock.json') -Raw | ConvertFrom-Json
     if ($version -notmatch '^\d+\.\d+\.\d+$' -or $version -ne $lock.packVersion) { throw 'Downloaded version metadata mismatch.' }
-    @{ commit=$commit; version=$version; directory=$pack } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $updates 'latest.json') -Encoding UTF8
+    $latest = Join-Path $updates 'latest.json'
+    if ((Test-Path -LiteralPath $latest) -and ((Get-Item -LiteralPath $latest -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Linked download record refused.' }
+    $recordPath = Join-Path $job 'latest.json'
+    @{ commit=$commit; version=$version; directory=$pack } | ConvertTo-Json | Set-Content -LiteralPath $recordPath -Encoding UTF8
+    if (Test-Path -LiteralPath $latest) { [IO.File]::Replace($recordPath, $latest, [NullString]::Value) }
+    else { [IO.File]::Move($recordPath, $latest) }
     Write-Host "Downloaded and verified pack $version`: $pack"
     return $pack
+    } catch {
+        $downloadError = $_
+        try {
+            $latest = Join-Path $updates 'latest.json'
+            if (Test-Path -LiteralPath $latest) {
+                if ((Get-Item -LiteralPath $latest -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Linked download record refused.' }
+                $record = Get-Content -LiteralPath $latest -Raw -Encoding UTF8 | ConvertFrom-Json
+                if ($record.directory -eq (Join-Path $job 'pack')) { Remove-Item -LiteralPath $latest -Force }
+            }
+        } catch { Write-Warning "Could not clean download bookkeeping: $_" }
+        try { Remove-PackDownloadJob $PackRoot $job }
+        catch { Write-Warning "Could not remove temporary download $job`: $_" }
+        throw $downloadError
+    }
+}
+
+function Remove-PackDownloadJob([string]$PackRoot, [string]$Job) {
+    $updates = [IO.Path]::GetFullPath((Join-Path $PackRoot '.updates')).TrimEnd('\','/')
+    $path = [IO.Path]::GetFullPath($Job).TrimEnd('\','/')
+    if ([IO.Path]::GetDirectoryName($path) -ne $updates -or [IO.Path]::GetFileName($path) -notmatch '^[0-9a-f]{12}-[0-9a-f]{8}$') { throw 'Download cleanup outside its temporary job refused.' }
+    foreach ($checkPath in @($updates,$path)) {
+        if ((Test-Path -LiteralPath $checkPath) -and ((Get-Item -LiteralPath $checkPath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Linked download cleanup path refused.' }
+    }
+    if (-not (Test-Path -LiteralPath $path)) { return }
+    function Assert-DownloadEntry([string]$EntryPath) {
+        $entry = Get-Item -LiteralPath $EntryPath -Force
+        if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Linked download entry refused: $EntryPath" }
+        if ($entry.PSIsContainer) { foreach ($child in Get-ChildItem -LiteralPath $EntryPath -Force) { Assert-DownloadEntry $child.FullName } }
+    }
+    Assert-DownloadEntry $path
+    Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop
 }

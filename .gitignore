@@ -6,6 +6,7 @@ BepInEx/LogOutput.log
 __pycache__/
 local-settings.json
 .updates/
+backups/
 NordicRadio/Music/
 NordicRadio/Cache/
 ValheimModpack/

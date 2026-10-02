@@ -24,9 +24,12 @@ class InstallTests(unittest.TestCase):
             raise
 
     def setUp(self):
-        # Retain fixtures for inspecting backups and failure recovery.
-        self.target = Path(tempfile.mkdtemp(prefix='valheim installer test '))
-        self.settings = Path(tempfile.mkdtemp(prefix='valheim settings test '))
+        fixture = tempfile.TemporaryDirectory(prefix='vh-install-')
+        self.addCleanup(fixture.cleanup)
+        self.target = Path(fixture.name).resolve() / 'game'
+        self.settings = Path(fixture.name).resolve() / 'settings'
+        self.target.mkdir()
+        self.settings.mkdir()
         (self.target / 'valheim.x86_64').write_bytes(b'mock game')
         (self.target / 'valheim.exe').write_bytes(b'mock game')
         (self.target / 'BepInEx').mkdir()
@@ -66,24 +69,22 @@ class InstallTests(unittest.TestCase):
         self.assertEqual((location / 'BepInEx/config/AzuExtendedPlayerInventory_player_-456.dat').read_bytes(), b'legacy Azu EPI favorites fixture')
 
     def test_linux_install_and_reinstall(self):
-        backup = installer.install(ROOT, self.target)
-        self.assertEqual((backup / 'BepInEx/old-plugin.txt').read_text(), 'old mod')
-        snapshot = backup.parent / 'full-backup'
-        self.assertEqual((snapshot / 'unrelated.txt').read_text(), 'keep')
-        self.assertEqual((snapshot / 'valheim.x86_64').read_bytes(), b'mock game')
-        self.assertTrue((backup.parent / 'BACKUP-COMPLETE.txt').exists())
-        self.assertFalse((snapshot / 'ValheimModpack-backups').exists())
+        installer.install(ROOT, self.target)
         self.assertFalse((self.target / 'BepInEx/old-plugin.txt').exists())
-        second = installer.install(ROOT, self.target)
-        self.assertTrue((second / 'BepInEx/core/BepInEx.dll').is_file())
+        installer.install(ROOT, self.target)
+        self.assertTrue((self.target / 'BepInEx/core/BepInEx.dll').is_file())
+        self.assert_no_automatic_backups()
         self.assertEqual((self.target / 'unrelated.txt').read_text(), 'keep')
         self.assertNotIn(b'\r', (self.target / 'start_game_bepinex.sh').read_bytes())
         self.assert_personal_data(self.target)
-        self.assert_personal_data(snapshot)
         self.assertFalse((self.target / 'BepInEx/config/unknown-old-mod.cfg').exists())
-        for base in (self.target, snapshot):
-            self.assertEqual((base / 'NordicRadio/Music/скальд.mp3').read_bytes(), b'personal music fixture')
-            self.assertEqual((base / 'NordicRadio/Cache/fixture.mp3').read_bytes(), b'cached music fixture')
+        self.assertEqual((self.target / 'NordicRadio/Music/скальд.mp3').read_bytes(), b'personal music fixture')
+        self.assertEqual((self.target / 'NordicRadio/Cache/fixture.mp3').read_bytes(), b'cached music fixture')
+
+    def assert_no_automatic_backups(self):
+        self.assertFalse((self.target / 'ValheimModpack-backups').exists())
+        self.assertEqual(list(self.target.glob('.valheim-modpack-install-*')), [])
+        self.assertEqual(list(self.target.glob('.valheim-modpack-txn-*')), [])
 
     def test_linux_rollback(self):
         rename = Path.rename
@@ -96,6 +97,61 @@ class InstallTests(unittest.TestCase):
                 installer.install(ROOT, self.target)
         self.assertEqual((self.target / 'BepInEx/old-plugin.txt').read_text(), 'old mod')
         self.assertFalse((self.target / 'BepInEx/core').exists())
+        self.assert_no_automatic_backups()
+
+    def test_linux_interrupted_swap_rolls_back_and_cleans(self):
+        rename = Path.rename
+        def interrupt_once(path, destination):
+            if path.parent.name == 'staged' and path.name == 'doorstop_libs':
+                raise KeyboardInterrupt('simulated cancellation')
+            return rename(path, destination)
+        with patch.object(Path, 'rename', interrupt_once):
+            with self.assertRaises(KeyboardInterrupt):
+                installer.install(ROOT, self.target)
+        self.assertEqual((self.target / 'BepInEx/old-plugin.txt').read_text(), 'old mod')
+        self.assert_no_automatic_backups()
+
+    def test_linux_incomplete_rollback_keeps_recovery_originals(self):
+        rename = Path.rename
+        def fail_swap_and_rollback(path, destination):
+            if path.parent.name == 'staged' and path.name == 'doorstop_libs':
+                raise OSError('simulated swap failure')
+            if path.parent.name == 'original' and path.name == 'BepInEx':
+                raise OSError('simulated rollback failure')
+            return rename(path, destination)
+        with patch.object(Path, 'rename', fail_swap_and_rollback):
+            with self.assertRaisesRegex(OSError, 'rollback incomplete'):
+                installer.install(ROOT, self.target)
+        jobs = list(self.target.glob('.valheim-modpack-install-*'))
+        self.assertEqual(len(jobs), 1)
+        self.assertTrue((jobs[0] / 'RECOVERY.txt').is_file())
+        self.assertEqual((jobs[0] / 'original/BepInEx/old-plugin.txt').read_text(), 'old mod')
+
+    def test_linux_interruption_after_original_rename_restores_it(self):
+        rename = Path.rename
+        def interrupt_after_rename(path, destination):
+            result = rename(path, destination)
+            if path.parent == self.target and path.name == 'BepInEx':
+                raise KeyboardInterrupt('cancelled immediately after saving original')
+            return result
+        with patch.object(Path, 'rename', interrupt_after_rename):
+            with self.assertRaises(KeyboardInterrupt):
+                installer.install(ROOT, self.target)
+        self.assertEqual((self.target / 'BepInEx/old-plugin.txt').read_text(), 'old mod')
+        self.assert_no_automatic_backups()
+
+    def test_linux_interruption_after_staged_rename_restores_original(self):
+        rename = Path.rename
+        def interrupt_after_rename(path, destination):
+            result = rename(path, destination)
+            if path.parent.name == 'staged' and path.name == 'BepInEx':
+                raise KeyboardInterrupt('cancelled immediately after installing new entry')
+            return result
+        with patch.object(Path, 'rename', interrupt_after_rename):
+            with self.assertRaises(KeyboardInterrupt):
+                installer.install(ROOT, self.target)
+        self.assertEqual((self.target / 'BepInEx/old-plugin.txt').read_text(), 'old mod')
+        self.assert_no_automatic_backups()
 
     def test_invalid_directory(self):
         invalid = self.target / 'wrong directory'
@@ -114,10 +170,13 @@ class InstallTests(unittest.TestCase):
         self.assertTrue((self.target / 'BepInEx/core/BepInEx.dll').exists())
         self.assert_personal_data(self.target)
         self.assertFalse((self.target / 'BepInEx/config/unknown-old-mod.cfg').exists())
+        self.assert_no_automatic_backups()
 
     @unittest.skipUnless(sys.platform == 'win32', 'Windows PowerShell test')
     def test_windows_vortex_file_links(self):
-        outside = Path(tempfile.mkdtemp(prefix='vortex staging '))
+        fixture = tempfile.TemporaryDirectory(prefix='vortex staging ')
+        self.addCleanup(fixture.cleanup)
+        outside = Path(fixture.name)
         payload = outside / 'mod.dll'
         payload.write_bytes(b'previous mod contents')
         self.make_symlink(self.target / 'BepInEx/linked.dll', payload)
@@ -127,15 +186,9 @@ class InstallTests(unittest.TestCase):
                                  '-File', str(ROOT / 'scripts/Install-Windows.ps1'), '-SkipMusic',
                                  '-SettingsDirectory', str(self.settings), '-GameDirectory', str(self.target)], capture_output=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        backup = next((self.target / 'ValheimModpack-backups').iterdir())
-        for name in ['BepInEx/linked.dll', 'winhttp.dll']:
-            copy = backup / 'full-backup' / name
-            self.assertFalse(copy.is_symlink())
-            self.assertEqual(copy.read_bytes(), b'previous mod contents')
-            self.assertTrue((backup / 'original' / name).is_symlink())
-        self.assertEqual((backup / 'full-backup/BepInEx/relative.dll').read_text(), 'old mod')
         self.assertEqual(payload.read_bytes(), b'previous mod contents')
         self.assertFalse((self.target / 'winhttp.dll').is_symlink())
+        self.assert_no_automatic_backups()
 
     @unittest.skipUnless(sys.platform == 'win32', 'Windows PowerShell test')
     def test_windows_dangling_link_preserves_game(self):
@@ -171,18 +224,33 @@ class InstallTests(unittest.TestCase):
         self.assertEqual((self.target / 'BepInEx/old-plugin.txt').read_text(), 'old mod')
         self.assertEqual(loader.read_bytes(), b'old loader')
         self.assertFalse((self.target / 'BepInEx/core').exists())
+        self.assert_no_automatic_backups()
 
-    def test_incomplete_backup_does_not_change_game(self):
+    def test_incomplete_staging_does_not_change_game(self):
         copy = installer.shutil.copy2
-        def fail_backup(src, dst, **kwargs):
-            if Path(src).name == 'unrelated.txt':
-                raise OSError('simulated full disk during backup')
+        def fail_staging(src, dst, **kwargs):
+            if Path(src).name == 'start_game_bepinex.sh':
+                raise OSError('simulated full disk during staging')
             return copy(src, dst, **kwargs)
-        with patch.object(installer.shutil, 'copy2', fail_backup):
+        with patch.object(installer.shutil, 'copy2', fail_staging):
             with self.assertRaises(OSError):
                 installer.install(ROOT, self.target)
         self.assertEqual((self.target / 'BepInEx/old-plugin.txt').read_text(), 'old mod')
-        self.assertEqual(list((self.target / 'ValheimModpack-backups').glob('*/BACKUP-COMPLETE.txt')), [])
+        self.assert_no_automatic_backups()
+
+    def test_linux_preserves_existing_backups_without_copying_game(self):
+        old = self.target / 'ValheimModpack-backups/old/full-backup'
+        old.mkdir(parents=True)
+        (old / 'keep.txt').write_text('existing archive')
+        copy = installer.shutil.copy2
+        def forbid_copy(src, dst, **kwargs):
+            if Path(src) == self.target / 'unrelated.txt' or self.target / 'ValheimModpack-backups' in Path(src).parents:
+                raise AssertionError('Installer must not copy the game or old backups')
+            return copy(src, dst, **kwargs)
+        with patch.object(installer.shutil, 'copy2', forbid_copy):
+            installer.install(ROOT, self.target)
+        self.assertEqual((old / 'keep.txt').read_text(), 'existing archive')
+        self.assertEqual(list((self.target / 'ValheimModpack-backups').iterdir()), [old.parent])
 
     @unittest.skipUnless(sys.platform == 'win32', 'Windows PowerShell test')
     def test_windows_install_and_reinstall(self):
@@ -193,16 +261,7 @@ class InstallTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue((self.target / 'BepInEx/core/BepInEx.dll').exists())
         self.assertFalse((self.target / 'BepInEx/old-plugin.txt').exists())
-        originals = list((self.target / 'ValheimModpack-backups').glob('*/original/BepInEx/old-plugin.txt'))
-        self.assertEqual(len(originals), 1)
-        snapshots = list((self.target / 'ValheimModpack-backups').glob('*/full-backup'))
-        self.assertEqual(len(snapshots), 2)
-        for snapshot in snapshots:
-            self.assertEqual((snapshot / 'unrelated.txt').read_text(), 'keep')
-            self.assertEqual((snapshot / 'valheim.exe').read_bytes(), b'mock game')
-            self.assertFalse((snapshot / 'ValheimModpack-backups').exists())
-            self.assertEqual((snapshot / 'NordicRadio/Music/скальд.mp3').read_bytes(), b'personal music fixture')
-            self.assertEqual((snapshot / 'ValheimModpack/WorldCharacters/characters/world-account-character.wchar').read_bytes(), b'authoritative character fixture')
+        self.assert_no_automatic_backups()
         self.assertEqual((self.target / 'ValheimModpack/WorldCharacters/characters/world-account-character.wchar').read_bytes(), b'authoritative character fixture')
         self.assertEqual((self.target / 'NordicRadio/Music/скальд.mp3').read_bytes(), b'personal music fixture')
         self.assertEqual((self.target / 'NordicRadio/Cache/fixture.mp3').read_bytes(), b'cached music fixture')

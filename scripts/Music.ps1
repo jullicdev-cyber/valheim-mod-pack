@@ -147,30 +147,76 @@ function Install-RadioMusic([string]$GameDirectory, [string]$Url) {
 function Invoke-RadioMusicInstall([string]$GameDirectory, [string]$Url) {
     $radio = Join-Path $GameDirectory 'NordicRadio'
     $music = Join-Path $radio 'Music'
-    $backups = Join-Path $radio 'Music-backups'
-    foreach ($path in @($radio,$music,$backups)) { Assert-MusicPath $path }
+    $record = Join-Path $radio 'last-music-install.txt'
+    foreach ($path in @($radio,$music,$record)) { Assert-MusicPath $path }
     if (Get-Process -Name valheim,valheim_server -ErrorAction SilentlyContinue) { throw 'Close Valheim before updating music.' }
-    New-Item -ItemType Directory -Path $backups -Force | Out-Null
-    $job = Join-Path $backups ((Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N'))
+    $job = Join-Path $radio ('.music-update-' + [guid]::NewGuid().ToString('N'))
     $stage = Join-Path $job 'staged'
     $original = Join-Path $job 'original'
     $archive = Join-Path $job 'music.zip'
-    New-Item -ItemType Directory -Path $stage -Force | Out-Null
-    Save-MusicArchive $Url $archive
-    if (Test-Path -LiteralPath $music) { Copy-MusicTree $music $stage }
-    $count = Expand-MusicArchive $archive $stage
-    if (Get-Process -Name valheim,valheim_server -ErrorAction SilentlyContinue) { throw 'Game started during download; music installation stopped.' }
-    foreach ($path in @($radio,$music,$backups)) { Assert-MusicPath $path }
-    $moved = $false
+    $oldRecord = Join-Path $job 'original-install.txt'
+    $preparedRecord = Join-Path $job 'install.txt'
+    $recovery = $false
     try {
-        if (Test-Path -LiteralPath $music) { Move-Item -LiteralPath $music -Destination $original; $moved = $true }
-        Move-Item -LiteralPath $stage -Destination $music
-    } catch {
-        if ($moved) { Move-Item -LiteralPath $original -Destination $music }
-        throw
+        New-Item -ItemType Directory -Path $stage -Force | Out-Null
+        Save-MusicArchive $Url $archive
+        if (Test-Path -LiteralPath $music) { Copy-MusicTree $music $stage }
+        $count = Expand-MusicArchive $archive $stage
+        @("Source: $Url", "ZIP SHA256: $(Get-MusicHash $archive)", "Tracks: $count") | Set-Content -LiteralPath $preparedRecord -Encoding UTF8
+        if (Get-Process -Name valheim,valheim_server -ErrorAction SilentlyContinue) { throw 'Game started during download; music installation stopped.' }
+        foreach ($path in @($radio,$music,$record)) { Assert-MusicPath $path }
+        $recovery = $true
+        try {
+            if (Test-Path -LiteralPath $music) { Move-MusicEntry $music $original $radio }
+            if (Test-Path -LiteralPath $record) { Move-MusicEntry $record $oldRecord $radio }
+            Move-MusicEntry $stage $music $radio
+            Move-MusicEntry $preparedRecord $record $radio
+        } catch {
+            $cause = $_; $failures = @()
+            if (-not (Test-Path -LiteralPath $preparedRecord) -and (Test-Path -LiteralPath $record)) {
+                try { Move-MusicEntry $record (Join-Path $job 'failed-install.txt') $radio } catch { $failures += $_.Exception.Message }
+            }
+            if (-not (Test-Path -LiteralPath $stage) -and (Test-Path -LiteralPath $music)) {
+                try { Move-MusicEntry $music (Join-Path $job 'failed') $radio } catch { $failures += $_.Exception.Message }
+            }
+            foreach ($restore in @(@($original,$music),@($oldRecord,$record))) {
+                if (Test-Path -LiteralPath $restore[0]) {
+                    try {
+                        if (Test-Path -LiteralPath $restore[1]) { throw "Rollback destination is occupied: $($restore[1])" }
+                        Move-MusicEntry $restore[0] $restore[1] $radio
+                    } catch { $failures += $_.Exception.Message }
+                }
+            }
+            if ($failures.Count) {
+                $recovery = $true
+                @('Music rollback failed. Original music is in original/; the previous install record is original-install.txt when present.', 'Close the updater, move conflicting destinations aside, and restore these entries to NordicRadio.', $failures) | Set-Content -LiteralPath (Join-Path $job 'RECOVERY.txt') -Encoding UTF8
+                throw "Music rollback failed; recovery files retained at $job. Initial failure: $($cause.Exception.Message)"
+            }
+            $recovery = $false
+            throw $cause
+        }
+        $recovery = $false
+        Write-Host "Music installed: $count tracks. Folder: $music"
+    } finally {
+        if ($recovery) {
+            $instructions = Join-Path $job 'RECOVERY.txt'
+            if (-not (Test-Path -LiteralPath $instructions)) { [IO.File]::WriteAllText($instructions, 'Music transaction was interrupted. Original music is in original/ and the previous install record is original-install.txt when present. Close the updater before restoring these entries to NordicRadio.') }
+        } else { Remove-MusicJob $radio $job }
     }
-    @("Source: $Url", "ZIP SHA256: $(Get-MusicHash $archive)", "Tracks: $count", 'Backup: original/') | Set-Content -LiteralPath (Join-Path $job 'INSTALL.txt') -Encoding UTF8
-    Remove-Item -LiteralPath $archive
-    Write-Host "Music installed: $count tracks. Folder: $music"
-    Write-Host "Music backup: $job"
+}
+
+function Move-MusicEntry([string]$From, [string]$To, [string]$Radio) {
+    $base = [IO.Path]::GetFullPath($Radio).TrimEnd('\','/') + [IO.Path]::DirectorySeparatorChar
+    foreach ($path in @($From,$To)) {
+        if (-not ([IO.Path]::GetFullPath($path)).StartsWith($base,[StringComparison]::OrdinalIgnoreCase)) { throw 'Music move outside NordicRadio refused.' }
+    }
+    Move-Item -LiteralPath $From -Destination $To -ErrorAction Stop
+}
+
+function Remove-MusicJob([string]$Radio, [string]$Job) {
+    $base = [IO.Path]::GetFullPath($Radio).TrimEnd('\','/')
+    $target = [IO.Path]::GetFullPath($Job)
+    if ((Split-Path $target -Parent) -ne $base -or (Split-Path $target -Leaf) -notlike '.music-update-*') { throw 'Music cleanup outside its transaction refused.' }
+    Assert-MusicPath $target
+    if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction Stop }
 }

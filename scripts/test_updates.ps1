@@ -31,4 +31,24 @@ function Save-PackArchive { param($Uri,$OutFile); Copy-Item -LiteralPath (Join-P
 $download = Get-LatestPack $packRoot
 Assert ($download -is [string] -and (Test-Path -LiteralPath (Join-Path $download 'VERSION'))) 'Downloader returned extra pipeline output.'
 Assert (Test-Path -LiteralPath (Join-Path $packRoot '.updates/latest.json')) 'Verified snapshot was not recorded.'
-Write-Output 'OK: Windows saved paths, safe extraction, payload verification and download workflow.'
+$last = [IO.File]::ReadAllText((Join-Path $packRoot '.updates/latest.json'))
+$firstJob = Split-Path $download -Parent
+function Save-PackArchive { param($Uri,$OutFile); Copy-Item -LiteralPath (Join-Path $Fixture 'bad.zip') -Destination $OutFile }
+$jobsBefore = @(Get-ChildItem -LiteralPath (Join-Path $packRoot '.updates') -Directory).Count
+$failed = $false
+try { Get-LatestPack $packRoot } catch { $failed = $true }
+Assert $failed 'Corrupt download accepted.'
+Assert (@(Get-ChildItem -LiteralPath (Join-Path $packRoot '.updates') -Directory).Count -eq $jobsBefore) 'Failed download left temporary data.'
+Assert ([IO.File]::ReadAllText((Join-Path $packRoot '.updates/latest.json')) -eq $last) 'Failed download replaced previous record.'
+function Save-PackArchive { param($Uri,$OutFile); Copy-Item -LiteralPath (Join-Path $Fixture 'good.zip') -Destination $OutFile }
+$current = Get-LatestPack $packRoot
+Remove-PackDownloadJob $packRoot (Split-Path $current -Parent)
+Assert (-not (Test-Path -LiteralPath $current)) 'Current download job was not cleaned.'
+Assert (Test-Path -LiteralPath $download) 'Cleanup removed a previous archive.'
+$unrelated = Join-Path $packRoot 'personal'
+New-Item -ItemType Directory -Path $unrelated | Out-Null
+$failed = $false
+try { Remove-PackDownloadJob $packRoot $unrelated } catch { $failed = $true }
+Assert ($failed -and (Test-Path -LiteralPath $unrelated)) 'Cleanup accepted an unrelated directory.'
+Remove-PackDownloadJob $packRoot $firstJob
+Write-Output 'OK: Windows saved paths, safe extraction, payload verification and temporary download cleanup.'

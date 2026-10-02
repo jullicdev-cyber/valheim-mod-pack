@@ -1,4 +1,4 @@
-"""Offline updater tests. Fixtures remain in .cache; never touches the installed game."""
+"""Offline updater tests with isolated temporary packs; never touches the installed game."""
 import hashlib
 import io
 import json
@@ -24,7 +24,9 @@ PAYLOAD = 'BepInEx/plugins/Goldenrevolver-Quick_Stack_Store_Sort_Trash_Restock/T
 
 class UpdateTests(unittest.TestCase):
     def setUp(self):
-        self.folder = Path(tempfile.mkdtemp(prefix='update-tests-', dir=ROOT / '.cache'))
+        fixture = tempfile.TemporaryDirectory(prefix='vh-update-')
+        self.addCleanup(fixture.cleanup)
+        self.folder = Path(fixture.name).resolve()
         self.launcher = self.folder / 'pack'
         self.launcher.mkdir()
         self.game = self.folder / 'Игра с пробелами'
@@ -96,15 +98,58 @@ class UpdateTests(unittest.TestCase):
         with patch.object(update_linux, 'fetch', self.fake_fetch(self.archive())):
             update_linux.download_pack(self.launcher)
         last = (self.launcher / '.updates/latest.json').read_bytes()
+        jobs_before = list((self.launcher / '.updates').iterdir())
         for data in [self.archive(corrupt=True), b'incomplete zip']:
             with patch.object(update_linux, 'fetch', self.fake_fetch(data)):
                 with self.assertRaises((ValueError, zipfile.BadZipFile)):
                     update_linux.download_pack(self.launcher)
             self.assertEqual((self.launcher / '.updates/latest.json').read_bytes(), last)
+            self.assertEqual(list((self.launcher / '.updates').iterdir()), jobs_before)
         with patch.object(update_linux, 'fetch', side_effect=OSError('network unavailable')):
             with self.assertRaises(OSError):
                 update_linux.download_pack(self.launcher)
         self.assertEqual((self.launcher / '.updates/latest.json').read_bytes(), last)
+
+    def test_successful_sync_cleans_only_current_download_job(self):
+        with patch.object(update_linux, 'fetch', self.fake_fetch(self.archive())):
+            old = update_linux.download_pack(self.launcher)
+            current = update_linux.download_pack(self.launcher)
+        update_linux.finish_download_jobs(self.launcher, [current.parent], True)
+        self.assertFalse(current.parent.exists())
+        self.assertTrue(old.exists())
+        self.assertEqual(json.loads((self.launcher / '.updates/latest.json').read_text(encoding='utf-8'))['directory'], str(self.launcher))
+
+    def test_interruption_after_publishing_record_cleans_it(self):
+        with patch.object(update_linux, 'fetch', self.fake_fetch(self.archive())), \
+                patch('builtins.print', side_effect=[None, KeyboardInterrupt('cancelled')]):
+            with self.assertRaises(KeyboardInterrupt):
+                update_linux.download_pack(self.launcher)
+        self.assertEqual(list((self.launcher / '.updates').iterdir()), [])
+
+    def test_failed_sync_cleans_current_download_without_stale_record(self):
+        with patch.object(update_linux, 'fetch', self.fake_fetch(self.archive())):
+            current = update_linux.download_pack(self.launcher)
+        update_linux.finish_download_jobs(self.launcher, [current.parent], False)
+        self.assertFalse(current.parent.exists())
+        self.assertFalse((self.launcher / '.updates/latest.json').exists())
+
+    def test_download_cleanup_refuses_other_directories(self):
+        unrelated = self.launcher / 'personal'
+        unrelated.mkdir()
+        (unrelated / 'keep').write_text('keep')
+        with self.assertRaises(ValueError):
+            update_linux.remove_download_job(self.launcher, unrelated)
+        self.assertEqual((unrelated / 'keep').read_text(), 'keep')
+
+    def test_bookkeeping_error_retains_download_for_recovery(self):
+        with patch.object(update_linux, 'fetch', self.fake_fetch(self.archive())):
+            current = update_linux.download_pack(self.launcher)
+        before = (self.launcher / '.updates/latest.json').read_bytes()
+        with patch.object(Path, 'replace', side_effect=OSError('record locked')), \
+                patch('builtins.print'):
+            update_linux.finish_download_jobs(self.launcher, [current.parent], True)
+        self.assertTrue(current.exists())
+        self.assertEqual((self.launcher / '.updates/latest.json').read_bytes(), before)
 
     def test_archive_traversal_duplicate_and_link_rejected(self):
         link = zipfile.ZipInfo(PREFIX + 'linked')
