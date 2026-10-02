@@ -21,7 +21,7 @@
   },
   {
     "path": "BepInEx/config/Bindrune/known.txt",
-    "sha256": "027fc7a616727f7289a92d8b800ebf55452838b5d827f31977003a662f75b67a"
+    "sha256": "5852b609a9914c60caac6c287d2476249c281914b58af63202305380c6990437"
   },
   {
     "path": "BepInEx/config/Gonfreecss.ResourceDropModifier.cfg",
@@ -57,7 +57,7 @@
   },
   {
     "path": "BepInEx/config/valheimmodpack.confirmpinremoval.cfg",
-    "sha256": "db7f5a8e80d47ef9f9bede0a959240db2d2b552248fb8caebfd4e5844e47408b"
+    "sha256": "1d998e57de8cdf8331727db476baf85f20ce0a124c0f5de12217b823df896deb"
   },
   {
     "path": "BepInEx/config/valheimmodpack.eaqsquickstackbridge.cfg",
@@ -257,7 +257,7 @@
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-ConfirmMapPinRemoval/ConfirmMapPinRemoval.dll",
-    "sha256": "4fe34a925bcfdbaf00b21ad09c8c0c09a2aff19eef215eae01b90458b5b8a510"
+    "sha256": "201abf80d0b5d6e168dbfccf06244d3da34170cfbb20ec6fba3df5f9756cff6b"
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-EAQSQuickStackBridge/EAQSQuickStackBridge.dll",

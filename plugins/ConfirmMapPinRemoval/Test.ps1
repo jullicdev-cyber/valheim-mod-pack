@@ -80,3 +80,6 @@ try {
     }
     Write-Output 'OK: packaged Jotunn wood-panel UI API verified. Rendering and gameplay still require an in-game check.'
 } finally { $jotunn.Dispose() }
+& (Join-Path $PSScriptRoot 'Test-MapActions.ps1') -GameDirectory $GameDirectory
+& (Join-Path $PSScriptRoot 'Test-Suggestions.ps1')
+& (Join-Path $PSScriptRoot 'Test-SuggestionShortcutGate.ps1')

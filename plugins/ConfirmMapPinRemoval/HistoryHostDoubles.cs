@@ -164,6 +164,8 @@ public sealed class Minimap
     private readonly List<PinData> m_pins = new List<PinData>();
     public PinData m_namePin;
     public bool FailRemove;
+    public PinData FailSpecificRemove;
+    public Action<PinData> BeforeRemove;
     public int Added, Removed;
     private void ShowPinNameInput(UnityEngine.Vector3 value) { }
     private void OnMapLeftClick() { }
@@ -174,7 +176,12 @@ public sealed class Minimap
         var pin = new PinData { m_pos = pos, m_type = type, m_name = name, m_save = save, m_checked = isChecked, m_ownerID = ownerID, m_author = author };
         m_pins.Add(pin); Added++; return pin;
     }
-    public void RemovePin(PinData pin) { if (FailRemove) throw new Exception("Game removal failed"); if (m_pins.Remove(pin)) Removed++; }
+    public void RemovePin(PinData pin)
+    {
+        if (BeforeRemove != null) BeforeRemove(pin);
+        if (FailRemove || Object.ReferenceEquals(pin, FailSpecificRemove)) throw new Exception("Game removal failed");
+        if (m_pins.Remove(pin)) Removed++;
+    }
 }
 namespace ValheimModPack.PinRemoval
 {

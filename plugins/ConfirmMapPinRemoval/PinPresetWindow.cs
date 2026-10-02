@@ -342,7 +342,7 @@ namespace ValheimModPack.PinRemoval
             name = InputAt(panel.transform, draftName, T("presets_name"), 0, 43, 592, 44, NameLimit);
             statusText = Label(panel.transform, status, 0, -18, 600, 46, 17, false);
             ButtonAt(panel.transform, T("presets_cancel"), -155, -99, 260, 42, CancelModal);
-            ButtonAt(panel.transform, T("presets_save"), 155, -99, 260, 42, delegate
+            ButtonAt(panel.transform, T("apply"), 155, -99, 260, 42, delegate
             {
                 CaptureDraft(); string trimmed = (draftName ?? "").Trim();
                 if (trimmed.Length == 0) { SetStatus(T("presets_name_required")); Focus(name); return; }

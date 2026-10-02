@@ -1,11 +1,13 @@
 # Bind id<TAB>situations<TAB>held items. Context describes conflicts, not input gating.
-cfg:valheimmodpack.chestsearch:General:OpenShortcut	World,Inventory,Container,Crafting
-cfg:valheimmodpack.expeditionloadouts:Controls:OpenShortcut	World,Inventory,Container,Crafting
+cfg:valheimmodpack.chestsearch:General:OpenShortcut	Inventory,Container,Crafting
+cfg:valheimmodpack.expeditionloadouts:Controls:OpenShortcut	Inventory,Container,Crafting
 cfg:valheimmodpack.expeditionloadouts:Controls:LargeAmountModifier	Custom
 cfg:valheimmodpack.confirmpinremoval:Controls:OpenHistory	Map
 cfg:valheimmodpack.confirmpinremoval:Controls:QuickPin	World,Map,Vehicle,Build placement,Build menu
 cfg:valheimmodpack.confirmpinremoval:Controls:PlaceOnMapModifier	Map
 cfg:valheimmodpack.confirmpinremoval:Controls:RenamePinModifier	Map
+cfg:valheimmodpack.confirmpinremoval:Controls:AcceptSuggestion	World,Vehicle
+cfg:valheimmodpack.confirmpinremoval:Controls:NextSuggestion	World,Vehicle
+cfg:valheimmodpack.confirmpinremoval:Controls:DismissSuggestion	World,Vehicle
+cfg:valheimmodpack.confirmpinremoval:Controls:ClearDeathPins	Map
 cfg:valheimmodpack.eaqsquickstackbridge:Controls:SortShortcut	Inventory,Container,Crafting
-cfg:valheimmodpack.portalfinder:Controls:FindNearestToPlayer	Map
-cfg:valheimmodpack.portalfinder:Controls:SelectMapPoint	Map

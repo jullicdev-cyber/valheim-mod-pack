@@ -27,6 +27,9 @@ namespace ValheimModPack.PinRemoval
                 if (create != null) create.Invoke(GUIManager.Instance, null);
             }
             if (GUIManager.CustomGUIFront == null) return shared + " SKIP: map-history native UI requires Jotunn CustomGUIFront; headless scene has none.";
+            shared += PinPresentationNativeChecks.Run();
+            shared += SuggestionRuntimeNativeChecks.Run();
+            shared += SuggestionShortcutNativeChecks.Run();
             int baseline = Blocks(), afterForeign = baseline;
             var window = new PinHistoryWindow(); var confirmation = new WoodDialogView();
             try

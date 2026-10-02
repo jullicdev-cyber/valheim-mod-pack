@@ -151,6 +151,10 @@ namespace ValheimModPack.PinRemoval
             Add(result, "presets_name", "Name", "Название", "$menu_name");
             Add(result, "presets_icon", "Icon", "Значок", null);
             Add(result, "presets_save", "Save", "Сохранить", "$menu_manualsave");
+            Add(result, "apply", "Apply", "Применить", "$settings_apply");
+            Add(result, "suggestion_place", "Place marker", "Поставить метку", null);
+            Add(result, "suggestion_next", "Next", "Другая", null);
+            Add(result, "suggestion_hide", "Hide", "Скрыть", null);
             Add(result, "presets_cancel", "Cancel", "Отмена", "$menu_cancel");
             Add(result, "presets_name_required", "Enter a name", "Введите название", null);
             Add(result, "presets_icon_required", "Choose an icon", "Выберите значок", null);

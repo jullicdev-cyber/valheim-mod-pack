@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
@@ -9,6 +10,56 @@ public static class ArchiveTests
     private static void Check(bool value, string message) { count++; if (!value) throw new Exception(message); }
     private static void Fails(Action action, string message)
     { bool failed = false; try { action(); } catch { failed = true; } Check(failed, message); }
+    private static IEnumerable<PinRecord> ThrowAfterFirst(PinRecord pin)
+    { yield return pin; throw new IOException("Selection enumeration failed"); }
+    private static string Bytes(string file) { return Convert.ToBase64String(File.ReadAllBytes(file)); }
+    private static void BatchChecks(string folder, long now)
+    {
+        string file = Path.Combine(folder, "batch.bin");
+        var archive = new PinArchive(file, 10, 20);
+        PinRecord first = Pin(); archive.RememberCreation(first, "Batch author", now - 100);
+        archive.BindPreset(first, "default.copper");
+        string before = Bytes(file);
+        PinRecord second = Pin(); second.Name = "Second collocated pin";
+        PinRecord third = Pin(); third.X += 10; third.Name = "Third";
+        IList<PinRecord> staged = archive.RecordManyBeforeDelete(new[] { first, second, third }, now);
+        Check(staged.Count == 3 && archive.Deleted.Count == 3, "Batch includes each selected pin, including same-identity collocated labels");
+        Check(Bytes(file + ".bak") == before, "Whole batch performs exactly one atomic archive replacement");
+        Check(staged[0].Id != staged[1].Id && staged[1].Id != staged[2].Id && staged[0].DeletedUtc == staged[2].DeletedUtc,
+            "Each batch snapshot has an independent recovery ID and shared deletion time");
+        Check(staged[0].PresetKey == "default.copper" && staged[0].CreatorName == "Batch author", "Batch preserves label binding and creation metadata");
+        first.Name = "Changed after journal commit";
+        Check(staged[0].Name != first.Name, "Batch snapshots do not retain mutable caller pins");
+        archive = new PinArchive(file, 10, 20);
+        Check(archive.Deleted.Count == 3 && archive.Deleted[1].Name == "Second collocated pin", "Entire committed batch reloads durably");
+        before = Bytes(file); string backup = Bytes(file + ".bak");
+        var invalid = Pin(); invalid.X = Single.NaN;
+        Fails(() => archive.RecordManyBeforeDelete(new[] { Pin(), invalid }, now + 1), "Invalid final snapshot aborts complete batch");
+        Check(archive.Deleted.Count == 3 && Bytes(file) == before && Bytes(file + ".bak") == backup, "Validation failure changes neither memory nor disk history");
+        Fails(() => archive.RecordManyBeforeDelete(ThrowAfterFirst(Pin()), now + 1), "Enumeration failure aborts complete batch");
+        Check(archive.Deleted.Count == 3 && Bytes(file) == before, "No valid prefix is committed on enumeration failure");
+        Fails(() => archive.RecordManyBeforeDelete(new PinRecord[] { Pin(), null }, now + 1), "Null batch entry rejected before mutation");
+        Fails(() => archive.RecordManyBeforeDelete(null, now + 1), "Missing batch rejected");
+        Fails(() => archive.RecordManyBeforeDelete(new[] { Pin() }, 0), "Zero deletion timestamp cannot create an unloadable archive");
+        Fails(() => archive.RecordManyBeforeDelete(new[] { Pin() }, DateTime.MaxValue.Ticks + 1), "Out-of-range deletion timestamp rejected");
+        Check(archive.RecordManyBeforeDelete(new PinRecord[0], now).Count == 0 && Bytes(file) == before && Bytes(file + ".bak") == backup,
+            "Empty batch performs no disk mutation");
+        using (var locked = new FileStream(file, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            Fails(() => archive.RecordManyBeforeDelete(new[] { Pin(), Pin() }, now + 1), "Locked archive rejects complete batch commit");
+        Check(archive.Deleted.Count == 3 && Bytes(file) == before, "I/O failure rolls back every staged in-memory snapshot");
+        var many = new List<PinRecord>();
+        for (int i = 0; i < PinArchive.MaximumDeleted + 20; ++i) { PinRecord pin = Pin(); pin.Name = "Batch " + i; many.Add(pin); }
+        staged = archive.RecordManyBeforeDelete(many, now + 2);
+        Check(staged.Count == 520 && archive.Deleted.Count == 500 && archive.Deleted[0].Name == "Batch 20" && archive.Deleted[499].Name == "Batch 519",
+            "Batch larger than retention limit is fully validated; latest 500 snapshots retained in selection order");
+        archive = new PinArchive(file, 10, 20);
+        Check(archive.Deleted.Count == 500 && archive.Deleted[0].Name == "Batch 20", "Large retained batch durable after reload");
+        before = Bytes(file);
+        using (var locked = new FileStream(file, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            Fails(() => archive.RecordManyBeforeDelete(new[] { Pin(), Pin() }, now + 3), "Failed bounded commit reports I/O error");
+        Check(archive.Deleted.Count == 500 && archive.Deleted[0].Name == "Batch 20" && archive.Deleted[499].Name == "Batch 519" && Bytes(file) == before,
+            "Failed commit also restores all temporarily evicted old snapshots");
+    }
     private static PinRecord Pin() { return new PinRecord { Name = "Медь <не разметка>", Type = 2, X = 12.5f, Y = 1.25f, Z = -34.75f, Owner = 777, Author = "Steam_12345", Checked = true, DoubleSize = true, WorldSize = 3 }; }
     private static void HashFile(string file, byte[] bytes)
     {
@@ -135,6 +186,7 @@ public static class ArchiveTests
             Check(bounded.Deleted.Count == PinArchive.MaximumDeleted && bounded.Deleted[0].Name == "1", "Bounded archive retains latest 500 deletions");
             bounded = new PinArchive(Path.Combine(folder, "bounded.bin"), 9, 8);
             Check(bounded.Deleted.Count == PinArchive.MaximumDeleted && bounded.Deleted[499].Name == "500", "Bounded history is durable");
+            BatchChecks(folder, now);
             Console.WriteLine("OK: " + count + " production pin-history persistence/recovery assertions.");
         }
         finally

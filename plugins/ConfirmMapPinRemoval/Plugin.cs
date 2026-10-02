@@ -6,7 +6,7 @@ using HarmonyLib;
 using UnityEngine;
 namespace ValheimModPack.PinRemoval
 {
-    [BepInPlugin(Id, "Confirm Map Pin Removal", "1.4.0")]
+    [BepInPlugin(Id, "Confirm Map Pin Removal", "1.5.0")]
     [BepInDependency("com.jotunn.jotunn", "2.30.2")]
     public sealed class Plugin : BaseUnityPlugin
     {
@@ -20,6 +20,9 @@ namespace ValheimModPack.PinRemoval
         private RemovalDialog<Minimap.PinData> dialog;
         private PinHistoryController history;
         private QuickPinController quick;
+        private PinActionController actions;
+        private DeathPinController deaths;
+        private PinSuggestionController suggestions;
         private bool failed;
         private bool warned;
         private void Awake()
@@ -47,10 +50,16 @@ namespace ValheimModPack.PinRemoval
                 var controls = new MapControls(Config);
                 history.OpenShortcut = () => MapControls.Down(controls.History.Value);
                 quick.OpenShortcut = () => MapControls.Down(controls.Quick.Value);
+                quick.ShortcutLabel = () => MapControls.Label(controls.Quick.Value);
                 quick.PlaceModifier = () => MapControls.Held(controls.Place.Value);
                 quick.RenameModifier = () => MapControls.Held(controls.Rename.Value);
-                Logger.LogInfo("Map pin confirmation and history ready. Open the large map and choose Map pins, or press Ctrl+H.");
-                Logger.LogInfo("Quick presets: Ctrl+P in gameplay, Shift+click on map, Alt+click a saved pin to rename.");
+                actions = new PinActionController(pins, quick.DisplayName, quick.Rename, RequestDelete, error => Logger.LogError(error));
+                deaths = new DeathPinController(pins, history, error => Logger.LogError(error));
+                deaths.OpenShortcut = () => MapControls.Down(controls.ClearDeathPins.Value);
+                deaths.ShortcutLabel = () => MapControls.Label(controls.ClearDeathPins.Value);
+                suggestions = new PinSuggestionController(quick, history, controls, error => Logger.LogError(error));
+                Logger.LogInfo("Map actions ready: right-click a saved pin to rename it or request confirmed deletion.");
+                Logger.LogInfo("Quick presets and nearby suggestions are configurable in Bindrune. Death-pin cleanup asks for confirmation.");
             }
             catch (Exception error) { failed = true; Logger.LogError(error); }
         }
@@ -59,26 +68,43 @@ namespace ValheimModPack.PinRemoval
             if (plugin == null) return false;
             try
             {
-                if (!plugin.isActiveAndEnabled || plugin.failed || plugin.dialog == null
+                if (!plugin.isActiveAndEnabled || plugin.failed || plugin.dialog == null || plugin.actions == null
                     || plugin.dialog.IsOpen || (plugin.history != null && plugin.history.IsOpen)
-                    || (plugin.quick != null && plugin.quick.IsBusy) || UnifiedPopup.IsVisible()) return false;
+                    || (plugin.quick != null && plugin.quick.IsBusy) || plugin.actions.IsOpen
+                    || (plugin.deaths != null && plugin.deaths.IsOpen) || UnifiedPopup.IsVisible()) return false;
                 var player = Player.m_localPlayer;
                 var network = ZNet.instance;
                 if (!RemovalContext(__instance, player) || TextInput.IsVisible() || network == null) return false;
                 long world = network.GetWorldUID(), character = player.GetPlayerID();
                 if (world == 0 || character == 0) return false;
                 var pin = (Minimap.PinData)plugin.closest.Invoke(__instance, null);
-                if (pin == null || !pin.m_save) return false;
+                if (!plugin.CurrentPin(__instance, pin)) return false;
                 plugin.hideNameInput.Invoke(__instance, new object[] { false });
-                plugin.dialog.Open(pin, plugin.quick == null ? pin.m_name : plugin.quick.DisplayName(pin),
-                    candidate => plugin != null && plugin.isActiveAndEnabled && RemovalContext(__instance, player)
-                        && ReferenceEquals(ZNet.instance, network) && network.GetWorldUID() == world && player.GetPlayerID() == character
-                        && candidate.m_save
-                        && ((List<Minimap.PinData>)plugin.pins.GetValue(__instance)).Contains(candidate),
-                    candidate => plugin.history.Remove(__instance, candidate));
+                plugin.actions.Show(__instance, pin);
             }
             catch (Exception error) { plugin.Logger.LogError("Pin removal blocked: " + error); }
             return false;
+        }
+        internal bool CurrentPin(Minimap map, Minimap.PinData pin)
+        {
+            return pins != null && map != null && ReferenceEquals(map, Minimap.instance) && pin != null && pin.m_save
+                && ((List<Minimap.PinData>)pins.GetValue(map)).Contains(pin);
+        }
+        internal void RequestDelete(Minimap.PinData pin)
+        {
+            if (failed || !isActiveAndEnabled || !ReferenceEquals(plugin, this) || dialog == null || dialog.IsOpen
+                || history == null || history.IsOpen || (quick != null && quick.IsBusy)
+                || (deaths != null && deaths.IsOpen) || (actions != null && actions.IsOpen)) return;
+            var map = Minimap.instance; var player = Player.m_localPlayer; var network = ZNet.instance;
+            if (!RemovalContext(map, player) || TextInput.IsVisible() || network == null || !CurrentPin(map, pin)) return;
+            long world = network.GetWorldUID(), character = player.GetPlayerID();
+            if (world == 0 || character == 0) return;
+            var requestedPlugin = this;
+            dialog.Open(pin, quick == null ? pin.m_name : quick.DisplayName(pin),
+                candidate => ReferenceEquals(plugin, requestedPlugin) && isActiveAndEnabled && !failed
+                    && RemovalContext(map, player) && ReferenceEquals(ZNet.instance, network)
+                    && network.GetWorldUID() == world && player.GetPlayerID() == character && CurrentPin(map, candidate),
+                candidate => history.Remove(map, candidate));
         }
         private static bool RemovalContext(Minimap map, Player player)
         {
@@ -96,10 +122,19 @@ namespace ValheimModPack.PinRemoval
             {
                 try
                 {
-                    if (quick != null) quick.Tick(dialog != null && !dialog.IsOpen && !history.IsOpen);
-                    history.Tick(dialog != null && !dialog.IsOpen && (quick == null || !quick.IsBusy));
+                    bool noConfirmation = dialog != null && !dialog.IsOpen;
+                    if (actions != null) actions.Tick(noConfirmation && !history.IsOpen && (quick == null || !quick.IsBusy)
+                        && (deaths == null || !deaths.IsOpen));
+                    if (deaths != null) deaths.Tick(noConfirmation && !history.IsOpen && (quick == null || !quick.IsBusy)
+                        && (actions == null || !actions.IsOpen));
+                    if (quick != null) quick.Tick(noConfirmation && !history.IsOpen && (actions == null || !actions.IsOpen)
+                        && (deaths == null || !deaths.IsOpen));
+                    history.Tick(noConfirmation && (quick == null || !quick.IsBusy) && (actions == null || !actions.IsOpen)
+                        && (deaths == null || !deaths.IsOpen));
+                    if (suggestions != null) suggestions.Tick(noConfirmation && !history.IsOpen && (quick == null || !quick.IsBusy)
+                        && (actions == null || !actions.IsOpen) && (deaths == null || !deaths.IsOpen));
                 }
-                catch (Exception error) { history.Close(); if (quick != null) quick.Close(); Logger.LogError(error); }
+                catch (Exception error) { CloseModals(); Logger.LogError(error); }
             }
             if (failed && !warned && Player.m_localPlayer != null)
             {
@@ -119,14 +154,33 @@ namespace ValheimModPack.PinRemoval
         }
         private static void BeforePlayerDestroyed(Player __instance)
         {
-            if (plugin != null && ReferenceEquals(__instance, Player.m_localPlayer) && plugin.dialog != null)
-            { plugin.dialog.Cancel(); if (plugin.history != null) plugin.history.Close(); if (plugin.quick != null) plugin.quick.Close(); }
+            if (plugin != null && ReferenceEquals(__instance, Player.m_localPlayer)) plugin.CloseModals();
         }
-        private void OnDisable() { if (dialog != null) dialog.Cancel(); if (history != null) history.Close(); if (quick != null) quick.Close(); }
+        private void Cleanup(Action action)
+        { try { action(); } catch (Exception error) { Logger.LogError(error); } }
+        internal void CloseModals()
+        {
+            if (dialog != null) Cleanup(dialog.Cancel);
+            if (actions != null) Cleanup(actions.Close);
+            if (deaths != null) Cleanup(deaths.Close);
+            if (suggestions != null) Cleanup(suggestions.Close);
+            if (history != null) Cleanup(history.Close);
+            if (quick != null) Cleanup(quick.Close);
+        }
+        private void OnDisable() { CloseModals(); }
         private void OnDestroy()
         {
-            try { if (dialog != null) dialog.Cancel(); if (view != null) view.Hide(); if (quick != null) quick.Dispose(); if (history != null) history.Dispose(); }
-            finally { if (harmony != null) harmony.UnpatchSelf(); plugin = null; }
+            try
+            {
+                CloseModals();
+                if (view != null) Cleanup(view.Hide);
+                if (suggestions != null) Cleanup(suggestions.Dispose);
+                if (actions != null) Cleanup(actions.Dispose);
+                if (deaths != null) Cleanup(deaths.Dispose);
+                if (quick != null) Cleanup(quick.Dispose);
+                if (history != null) Cleanup(history.Dispose);
+            }
+            finally { if (harmony != null) harmony.UnpatchSelf(); if (ReferenceEquals(plugin, this)) plugin = null; }
         }
     }
 }

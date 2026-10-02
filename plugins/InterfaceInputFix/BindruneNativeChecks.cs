@@ -41,6 +41,10 @@ namespace ValheimModPack.InterfaceInputFix
                 "cfg:valheimmodpack.confirmpinremoval:Controls:QuickPin",
                 "cfg:valheimmodpack.confirmpinremoval:Controls:PlaceOnMapModifier",
                 "cfg:valheimmodpack.confirmpinremoval:Controls:RenamePinModifier",
+                "cfg:valheimmodpack.confirmpinremoval:Controls:AcceptSuggestion",
+                "cfg:valheimmodpack.confirmpinremoval:Controls:NextSuggestion",
+                "cfg:valheimmodpack.confirmpinremoval:Controls:DismissSuggestion",
+                "cfg:valheimmodpack.confirmpinremoval:Controls:ClearDeathPins",
                 "cfg:valheimmodpack.eaqsquickstackbridge:Controls:SortShortcut" };
             bool restart = Environment.GetEnvironmentVariable("VMP_BIND_RESTART") == "1";
             foreach (string id in ids)

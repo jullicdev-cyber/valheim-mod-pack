@@ -9,6 +9,11 @@ namespace ValheimModPack.PinRemoval
     {
         private GameObject overlay;
         private bool ownsInputBlock;
+        private readonly Func<string> titleText, confirmText;
+        private readonly Func<string, string> bodyText;
+        public WoodDialogView() : this(null, null, null) { }
+        public WoodDialogView(Func<string> title, Func<string, string> body, Func<string> confirmLabel)
+        { titleText = title; bodyText = body; confirmText = confirmLabel; }
         public bool IsVisible { get { return overlay != null && overlay.activeInHierarchy; } }
         public void Show(string name, Action confirm, Action cancel)
         {
@@ -32,12 +37,14 @@ namespace ValheimModPack.PinRemoval
                 panel.name = "ConfirmMapPinRemoval.WoodPanel";
                 var group = panel.AddComponent<CanvasGroup>();
                 group.interactable = true; group.blocksRaycasts = true;
-                Text title = gui.CreateText(ru ? "Удаление метки" : "Remove map pin", panel.transform,
+                string customTitle = titleText == null ? null : titleText();
+                Text title = gui.CreateText(String.IsNullOrEmpty(customTitle) ? (ru ? "Удаление метки" : "Remove map pin") : customTitle, panel.transform,
                     center, center, new Vector2(0, 88), gui.AveriaSerifBold, 30, gui.ValheimOrange,
                     true, Color.black, 480, 48, false).GetComponent<Text>();
                 title.alignment = TextAnchor.MiddleCenter; title.supportRichText = false;
                 string safeName = PinLabel.Format(name, ru);
-                Text body = gui.CreateText(ru ? "Удалить метку «" + safeName + "»?" : "Remove pin “" + safeName + "”?",
+                string customBody = bodyText == null ? null : bodyText(safeName);
+                Text body = gui.CreateText(String.IsNullOrEmpty(customBody) ? (ru ? "Удалить метку «" + safeName + "»?" : "Remove pin “" + safeName + "”?") : customBody,
                     panel.transform, center, center, new Vector2(0, 16), gui.AveriaSerif, 22,
                     gui.ValheimBeige, true, Color.black, 470, 104, false).GetComponent<Text>();
                 body.alignment = TextAnchor.MiddleCenter; body.supportRichText = false;
@@ -46,7 +53,8 @@ namespace ValheimModPack.PinRemoval
                 body.resizeTextForBestFit = true; body.resizeTextMinSize = 16; body.resizeTextMaxSize = 22;
                 var cancelButton = gui.CreateButton(ru ? "Отмена" : "Cancel", panel.transform, center, center,
                     new Vector2(-120, -88), 200, 48).GetComponent<Button>();
-                var deleteButton = gui.CreateButton(ru ? "Удалить" : "Delete", panel.transform, center, center,
+                string customConfirm = confirmText == null ? null : confirmText();
+                var deleteButton = gui.CreateButton(String.IsNullOrEmpty(customConfirm) ? (ru ? "Удалить" : "Delete") : customConfirm, panel.transform, center, center,
                     new Vector2(120, -88), 200, 48).GetComponent<Button>();
                 // Pointer-down selects an unfocused button; pointer-up clicks it. Jotunn gives
                 // both events a sound, so keep only the click sound in this confirmation dialog.

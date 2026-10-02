@@ -104,29 +104,82 @@ namespace ValheimModPack.PinRemoval
     internal sealed class MapControls
     {
         internal sealed class Entry { internal object Value; }
-        internal Entry History = new Entry(), Quick = new Entry(), Place = new Entry(), Rename = new Entry();
+        internal Entry History = new Entry(), Quick = new Entry(), Place = new Entry(), Rename = new Entry(), ClearDeathPins = new Entry();
         internal MapControls(object config) { }
         internal static bool Down(object key) { return false; }
         internal static bool Held(object key) { return false; }
+        internal static string Label(object key) { return "Ctrl+Shift+Delete"; }
     }
     public sealed class QuickPinController : IDisposable
     {
-        public bool IsBusy; public Func<bool> OpenShortcut, PlaceModifier, RenameModifier;
-        public QuickPinController(HarmonyLib.Harmony harmony, PinHistoryController history, System.Reflection.FieldInfo pins, Action<Exception> report) { }
-        public void Tick(bool allowed) { }
+        public static QuickPinController Last;
+        public bool IsBusy, LastAllowed; public int Renamed; public Func<bool> OpenShortcut, PlaceModifier, RenameModifier; public Func<string> ShortcutLabel;
+        public QuickPinController(HarmonyLib.Harmony harmony, PinHistoryController history, System.Reflection.FieldInfo pins, Action<Exception> report) { Last = this; }
+        public void Tick(bool allowed) { LastAllowed = allowed; if (!allowed) Close(); }
         public void Close() { IsBusy = false; }
         public void Dispose() { Close(); }
         public string DisplayName(Minimap.PinData pin) { return pin.m_name; }
+        public void Rename(Minimap.PinData pin) { Renamed++; IsBusy = true; }
     }
     public sealed class PinHistoryController : IDisposable
     {
-        public bool IsOpen; public Func<bool> OpenShortcut;
-        public PinHistoryController(HarmonyLib.Harmony harmony, System.Reflection.FieldInfo pins, Action<Exception> report) { }
-        public void Tick(bool canOpen) { }
+        public static PinHistoryController Last;
+        public bool IsOpen, LastAllowed; public Func<bool> OpenShortcut;
+        public PinHistoryController(HarmonyLib.Harmony harmony, System.Reflection.FieldInfo pins, Action<Exception> report) { Last = this; }
+        public void Tick(bool canOpen) { LastAllowed = canOpen; if (!canOpen) Close(); }
         public void Close() { IsOpen = false; }
         public void Dispose() { Close(); }
         public void Remove(Minimap map, Minimap.PinData pin) { map.RemovePin(pin); }
         internal static bool SafePlayer(Player player) { return player != null && !player.IsDead(); }
+    }
+    public sealed class PinActionController : IDisposable
+    {
+        public static PinActionController Last;
+        private readonly Action<Minimap.PinData> rename, delete;
+        private Minimap map; private Player player; private ZNet network; private long world, character;
+        private Minimap.PinData target;
+        public bool IsOpen { get { return target != null; } }
+        public PinActionController(FieldInfo pins, Func<Minimap.PinData, string> displayName,
+            Action<Minimap.PinData> rename, Action<Minimap.PinData> requestDelete, Action<Exception> report)
+        { this.rename = rename; delete = requestDelete; Last = this; }
+        public void Show(Minimap map, Minimap.PinData pin)
+        {
+            this.map = map; player = Player.m_localPlayer; network = ZNet.instance;
+            world = network.GetWorldUID(); character = player.GetPlayerID(); target = pin;
+        }
+        private bool Valid()
+        {
+            return IsOpen && ReferenceEquals(map, Minimap.instance) && map.m_mode == Minimap.MapMode.Large
+                && ReferenceEquals(player, Player.m_localPlayer) && PinHistoryController.SafePlayer(player)
+                && ReferenceEquals(network, ZNet.instance) && network.GetWorldUID() == world && player.GetPlayerID() == character
+                && target.m_save && map.Contains(target) && !UnifiedPopup.IsVisible() && !Console.IsVisible()
+                && !InventoryGui.IsVisible() && (Chat.instance == null || !Chat.instance.HasFocus())
+                && (TextInput.instance == null || TextInput.instance.m_panel == null || !TextInput.instance.m_panel.activeInHierarchy);
+        }
+        public void ChooseRename() { var pin = target; bool valid = Valid(); Close(); if (valid) rename(pin); }
+        public void ChooseDelete() { var pin = target; bool valid = Valid(); Close(); if (valid) delete(pin); }
+        public void Tick(bool allowed) { if (!allowed || !Valid() || UnityEngine.Input.Escape || ZInput.Cancel) Close(); }
+        public void Close() { target = null; }
+        public void Dispose() { Close(); }
+    }
+    public sealed class DeathPinController : IDisposable
+    {
+        public static DeathPinController Last;
+        public bool IsOpen, LastAllowed; public Func<bool> OpenShortcut; public Func<string> ShortcutLabel;
+        public DeathPinController(FieldInfo pins, PinHistoryController history, Action<Exception> report) { Last = this; }
+        public void Tick(bool allowed) { LastAllowed = allowed; if (!allowed) Close(); }
+        public void Open() { if (LastAllowed) IsOpen = true; }
+        public void Close() { IsOpen = false; }
+        public void Dispose() { Close(); }
+    }
+    internal sealed class PinSuggestionController : IDisposable
+    {
+        internal static PinSuggestionController Last;
+        public bool IsVisible, LastAllowed;
+        public PinSuggestionController(QuickPinController quick, PinHistoryController history, MapControls controls, Action<Exception> report) { Last = this; }
+        public void Tick(bool allowed) { LastAllowed = allowed; if (!allowed) Close(); }
+        public void Close() { IsVisible = false; }
+        public void Dispose() { Close(); }
     }
     public class WoodDialogView : IDialogView
     {

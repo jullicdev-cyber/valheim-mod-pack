@@ -1,6 +1,45 @@
-# Confirm Map Pin Removal 1.4.0
+# Confirm Map Pin Removal 1.5.0
 
-В 1.4.0 сочетания из инструкции ниже стали значениями **по умолчанию**. Все четыре действия переназначаются через Bindrune: Controls/OpenHistory, QuickPin, PlaceOnMapModifier, RenamePinModifier. Настройки читаются сразу при обработке ввода; можно использовать None для отключения. ЛКМ остаётся выбором точки карты. Контроллеры получают обработчики из ConfigEntry; фиксированных fallback-команд больше нет.
+Версия 1.5.0 добавляет ненавязчивые рекомендации меток возле объектов, выбор действия по ПКМ и подтверждаемую очистку меток смерти. Она входит в сборку 1.16.0.
+
+Все сочетания ниже — **значения по умолчанию**, переназначаемые через Bindrune. В `Controls` доступны `OpenHistory`, `QuickPin`, `PlaceOnMapModifier`, `RenamePinModifier`, `AcceptSuggestion`, `NextSuggestion`, `DismissSuggestion`, `ClearDeathPins`. Настройки читаются при обработке ввода; `None` отключает соответствующее сочетание. ЛКМ остаётся выбором точки карты. Личные привязки сохраняются при обновлении сборки.
+
+## Рекомендации возле объектов
+
+При обнаружении знакомого объекта появляется небольшая карточка со штатным значком карты, названием пресета и **текущим назначенным сочетанием**. Она не захватывает мышь, не блокирует движение и не открывает окно самостоятельно.
+
+| Действие | По умолчанию | Результат |
+| --- | --- | --- |
+| Принять предложение | Ctrl+G | Метка ставится в позиции обнаруженного объекта |
+| Следующее предложение | Ctrl+Shift+G | Выбирается другой доступный объект или тип метки |
+| Скрыть предложение | Ctrl+Alt+G | Выбранное предложение и его близкая группа скрываются на две минуты |
+
+Клавиши рекомендаций обрабатываются только при доступной карточке и обычной игре, без чужого окна или текстового ввода. Сочетание не должно запускать другие игровые действия. Метка создаётся только по явному принятию; повторное нажатие после её создания не добавляет дубль.
+
+Проверяются **уже загруженные видимые объекты** в пределах 20 м: порталы, кусты и грибы, залежи руды, входы в подземелья, торговцы и другие места из стандартного каталога. Не считываются неоткрытые точки из генерации мира и удалённые сетевые объекты. Закрытая стеной или под землёй залежь не должна раскрывать своё положение. «База» означает занятую игроком кровать, а не декоративную кровать в руинах. «Кабаны» отмечают наблюдаемого живого дикого кабана, не постоянный спавнер; положение животного повторно проверяется при принятии.
+
+Каталог использует подтверждённые имена prefab и включённых location assets установленного Valheim 1.0.16; сопоставления покрывают все 25 стандартных пресетов. Распознавание не строится на похожих названиях предметов. Удалённый стандартный пресет не создаётся заново. Сохранивший стандартный ID пресет использует ваше текущее имя и значок после редактирования; добавленные вами пресеты автоматически с объектами не связываются. Если специальный пресет входа в подземелье удалён, может использоваться оставшийся общий пресет «Подземелье».
+
+Близкие объекты объединяются в группы, существующие метки того же пресета предотвращают повторные предложения. Уже показанные на карте штатные значки кровати, Хальдора и Хильдир также учитываются, без поиска новых точек в генерации мира. По умолчанию группа ресурсов — 40 м, дубли порталов — 8 м, входы подземелий — 20 м, другие места — 30 м, база — 60 м. Стабильная привязка метки к пресету работает после смены языка и редактирования самого пресета. Ручное переименование конкретной метки снимает её привязку. Для старых меток без привязки учитываются точное имя и значок, русский/английский варианты и текущее название; произвольный прежний язык без metadata распознать надёжно нельзя.
+
+В конфиге `BepInEx/config/valheimmodpack.confirmpinremoval.cfg` раздел `Suggestions` содержит:
+
+| Параметр | По умолчанию | Допустимые значения |
+| --- | --- | --- |
+| Enabled | true | Включить или выключить карточку рекомендаций |
+| DetectionRadius | 20 | 5–40 м |
+| ResourceDuplicateRadius | 40 | 5–100 м |
+| PortalDuplicateRadius | 8 | 1–20 м |
+
+Проверка объектов идёт ограниченными порциями; это не постоянный полный обход сцены. После смены мира или персонажа предложения и временно скрытые группы очищаются. Название и подсказка клавиши обновляются при смене языка или переназначении.
+
+## Действия по ПКМ и метки смерти
+
+**ПКМ по сохранённой метке** открывает деревянное окно с «Переименовать», «Удалить» и «Отмена». Переименование использует прежнее окно быстрого редактирования. «Удалить» открывает отдельное подтверждение с названием выбранной метки; выбор действия сам по себе её не удаляет. Esc или отмена сохраняют метку. Перемещение курсора не меняет исходную цель.
+
+**Ctrl+Shift+Delete на большой карте** или кнопка «Удалить все метки смерти» открывает подтверждение с количеством меток. Удаляются все сохранённые значки типа смерти из текущей карты. Обычные метки, могилы, находящиеся в них вещи и мир остаются без изменений. Закрытие карты, смена мира/сессии/персонажа или изменение выборки отменяют запрос; устаревшая кнопка не действует в новом контексте.
+
+Перед первой попыткой удаления **одной атомарной записью** сохраняется история. Ошибка записи оставляет все метки на карте. Если игра успела удалить только часть, история позволяет восстановить отсутствующие и не дублирует сохранившиеся. **История содержит последние 500 удалённых меток**: удаление всех поддерживается и при большем количестве, но более ранние записи такого большого удаления не остаются в истории. Штатные сохранения карты выполняет Valheim; это не отмена смерти персонажа и не перенос предметов из могилы.
 
 Версия 1.3.2 повторно проверяет мир, сетевую сессию и ID персонажа непосредственно перед удалением метки. Чат, консоль, инвентарь и штатное окно ввода отменяют ожидающее подтверждение; чужое модальное окно блокирует его открытие. Ctrl+P учитывает активные наследники TMP-полей игры и не застревает на неактивном поле с устаревшим состоянием фокуса.
 
@@ -28,7 +67,7 @@
 
 При записи/чтении стола картографа обновлённые клиенты передают также привязку стандартной метки. Читатель отображает её на своём языке. Проверяются мир, хеш карты, настоящий автор/координаты/тип и исходное имя; переименованная вручную метка не получает перевод обратно. Для обмена привязками обновление нужно пишущему, читающему и текущему владельцу стола. Старым читателям сохраняется исходный формат сведений о датах; без обновлённого владельца стола остаётся обычный обмен читаемыми названиями.
 
-Пресеты сохраняются в `Valheim/ValheimModpack/MapPinPresets/<ID персонажа>.json` и одинаковы для этого персонажа в разных мирах. Максимум 128 пресетов, название до 96 знаков UTF-16. Запись атомарная, предыдущая версия хранится в `.bak`. Стандартный список создаётся один раз: удалённые варианты не воскресают при перезапуске. Повреждённый, неизвестный или изменённый снаружи файл не перезаписывается. Обновление сборки сохраняет каталог `ValheimModpack` и включает его в полный бэкап.
+Пресеты сохраняются в `Valheim/ValheimModpack/MapPinPresets/<ID персонажа>.json` и одинаковы для этого персонажа в разных мирах. Максимум 128 пресетов, название до 96 знаков UTF-16. Запись атомарная, предыдущая версия хранится в `.bak`. Стандартный список создаётся один раз: удалённые варианты не воскресают при перезапуске. Повреждённый, неизвестный или изменённый снаружи файл не перезаписывается. Обновление сборки сохраняет каталог `ValheimModpack`; отдельные `Backup-Windows.cmd` / `Backup-Linux.sh` включают его в ручную полную копию папки игры.
 
 Архив меток v2 читает прежний формат v1 и при первой записи сохраняет предыдущий файл в `.bak`. Привязки переводов сохраняются в локальной истории при удалении/восстановлении. Для отката DLL к 1.2.0 после появления архива v2 нужно восстановить и прежний архив из резервной копии.
 
@@ -36,9 +75,9 @@
 
 ## Existing confirmation and history
 
-Client-side BepInEx/Harmony mod for the pack's Valheim 1.0.16 and Jotunn 2.30.2. Right-clicking a saved map pin opens a confirmation with the pin name, Cancel and Delete buttons. Russian game language uses «Удаление метки», «Отмена» and «Удалить»; other languages use English.
+Client-side BepInEx/Harmony mod for the pack's Valheim 1.0.16 and Jotunn 2.30.2. Right-clicking a saved map pin opens Rename / Delete / Cancel. Delete then opens the existing confirmation with the pin name, Cancel and Delete buttons. Russian game language uses «Удаление метки», «Отмена» and «Удалить»; other languages use English.
 
-Version 1.2.0 adds **Map pins / Метки** on the large map. Use the visible button at the top right or **Ctrl+H**. The **Deleted / Удалённые** tab shows the last 500 confirmed manual deletions, their names, coordinates, deletion times and a **Restore / Вернуть** button. The **On map / На карте** tab lists saved pins with available author and creation details. Both tabs have six entries per page. Escape, controller B, closing the map, death, teleportation, sleep, cutscenes, the game menu, console, chat, logout and plugin shutdown close the history window and release its own input request.
+The large map has **Map pins / Метки**. Use the visible button at the top right or **Ctrl+H**. The **Deleted / Удалённые** tab shows the last 500 deletions confirmed through this mod, including death-pin cleanup, with names, coordinates, deletion times and a **Restore / Вернуть** button. The **On map / На карте** tab lists saved pins with available author and creation details. Both tabs have six entries per page. Escape, controller B, closing the map, death, teleportation, sleep, cutscenes, the game menu, console, chat, logout and plugin shutdown close the history window and release its own input request.
 
 Deletion is journaled **before** calling the game: a disk write failure preserves the original pin and displays an error. Restoration preserves the original name, position, icon type, checkmark, author/owner and visual flags. It checks the current map before adding; an already present pin, repeated click or previously restored record cannot add a duplicate. A callback from an old world or character cannot restore into the current one. A restored map pin is subsequently saved by the game's normal map/character save lifecycle.
 
@@ -56,7 +95,7 @@ The window uses the same Jotunn components as [XPortal's portal configuration pa
 
 Version 1.1.1 silences the selection sound on these two buttons while retaining their normal click sound. In the installed Unity UI, pointer-down focuses a button and pointer-up invokes its click. Jotunn adds a separate `ButtonSfx` sound to each event; this produced two sounds when clicking the initially unfocused Delete button. Only the two dialog instances are changed. Focus navigation and the single-use deletion guard remain intact. Check one audible click on both Cancel and Delete in-game; automated logic checks do not verify audio output.
 
-Only manual `Minimap.RemovePinUnderPointer` deletion is intercepted. Automatic pin cleanup and programmatic `RemovePin` calls remain unchanged. The exact pin selected on click is retained; confirmation rechecks the same map, local player, saved pin membership, open map and living player. Moving the pointer or clicking again cannot redirect deletion. Cancel, stale callbacks and repeated confirmations cannot delete a different pin.
+The game's `Minimap.RemovePinUnderPointer` route opens the action chooser, followed by explicit confirmation if Delete is selected. This mod's death-pin cleanup also uses the journal and confirmation. Automatic game cleanup and other mods' independent `RemovePin` calls remain unchanged. The exact pin selected on click is retained; confirmation rechecks the same map, local player, saved pin membership, open map and living player. Moving the pointer or clicking again cannot redirect deletion. Cancel, stale callbacks and repeated confirmations cannot delete a different pin.
 
 Closing the map, changing worlds, dying, disabling the plugin, losing the window or opening a native popup cancels the pending request. Local player destruction is intercepted to release the window before logout completes. The view owns only its own overlay and one counted input lock; it never pops the game's global popup stack. UI failures are logged and block deletion. Selection API failures leave the already-installed deletion guard in place and show a startup warning once; an incompatible game where the deletion hook itself cannot be installed cannot be protected.
 
@@ -66,8 +105,10 @@ The patch also covers touch deletion routed through the same method. Other mods'
 
 Build: `./plugins/ConfirmMapPinRemoval/Build.ps1 -GameDirectory '<Valheim folder>'` on Windows. Tests: `./plugins/ConfirmMapPinRemoval/Test.ps1 -GameDirectory '<Valheim folder>'`. Build reads local game assemblies without redistributing them. Jotunn is already included in the pack; XPortal is not a runtime dependency. The managed DLL is included in both Windows and Linux packs; Linux runtime has not been tested.
 
-Automated checks cover confirmation state and label handling (31 assertions), the real Plugin.cs with host doubles (56), production archive persistence/recovery (63), the production history controller (38), shared-metadata codec/RPC guards/archive integration (59), preset persistence (49), localization and preset catalogue (253), and the actual quick-pin controller (55): 604 assertions in total. Installed Valheim/Jotunn APIs are checked with Mono.Cecil. Host doubles do not run Unity, Harmony detours or UI rendering. `Build-NativeChecks.ps1 -GameDirectory '<Valheim folder>'` builds the optional `PinHistoryNativeChecks.dll`: its public `ValheimModPack.PinRemoval.NativeChecks.Run()` can be called from an isolated native-engine probe after Jotunn is ready. It verifies the sidecar parser against actual native ZPackage string/vector encoding and Utils.Compress, creates the wooden history/confirmation/preset windows, and checks UI callbacks, pagination, search, editors, confirmation and input-request balance. It explicitly reports if no GUI exists or if input blocking is a no-op in the menu/headless scene; this is not a visual or live-gameplay claim. The optional probe is excluded from the shipped plugin.
+Automated checks cover confirmation state, the production Plugin/controller code with host doubles, archive persistence and batch rollback, metadata codec/RPC guards, preset storage and localization, nearby suggestion policy, action-menu/death-pin lifecycle and shortcut ownership. `Test-Suggestions.ps1` runs the pure policy suite; its optional `-VerifyInstalledAssets` check additionally requires a local native manifest and extracted location asset data. Installed Valheim/Jotunn APIs are checked with Mono.Cecil. Host doubles do not run Unity, Harmony detours or UI rendering. See [VALIDATION.md](../../VALIDATION.md) for release results and limits. `Build-NativeChecks.ps1 -GameDirectory '<Valheim folder>'` builds the optional `PinHistoryNativeChecks.dll`: its public `ValheimModPack.PinRemoval.NativeChecks.Run()` can be called from an isolated native-engine probe after Jotunn is ready. It verifies the sidecar parser against actual native ZPackage string/vector encoding and Utils.Compress, creates the wooden history/confirmation/preset windows, and checks UI callbacks, pagination, search, editors, confirmation and input-request balance. It explicitly reports if no GUI exists or if input blocking is a no-op in the menu/headless scene; this is not a visual or live-gameplay claim. The optional probe is excluded from the shipped plugin.
 
-In-game acceptance check on a disposable pin: right-click opens the wood panel above the map; Cancel and Escape retain the pin; Delete removes only the selected pin once; moving the pointer does not change the target; blank-map clicks do nothing. Also check a long Cyrillic name, repeated opening, logout with the dialog open, and input after closing. Check that XPortal still opens and closes normally. These require a live game session.
+In-game acceptance check on a disposable pin: right-click opens Rename / Delete / Cancel above the map; Rename reaches the existing editor; Delete reaches the separate confirmation. Cancel and Escape retain the pin; confirmed Delete removes only the selected pin once; moving the pointer does not change the target; blank-map clicks do nothing. Also check a long Cyrillic name, repeated opening, logout with the dialog open, and input after closing. Check that XPortal still opens and closes normally. These require a live game session.
+
+For recommendations: approach visible berries, a portal and a dungeon entrance; check that the HUD leaves movement and mouse control available. Accept at the object position, verify the map has one pin, and confirm the repeated suggestion disappears. Cycle multiple nearby choices, dismiss for two minutes, rename/change an existing default preset, delete it and switch language. Verify no offer reveals an object behind terrain or walls. In Bindrune, reassign each new action and check the displayed hint changes and the captured combination does not also start another game action. For death cleanup: on a disposable character/map, create multiple death markers and ordinary pins; Cancel retains them, confirmation removes only saved death markers, history restores missing markers, and tombstone contents remain intact.
 
 For history: create and name a disposable pin, delete it, open Ctrl+H and restore it; verify the checkmark/icon and that repeated clicks cannot duplicate it. Reconnect to the same world/character and verify the history remains; switch worlds/characters and verify separation. Check old pins still show unknown dates. Create a new pin, record discoveries at a table, then read it with another modded character: its original date and creator should be shown. Adopt that shared pin with a left click and verify its date survives. Check a table owned by a third modded player as well. Test shared-author display with its creator online and offline, and close the window via Escape/menu/logout without leaving movement blocked.

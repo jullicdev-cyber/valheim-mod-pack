@@ -9,6 +9,79 @@ public static class HistoryHostTests
 {
     private static int checks;
     private static void Check(bool condition, string message) { checks++; if (!condition) throw new Exception(message); }
+    private static void Fails(Action action, string message)
+    { bool failed = false; try { action(); } catch { failed = true; } Check(failed, message); }
+    private static IEnumerable<Minimap.PinData> ChangeAfterFirst(Minimap.PinData first, Minimap.PinData second, Action change)
+    { yield return first; change(); yield return second; }
+    private static void BatchChecks(PinHistoryController controller, Minimap map, Player owner, string folder)
+    {
+        controller.Close(); ZNet.instance.World = 909; controller.Tick(true);
+        string file = Path.Combine(folder, "ValheimModpack", "MapPinHistory", "909-" + owner.Id + ".bin");
+        var first = Add(map, "Batch A", 101);
+        var second = Add(map, "Batch B", 102);
+        var third = Add(map, "Batch C", 103);
+        int beforeRemoved = map.Removed, calls = 0;
+        map.BeforeRemove = pin => {
+            var saved = new PinArchive(file, 909, owner.Id);
+            Check(saved.Deleted.Count == 3, "Entire batch is durable before every native removal, including the first");
+            calls++;
+        };
+        controller.RemoveMany(map, new[] { first, first, second, third });
+        map.BeforeRemove = null;
+        Check(calls == 3 && map.Removed == beforeRemoved + 3 && !map.Contains(first) && !map.Contains(second) && !map.Contains(third),
+            "Duplicate selection references do not cause repeated journaling or native removal");
+        var journal = new PinArchive(file, 909, owner.Id);
+        Check(journal.Deleted.Count == 3, "Batch history has exactly the selected unique live pins");
+        string before = Convert.ToBase64String(File.ReadAllBytes(file));
+        var valid = Add(map, "Valid stale selection", 104);
+        var absent = new Minimap.PinData { m_name = "Stale" };
+        Fails(() => controller.RemoveMany(map, new[] { valid, absent }), "One stale entry rejects the entire selection");
+        Check(map.Contains(valid) && Convert.ToBase64String(File.ReadAllBytes(file)) == before, "Stale batch cannot delete its valid prefix or write partial history");
+        Fails(() => controller.RemoveMany(map, new Minimap.PinData[] { valid, null }), "Missing selected entry aborts deletion");
+        valid.m_save = false;
+        Fails(() => controller.RemoveMany(map, new[] { valid }), "Transient native pins cannot be recorded or removed");
+        valid.m_save = true;
+        Fails(() => controller.RemoveMany(new Minimap(), new[] { valid }), "Wrong map blocked before mutation");
+        controller.RemoveMany(map, new Minimap.PinData[0]);
+        Check(Convert.ToBase64String(File.ReadAllBytes(file)) == before, "Empty selection does not mutate archive");
+        int warnings = owner.Warnings;
+        using (var locked = new FileStream(file, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            Fails(() => controller.RemoveMany(map, new[] { valid }), "Failed journal commit prevents the first native removal");
+        Check(owner.Warnings == warnings + 1 && map.Contains(valid) && Convert.ToBase64String(File.ReadAllBytes(file)) == before,
+            "I/O failure keeps all live pins and reports the protected deletion");
+        first = Add(map, "Partial A", 105); second = Add(map, "Partial B", 106); third = Add(map, "Partial C", 107);
+        map.FailSpecificRemove = second;
+        Fails(() => controller.RemoveMany(map, new[] { first, second, third }), "Native failure midway through a batch is reported");
+        map.FailSpecificRemove = null;
+        Check(!map.Contains(first) && map.Contains(second) && map.Contains(third), "Native failure stops later removals");
+        journal = new PinArchive(file, 909, owner.Id);
+        Check(journal.Deleted.Count == 6 && Convert.ToBase64String(File.ReadAllBytes(file + ".bak")) == before,
+            "Partial game deletion still has all snapshots from exactly one atomic journal commit");
+        Open(controller); var view = PinHistoryWindow.Last;
+        Check(view.Rows[0].ActionLabel == "Уже на карте" && view.Rows[1].ActionLabel == "Уже на карте" && view.Rows[2].Enabled,
+            "Present undeleted pins are disabled; only the removed part is recoverable");
+        int added = map.Added; view.Rows[2].Activate();
+        Check(map.Added == added + 1, "Partial batch recovery adds only the missing live pin");
+        controller.Close(); before = Convert.ToBase64String(File.ReadAllBytes(file));
+        Fails(() => controller.RemoveMany(map, ChangeAfterFirst(valid, second, () => ZNet.instance.World = 910)),
+            "World change during selection staging rejects stale callback");
+        Check(map.Contains(valid) && map.Contains(second) && Convert.ToBase64String(File.ReadAllBytes(file)) == before,
+            "Staging context change writes no old or new world archive");
+        ZNet.instance.World = 909; controller.Tick(true);
+        first = Add(map, "Changed during native remove A", 108); second = Add(map, "Changed during native remove B", 109);
+        map.BeforeRemove = pin => ZNet.instance.World = 911;
+        Fails(() => controller.RemoveMany(map, new[] { first, second }), "World change after first native removal blocks every later target");
+        map.BeforeRemove = null;
+        Check(!map.Contains(first) && map.Contains(second), "Later pins in a departed context are protected");
+        ZNet.instance.World = 909; controller.Tick(true);
+        var many = new List<Minimap.PinData>();
+        for (int i = 0; i < PinArchive.MaximumDeleted + 20; ++i) many.Add(Add(map, "Large batch " + i, 200 + i));
+        beforeRemoved = map.Removed;
+        controller.RemoveMany(map, many);
+        journal = new PinArchive(file, 909, owner.Id);
+        Check(map.Removed == beforeRemoved + 520 && journal.Deleted.Count == 500 && journal.Deleted[0].Name == "Large batch 20",
+            "Clear-all removes every selected pin even above the documented 500-snapshot retention limit");
+    }
     private static object Call(string name, object instance, params object[] args)
     { return typeof(PinHistoryController).GetMethod(name, BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance).Invoke(instance, args); }
     private static void Open(PinHistoryController controller)
@@ -78,6 +151,7 @@ public static class HistoryHostTests
             controller.Close(); var translated = Add(map, "Пещера тролля", 99);
             Call("RememberQuickPin", null, translated, "default.trollcave");
             Check((string)Call("PresetFor", null, translated) == "default.trollcave", "Quick placement records a stable preset binding");
+            Check((string)Call("PresetForKnownCurrentPin", null, translated) == "default.trollcave", "Known-current-pin fast lookup uses the same bound metadata");
             controller.Remove(map, translated); Open(controller); view.Rows[0].Activate();
             var livePins = (List<Minimap.PinData>)AccessTools.Field(typeof(Minimap), "m_pins").GetValue(map);
             translated = livePins.Find(p => p.m_pos.x == 99);
@@ -87,6 +161,7 @@ public static class HistoryHostTests
             controller.Close(); controller.Remove(map, translated); Open(controller); view.Rows[0].Activate();
             translated = livePins.Find(p => p.m_pos.x == 99);
             Check(translated != null && (string)Call("PresetFor", null, translated) == "", "Restoration retains explicit literal-name override");
+            BatchChecks(controller, map, owner, folder);
             Open(controller); Player.m_localPlayer = null; controller.Tick(true); Check(!controller.IsOpen, "Logout clears window and context");
             Player.m_localPlayer = owner; Open(controller); controller.Dispose(); Check(!controller.IsOpen, "Plugin disposal releases UI");
             Check(errors.Count == 0, "All expected state transitions complete without errors");

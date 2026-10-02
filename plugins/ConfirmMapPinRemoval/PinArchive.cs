@@ -148,13 +148,31 @@ namespace ValheimModPack.PinRemoval
         }
         public PinRecord RecordBeforeDelete(PinRecord pin, long utc)
         {
-            pin = pin.Copy(); Enrich(pin); pin.Id = Guid.NewGuid().ToString("N");
-            pin.DeletedUtc = utc; pin.RestoredUtc = 0; pin.Validate();
-            deleted.Add(pin); PinRecord evicted = null;
-            if (deleted.Count > MaximumDeleted) { evicted = deleted[0]; deleted.RemoveAt(0); }
+            return RecordManyBeforeDelete(new[] { pin }, utc)[0];
+        }
+        // Stage and validate the complete batch before changing any state. One
+        // atomic replacement commits the retained recovery history before the
+        // game is allowed to remove even its first pin. As with repeated single
+        // deletions, only the latest MaximumDeleted snapshots are retained.
+        public IList<PinRecord> RecordManyBeforeDelete(IEnumerable<PinRecord> pins, long utc)
+        {
+            if (pins == null) throw new ArgumentNullException("pins");
+            if (utc <= 0 || utc > DateTime.MaxValue.Ticks) throw new ArgumentOutOfRangeException("utc");
+            var staged = new List<PinRecord>();
+            foreach (PinRecord source in pins)
+            {
+                if (source == null) throw new ArgumentException("Deletion batch contains a missing pin", "pins");
+                PinRecord pin = source.Copy(); Enrich(pin); pin.Id = Guid.NewGuid().ToString("N");
+                pin.DeletedUtc = utc; pin.RestoredUtc = 0; pin.Validate();
+                staged.Add(pin);
+            }
+            if (staged.Count == 0) return staged.AsReadOnly();
+            var previous = new List<PinRecord>(deleted);
+            deleted.AddRange(staged);
+            if (deleted.Count > MaximumDeleted) deleted.RemoveRange(0, deleted.Count - MaximumDeleted);
             try { Save(); }
-            catch { deleted.Remove(pin); if (evicted != null) deleted.Insert(0, evicted); throw; }
-            return pin;
+            catch { deleted.Clear(); deleted.AddRange(previous); throw; }
+            return staged.AsReadOnly();
         }
         public RestoreResult Restore(string id, Func<PinRecord, bool> exists, Action<PinRecord> add, long utc)
         {

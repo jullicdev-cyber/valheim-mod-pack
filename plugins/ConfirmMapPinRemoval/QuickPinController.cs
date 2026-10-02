@@ -35,6 +35,13 @@ namespace ValheimModPack.PinRemoval
         public bool IsOpen { get { return window.IsVisible; } }
         public bool IsBusy { get { return IsOpen || armed != null; } }
         public Func<bool> OpenShortcut, PlaceModifier, RenameModifier;
+        public Func<string> ShortcutLabel;
+        internal bool CanSuggest { get { return CanStart() && !IsBusy && map.m_mode != Minimap.MapMode.Large && !owner.InPlaceMode(); } }
+        internal IList<PinPreset> SuggestionPresets { get { return store == null ? new List<PinPreset>() : store.Presets; } }
+        internal List<Minimap.PinData> SuggestionPins { get { return map == null ? new List<Minimap.PinData>() : CurrentPins; } }
+        internal string PresetName(PinPreset preset) { return text.Name(preset); }
+        internal Sprite PresetSprite(PinPreset preset) { return sprite.Invoke(map, new object[] { (Minimap.PinType)preset.Icon }) as Sprite; }
+        internal void PlaceSuggested(string id, Vector3 position) { if (CanSuggest) Place(id, position); }
 
         public QuickPinController(Harmony harmony, PinHistoryController history, FieldInfo pins, Action<Exception> report)
         {
@@ -140,13 +147,19 @@ namespace ValheimModPack.PinRemoval
             if (!visible) { if (launcher != null) launcher.SetActive(false); return; }
             if (launcher == null && GUIManager.CustomGUIFront != null)
             {
-                launcher = GUIManager.Instance.CreateButton(text.Get("quick_pins"), GUIManager.CustomGUIFront.transform,
+                launcher = GUIManager.Instance.CreateButton(text.Get("presets_title"), GUIManager.CustomGUIFront.transform,
                     new Vector2(1, 1), new Vector2(1, 1), new Vector2(-160, -115), 270, 44);
                 launcher.name = "ConfirmMapPinRemoval.QuickPinsLauncher";
                 var sound = launcher.GetComponent<ButtonSfx>(); if (sound != null) sound.m_selectSfxPrefab = null;
                 launcher.GetComponent<Button>().onClick.AddListener(() => { if (CanStart()) OpenAt(owner.transform.position, false); });
             }
-            if (launcher != null) launcher.SetActive(true);
+            if (launcher != null)
+            {
+                string label = ShortcutLabel == null ? "" : ShortcutLabel();
+                var caption = launcher.GetComponentInChildren<Text>();
+                if (caption != null) caption.text = text.Get("presets_title") + (label.Length == 0 ? "" : " [" + label + "]");
+                launcher.SetActive(true);
+            }
         }
         private List<PinPresetIconOption> Icons()
         {

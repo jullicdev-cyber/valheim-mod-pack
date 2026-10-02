@@ -6,4 +6,8 @@ cfg:valheimmodpack.confirmpinremoval:Controls:OpenHistory	Map
 cfg:valheimmodpack.confirmpinremoval:Controls:QuickPin	World,Map,Vehicle,Build placement,Build menu
 cfg:valheimmodpack.confirmpinremoval:Controls:PlaceOnMapModifier	Map
 cfg:valheimmodpack.confirmpinremoval:Controls:RenamePinModifier	Map
+cfg:valheimmodpack.confirmpinremoval:Controls:AcceptSuggestion	World,Vehicle
+cfg:valheimmodpack.confirmpinremoval:Controls:NextSuggestion	World,Vehicle
+cfg:valheimmodpack.confirmpinremoval:Controls:DismissSuggestion	World,Vehicle
+cfg:valheimmodpack.confirmpinremoval:Controls:ClearDeathPins	Map
 cfg:valheimmodpack.eaqsquickstackbridge:Controls:SortShortcut	Inventory,Container,Crafting

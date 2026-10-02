@@ -117,18 +117,63 @@ namespace ValheimModPack.PinRemoval
         private List<Minimap.PinData> CurrentPins { get { return (List<Minimap.PinData>)pins.GetValue(map); } }
         public void Remove(Minimap expectedMap, Minimap.PinData pin)
         {
-            if (!EnsureContext() || !ReferenceEquals(map, expectedMap) || !CurrentPins.Contains(pin) || !pin.m_save)
+            RemoveMany(expectedMap, new[] { pin });
+        }
+        public void RemoveMany(Minimap expectedMap, IEnumerable<Minimap.PinData> selectedPins)
+        {
+            if (selectedPins == null) throw new ArgumentNullException("selectedPins");
+            if (!EnsureContext() || !ReferenceEquals(map, expectedMap))
                 throw new InvalidOperationException("Map history unavailable: deletion blocked to preserve the pin");
+            PinArchive expectedArchive = archive;
+            Player expectedOwner = owner;
+            long expectedWorld = world, expectedCharacter = character;
+            var targets = new List<Minimap.PinData>();
+            var targetIndex = new HashSet<Minimap.PinData>();
+            var snapshots = new List<PinRecord>();
+            var current = CurrentPins;
+            var currentIndex = new HashSet<Minimap.PinData>(current);
+            foreach (Minimap.PinData pin in selectedPins)
+            {
+                if (pin == null || !pin.m_save || !currentIndex.Contains(pin))
+                    throw new InvalidOperationException("Deletion batch changed: no pins were removed");
+                if (!targetIndex.Add(pin)) continue;
+                targets.Add(pin);
+            }
+            if (targets.Count == 0) return;
+            // An enumerable may run arbitrary code while it is being staged.
+            // Revalidate the same world/player/map and complete selection before
+            // committing, so a stale batch cannot mutate another session.
+            if (!BatchContext(expectedArchive, expectedMap, expectedOwner, expectedWorld, expectedCharacter))
+                throw new InvalidOperationException("Map history context changed: no pins were removed");
+            currentIndex.Clear();
+            foreach (Minimap.PinData pin in CurrentPins) currentIndex.Add(pin);
+            foreach (Minimap.PinData pin in targets)
+            {
+                if (!pin.m_save || !currentIndex.Contains(pin))
+                    throw new InvalidOperationException("Deletion batch changed: no pins were removed");
+                snapshots.Add(Snapshot(pin));
+            }
             // Persist first. Failed/partial game deletion is safe: restore checks the actual map.
-            try { archive.RecordBeforeDelete(Snapshot(pin), DateTime.UtcNow.Ticks); }
+            try { expectedArchive.RecordManyBeforeDelete(snapshots, DateTime.UtcNow.Ticks); }
             catch
             {
-                owner.Message(MessageHud.MessageType.Center, Russian
-                    ? "Метка сохранена на карте: не удалось записать историю удаления."
-                    : "Pin kept on map: deletion history could not be saved.", 0, null);
+                expectedOwner.Message(MessageHud.MessageType.Center, Russian
+                    ? (targets.Count == 1 ? "Метка сохранена на карте: не удалось записать историю удаления." : "Метки сохранены на карте: не удалось записать историю удаления.")
+                    : (targets.Count == 1 ? "Pin kept on map: deletion history could not be saved." : "Pins kept on map: deletion history could not be saved."), 0, null);
                 throw;
             }
-            map.RemovePin(pin);
+            foreach (Minimap.PinData pin in targets)
+            {
+                if (!BatchContext(expectedArchive, expectedMap, expectedOwner, expectedWorld, expectedCharacter))
+                    throw new InvalidOperationException("Map history context changed during deletion; retained snapshots remain recoverable");
+                expectedMap.RemovePin(pin);
+            }
+        }
+        private bool BatchContext(PinArchive expectedArchive, Minimap expectedMap, Player expectedOwner, long expectedWorld, long expectedCharacter)
+        {
+            return ReferenceEquals(archive, expectedArchive) && ReferenceEquals(map, expectedMap) && ReferenceEquals(owner, expectedOwner)
+                && ReferenceEquals(expectedOwner, Player.m_localPlayer) && ReferenceEquals(expectedMap, Minimap.instance)
+                && ZNet.instance != null && expectedWorld == ZNet.instance.GetWorldUID() && expectedCharacter == expectedOwner.GetPlayerID();
         }
         public void Tick(bool allowOpen)
         {
@@ -260,6 +305,14 @@ namespace ValheimModPack.PinRemoval
         internal static string PresetFor(Minimap.PinData pin)
         {
             return pin != null && active != null && active.EnsureContext() && active.CurrentPins.Contains(pin)
+                ? active.archive.PresetFor(Snapshot(pin)) : "";
+        }
+        // For callers already enumerating the current map's live pin list. The
+        // world/character guard remains; avoid another linear membership search
+        // for each pin during bounded nearby recommendation scans.
+        internal static string PresetForKnownCurrentPin(Minimap.PinData pin)
+        {
+            return pin != null && active != null && active.EnsureContext()
                 ? active.archive.PresetFor(Snapshot(pin)) : "";
         }
         internal static PinRecord Snapshot(Minimap.PinData pin)

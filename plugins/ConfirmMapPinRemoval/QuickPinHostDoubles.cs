@@ -24,6 +24,7 @@ namespace UnityEngine
         public T AddComponent<T>() where T : Component, new() { var value = new T { gameObject = this }; components.Add(value); return value; }
         public T GetComponent<T>() where T : class { foreach (var value in components) if (value is T) return value as T; return null; }
         public T GetComponentInParent<T>() where T : class { return GetComponent<T>(); }
+        public T GetComponentInChildren<T>() where T : class { return GetComponent<T>(); }
         public T[] GetComponentsInParent<T>() where T : class
         { var result = new List<T>(); foreach (var value in components) if (value is T) result.Add(value as T); return result.ToArray(); }
         public void SetActive(bool value) { activeInHierarchy = value; }
@@ -94,6 +95,7 @@ public sealed class Player
     public UnityEngine.Transform transform = new UnityEngine.GameObject().transform;
     public readonly List<string> Messages = new List<string>();
     public long GetPlayerID() { return Id; }
+    public bool InPlaceMode() { return false; }
     public void Message(MessageHud.MessageType type, string value, int amount, object icon) { Messages.Add(value); }
 }
 public sealed class ZNet { public static ZNet instance; public long World = 10; public long GetWorldUID() { return World; } }

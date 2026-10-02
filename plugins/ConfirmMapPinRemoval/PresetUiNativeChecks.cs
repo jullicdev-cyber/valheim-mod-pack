@@ -82,11 +82,11 @@ namespace ValheimModPack.PinRemoval
                 window.ShowRename("Original", delegate(string value) { ++saved; }, delegate { ++cancelled; });
                 Check(window.IsVisible && window.IsEditing && Field<InputField>(window, "name").text == "Original", "rename opens with existing name");
                 Field<InputField>(window, "name").text = "";
-                Find(window, "presets_save").onClick.Invoke();
+                Find(window, "apply").onClick.Invoke();
                 Check(saved == 3, "rename rejects empty name");
                 Field<InputField>(window, "name").text = "New name";
-                Find(window, "presets_save").onClick.Invoke();
-                Check(saved == 4 && window.IsVisible, "rename save leaves controller in charge of success");
+                Find(window, "apply").onClick.Invoke();
+                Check(saved == 4 && window.IsVisible, "rename apply leaves controller in charge of success");
                 Find(window, "presets_cancel").onClick.Invoke();
                 Check(cancelled == 1 && !window.IsVisible, "rename cancel closes and releases modal");
 
