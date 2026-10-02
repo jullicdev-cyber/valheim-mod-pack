@@ -69,6 +69,8 @@ public class Localization
 { public static Localization instance = new Localization(); public string Language = "English"; public string GetSelectedLanguage() { return Language; } }
 namespace ValheimModPack.PinRemoval
 {
+    internal static class PinLauncherLabel
+    { internal static void Apply(UnityEngine.GameObject button, string action, string shortcut, string unbound) { } }
     public class PinHistoryController
     {
         public int Calls; public bool Fail; public List<Minimap.PinData> Deleted;

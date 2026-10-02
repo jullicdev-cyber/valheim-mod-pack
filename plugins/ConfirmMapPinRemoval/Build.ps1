@@ -33,7 +33,7 @@ foreach ($ref in $refs) { if (-not (Test-Path -LiteralPath $ref)) { throw "Missi
 New-Item -ItemType Directory -Force (Split-Path $OutputFile -Parent) | Out-Null
 $argsList = @('/nologo','/codepage:65001','/target:library','/optimize+',('/out:' + $OutputFile))
 $argsList += $refs | ForEach-Object { '/reference:' + $_ }
-$argsList += @('Plugin.cs', 'MapControls.cs', 'Confirmation.cs', 'RemovalDialog.cs', 'PinLabel.cs', 'WoodDialogView.cs', 'PinArchive.cs', 'PinHistoryController.cs', 'PinHistoryWindow.cs', 'SharedPinMetadata.cs', 'SharedPinCodec.cs', 'QuickPinController.cs', 'PinPresetStore.cs', 'PinPresetCatalog.cs', 'PinPresetLocalization.cs', 'PinPresetWindow.cs', 'SuggestionPolicy.cs', 'PinSuggestionHud.cs', 'PinActionMenuView.cs', 'PinActionController.cs', 'DeathPinController.cs', 'PinSuggestionController.cs', 'SuggestionShortcutGate.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
+$argsList += @('Plugin.cs', 'MapControls.cs', 'Confirmation.cs', 'RemovalDialog.cs', 'PinLabel.cs', 'PinLauncherLabel.cs', 'WoodDialogView.cs', 'PinArchive.cs', 'PinHistoryController.cs', 'PinHistoryWindow.cs', 'SharedPinMetadata.cs', 'SharedPinCodec.cs', 'QuickPinController.cs', 'PinPresetStore.cs', 'PinPresetCatalog.cs', 'PinPresetLocalization.cs', 'PinPresetWindow.cs', 'SuggestionPolicy.cs', 'PinSuggestionHud.cs', 'PinActionMenuView.cs', 'PinActionController.cs', 'DeathPinController.cs', 'PinSuggestionController.cs', 'SuggestionShortcutGate.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
 & $compiler @argsList
 if ($LASTEXITCODE -ne 0) { throw 'Map confirmation compilation failed.' }
 Write-Output "Built map confirmation: $OutputFile"

@@ -30,6 +30,7 @@ namespace ValheimModPack.PinRemoval
             shared += PinPresentationNativeChecks.Run();
             shared += SuggestionRuntimeNativeChecks.Run();
             shared += SuggestionShortcutNativeChecks.Run();
+            shared += MapLauncherNativeChecks.Run();
             int baseline = Blocks(), afterForeign = baseline;
             var window = new PinHistoryWindow(); var confirmation = new WoodDialogView();
             try

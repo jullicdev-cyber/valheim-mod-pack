@@ -6,7 +6,7 @@ using HarmonyLib;
 using UnityEngine;
 namespace ValheimModPack.PinRemoval
 {
-    [BepInPlugin(Id, "Confirm Map Pin Removal", "1.5.0")]
+    [BepInPlugin(Id, "Confirm Map Pin Removal", "1.5.1")]
     [BepInDependency("com.jotunn.jotunn", "2.30.2")]
     public sealed class Plugin : BaseUnityPlugin
     {
@@ -49,6 +49,7 @@ namespace ValheimModPack.PinRemoval
                 quick = new QuickPinController(harmony, history, pins, error => Logger.LogError(error));
                 var controls = new MapControls(Config);
                 history.OpenShortcut = () => MapControls.Down(controls.History.Value);
+                history.ShortcutLabel = () => MapControls.Label(controls.History.Value);
                 quick.OpenShortcut = () => MapControls.Down(controls.Quick.Value);
                 quick.ShortcutLabel = () => MapControls.Label(controls.Quick.Value);
                 quick.PlaceModifier = () => MapControls.Held(controls.Place.Value);

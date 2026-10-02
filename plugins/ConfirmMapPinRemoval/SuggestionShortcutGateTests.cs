@@ -37,6 +37,9 @@ public static class SuggestionShortcutGateTests
     {
         try
         {
+            Check(MapControls.Label(new KeyboardShortcut(KeyCode.G, KeyCode.LeftShift, KeyCode.LeftControl)) == "Ctrl+Shift+G", "shortcut display uses standard modifier order independent of BepInEx order");
+            Check(MapControls.Label(new KeyboardShortcut(KeyCode.G, KeyCode.RightShift, KeyCode.RightControl, KeyCode.LeftAlt)) == "Ctrl+Shift+Alt+G", "shortcut display normalizes right modifiers and preserves the full chord");
+            Check(MapControls.Label(new KeyboardShortcut(KeyCode.None)) == "", "disabled shortcut has no misleading key label");
             for(int action=1;action<=3;++action)
             using(var f=new Fixture())
             {

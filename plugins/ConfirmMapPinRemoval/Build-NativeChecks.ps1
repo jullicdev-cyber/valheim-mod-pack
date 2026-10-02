@@ -16,7 +16,7 @@ $refs += @('assembly_valheim.dll','assembly_guiutils.dll','assembly_utils.dll','
 $output = Join-Path $OutputDirectory 'PinHistoryNativeChecks.dll'
 $arguments = @('/nologo','/codepage:65001','/target:library','/optimize+',('/out:' + $output))
 $arguments += $refs | ForEach-Object { '/reference:' + $_ }
-$arguments += @('NativeChecks.cs', 'PresetUiNativeChecks.cs', 'PinPresentationNativeChecks.cs', 'SuggestionRuntimeNativeChecks.cs', 'SuggestionShortcutNativeChecks.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
+$arguments += @('NativeChecks.cs', 'PresetUiNativeChecks.cs', 'PinPresentationNativeChecks.cs', 'SuggestionRuntimeNativeChecks.cs', 'SuggestionShortcutNativeChecks.cs', 'MapLauncherNativeChecks.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
 & $compiler @arguments
 if ($LASTEXITCODE -ne 0) { throw 'Native map history probe compilation failed' }
 Write-Output "Built optional native checks: $output"

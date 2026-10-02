@@ -18,7 +18,7 @@ namespace ValheimModPack.PortalFinder
     [BepInDependency("valheimmodpack.confirmpinremoval", BepInDependency.DependencyFlags.SoftDependency)]
     public sealed class Plugin : BaseUnityPlugin
     {
-        public const string Id = "valheimmodpack.portalfinder", Version = "1.0.0";
+        public const string Id = "valheimmodpack.portalfinder", Version = "1.0.1";
         private static Plugin active;
         private Harmony harmony;
         private PortalRegistry registry;
@@ -37,7 +37,7 @@ namespace ValheimModPack.PortalFinder
         private bool armed, fromPoint, ready;
         private int status;
         private float ignoreDoubleClickUntil, nextError;
-        private string language;
+        private string language, ownShortcutLabel, pointShortcutLabel;
         private static readonly Vector2 TopRight = new Vector2(1, 1);
         private bool Russian { get { return Localization.instance != null && Localization.instance.GetSelectedLanguage() == "Russian"; } }
         private string TextFor(string ru, string en) { return Russian ? ru : en; }
@@ -47,10 +47,10 @@ namespace ValheimModPack.PortalFinder
             active = this;
             try
             {
-                nearMe = Config.Bind("Controls", "FindNearestToPlayer", new KeyboardShortcut(KeyCode.None),
-                    "Find the nearest portal while the large map is open. Unbound by default; use map buttons or rebind with Bindrune.");
-                nearPoint = Config.Bind("Controls", "SelectMapPoint", new KeyboardShortcut(KeyCode.None),
-                    "Arm/cancel selection of a map point. Unbound by default; use map buttons or rebind with Bindrune.");
+                nearMe = Config.Bind("Controls", "FindNearestToPlayer", new KeyboardShortcut(KeyCode.J, KeyCode.LeftControl),
+                    "Find the nearest portal while the large map is open. Default Ctrl+J; rebind with Bindrune, or None to use the map button only.");
+                nearPoint = Config.Bind("Controls", "SelectMapPoint", new KeyboardShortcut(KeyCode.J, KeyCode.LeftControl, KeyCode.LeftShift),
+                    "Arm/cancel selection of a map point for a portal search. Default Ctrl+Shift+J; rebind with Bindrune, or None to use the map button only.");
                 worldPoint = AccessTools.Method(typeof(Minimap), "ScreenToWorldPoint", new[] { typeof(Vector3) });
                 if (worldPoint == null || worldPoint.ReturnType != typeof(Vector3)) throw new MissingMethodException("Minimap.ScreenToWorldPoint contract changed.");
                 Type pinPlugin = AccessTools.TypeByName("ValheimModPack.PinRemoval.Plugin");
@@ -134,7 +134,8 @@ namespace ValheimModPack.PortalFinder
                 else if (Shortcut.Pressed(nearPoint.Value)) TogglePoint();
                 if (armed && Input.GetKeyDown(KeyCode.Escape)) { armed = false; status = 0; RefreshText(); }
                 string current = Localization.instance == null ? "English" : Localization.instance.GetSelectedLanguage();
-                if (current != language) { language = current; RefreshText(); }
+                if (current != language || ownShortcutLabel != Shortcut.Label(nearMe.Value) || pointShortcutLabel != Shortcut.Label(nearPoint.Value))
+                { language = current; RefreshText(); }
             }
             catch (Exception error) { armed = false; SetVisible(false); Report(error); }
         }
@@ -142,14 +143,14 @@ namespace ValheimModPack.PortalFinder
         {
             if (ownButton || GUIManager.CustomGUIFront == null) return;
             Transform parent = GUIManager.CustomGUIFront.transform;
-            ownButton = GUIManager.Instance.CreateButton("", parent, TopRight, TopRight, new Vector2(-160, -165), 270, 44);
+            ownButton = GUIManager.Instance.CreateButton("", parent, TopRight, TopRight, new Vector2(-220, -185), 420, 50);
             ownButton.name = "PortalFinder.NearestToPlayer";
-            pointButton = GUIManager.Instance.CreateButton("", parent, TopRight, TopRight, new Vector2(-160, -215), 270, 44);
+            pointButton = GUIManager.Instance.CreateButton("", parent, TopRight, TopRight, new Vector2(-220, -245), 420, 50);
             pointButton.name = "PortalFinder.NearestToPoint";
             BindButton(ownButton, () => { if (CanUse()) Find(owner.transform.position, false); });
             BindButton(pointButton, () => { if (CanUse()) TogglePoint(); });
-            captionObject = GUIManager.Instance.CreateText("", parent, TopRight, TopRight, new Vector2(-160, -290),
-                GUIManager.Instance.AveriaSerif, 17, GUIManager.Instance.ValheimBeige, true, Color.black, 290, 96, false);
+            captionObject = GUIManager.Instance.CreateText("", parent, TopRight, TopRight, new Vector2(-220, -320),
+                GUIManager.Instance.AveriaSerif, 17, GUIManager.Instance.ValheimBeige, true, Color.black, 420, 96, false);
             captionObject.name = "PortalFinder.Result";
             caption = captionObject.GetComponent<Text>(); caption.supportRichText = false; caption.raycastTarget = false;
             caption.alignment = TextAnchor.UpperCenter; caption.horizontalOverflow = HorizontalWrapMode.Wrap;
@@ -159,7 +160,15 @@ namespace ValheimModPack.PortalFinder
         private static void BindButton(GameObject button, Action click)
         {
             var sound = button.GetComponent<ButtonSfx>(); if (sound != null) sound.m_selectSfxPrefab = null;
-            foreach (Text label in button.GetComponentsInChildren<Text>(true)) label.supportRichText = false;
+            foreach (Text label in button.GetComponentsInChildren<Text>(true))
+            {
+                label.supportRichText = false; label.raycastTarget = false;
+                label.alignment = TextAnchor.MiddleCenter;
+                label.horizontalOverflow = HorizontalWrapMode.Wrap;
+                label.verticalOverflow = VerticalWrapMode.Truncate;
+                label.fontSize = 17; label.resizeTextForBestFit = true;
+                label.resizeTextMinSize = 14; label.resizeTextMaxSize = 17;
+            }
             button.GetComponent<Button>().onClick.AddListener(() => click());
         }
         private static void SetButtonLabel(GameObject button, string value)
@@ -197,16 +206,19 @@ namespace ValheimModPack.PortalFinder
         }
         private void RefreshText()
         {
-            SetButtonLabel(ownButton, TextFor("Ближайший ко мне", "Nearest to me"));
-            SetButtonLabel(pointButton, armed ? TextFor("Отменить выбор точки", "Cancel point selection") : TextFor("Ближайший к точке", "Nearest to a point"));
+            ownShortcutLabel = nearMe == null ? "" : Shortcut.Label(nearMe.Value);
+            pointShortcutLabel = nearPoint == null ? "" : Shortcut.Label(nearPoint.Value);
+            SetButtonLabel(ownButton, WithShortcut(TextFor("Ближайший портал ко мне", "Nearest portal to me"), ownShortcutLabel));
+            SetButtonLabel(pointButton, WithShortcut(armed ? TextFor("Отменить выбор точки портала", "Cancel portal point selection")
+                : TextFor("Ближайший портал к точке", "Nearest portal to a point"), pointShortcutLabel));
             if (!caption) return;
             string value = "";
-            if (status == 1) value = TextFor("Нажми ЛКМ в нужном месте карты.", "Left-click a position on the map.");
+            if (status == 1) value = TextFor("Выбери ЛКМ точку для поиска ближайшего портала.", "Left-click a point to find its nearest portal.");
             if (status == 2) value = TextFor("Порталы ещё синхронизируются. Повтори поиск.", "Portals are still syncing. Try again shortly.");
             if (status == 3) value = TextFor("Полный список порталов недоступен. Проверь XPortal.", "Complete portal list unavailable. Check XPortal.");
             if (status == 4) value = TextFor("В этом мире порталов не найдено.", "No portals found in this world.");
             if (status == 5 && result != null)
-                value = PortalName(result.Portal.Name) + "\n" + Math.Round(result.Distance).ToString("0")
+                value = TextFor("Портал: ", "Portal: ") + PortalName(result.Portal.Name) + "\n" + Math.Round(result.Distance).ToString("0")
                     + TextFor(" м ", " m ") + (fromPoint ? TextFor("от выбранной точки", "from the selected point") : TextFor("от тебя", "from you"));
             caption.text = value;
             if (marker != null && result != null)
@@ -220,6 +232,8 @@ namespace ValheimModPack.PortalFinder
                 }
             }
         }
+        private string WithShortcut(string action, string shortcut)
+        { return action + "\n" + (String.IsNullOrEmpty(shortcut) ? TextFor("Клавиша не назначена", "Unbound") : "[" + shortcut + "]"); }
         private bool ConsumePoint(Minimap clicked)
         {
             if (!armed || !ReferenceEquals(clicked, map) || !CanUse()) return false;

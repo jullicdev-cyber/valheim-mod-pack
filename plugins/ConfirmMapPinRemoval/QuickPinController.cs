@@ -148,7 +148,7 @@ namespace ValheimModPack.PinRemoval
             if (launcher == null && GUIManager.CustomGUIFront != null)
             {
                 launcher = GUIManager.Instance.CreateButton(text.Get("presets_title"), GUIManager.CustomGUIFront.transform,
-                    new Vector2(1, 1), new Vector2(1, 1), new Vector2(-160, -115), 270, 44);
+                    new Vector2(1, 1), new Vector2(1, 1), new Vector2(-220, -125), 420, 50);
                 launcher.name = "ConfirmMapPinRemoval.QuickPinsLauncher";
                 var sound = launcher.GetComponent<ButtonSfx>(); if (sound != null) sound.m_selectSfxPrefab = null;
                 launcher.GetComponent<Button>().onClick.AddListener(() => { if (CanStart()) OpenAt(owner.transform.position, false); });
@@ -156,8 +156,7 @@ namespace ValheimModPack.PinRemoval
             if (launcher != null)
             {
                 string label = ShortcutLabel == null ? "" : ShortcutLabel();
-                var caption = launcher.GetComponentInChildren<Text>();
-                if (caption != null) caption.text = text.Get("presets_title") + (label.Length == 0 ? "" : " [" + label + "]");
+                PinLauncherLabel.Apply(launcher, text.Get("presets_title"), label, text.Get("shortcut_unbound"));
                 launcher.SetActive(true);
             }
         }

@@ -1,5 +1,5 @@
 {
-  "packVersion": "1.16.0",
+  "packVersion": "1.16.1",
   "created": "2026-09-25",
   "targetGameVersion": "1.0.16",
   "packages": [
@@ -276,10 +276,10 @@
     },
     {
       "id": "ValheimModPack-ConfirmMapPinRemoval",
-      "version": "1.5.0",
+      "version": "1.5.1",
       "source": "local-plugins/ConfirmMapPinRemoval.dll",
       "destination": "BepInEx/plugins/ValheimModPack-ConfirmMapPinRemoval/ConfirmMapPinRemoval.dll",
-      "sha256": "201abf80d0b5d6e168dbfccf06244d3da34170cfbb20ec6fba3df5f9756cff6b",
+      "sha256": "15f212e1c265b39f510c0a6cb2ac0ad52455e4488272dadd1950ed099e0ba6ae",
       "dependencies": [
         "denikson-BepInExPack_Valheim-5.4.2351",
         "ValheimModding-Jotunn-2.30.2"
@@ -364,10 +364,10 @@
     },
     {
       "id": "ValheimModPack-PortalFinder",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "source": "local-plugins/PortalFinder.dll",
       "destination": "BepInEx/plugins/ValheimModPack-PortalFinder/PortalFinder.dll",
-      "sha256": "1a48c95f89e2f3b7142de0c61358dbd44451ea384b6c9640dd47d77fbac40772",
+      "sha256": "77f9bb8780675d3c641b4b45dff54994dbd352c010961df24ba7b8a4d173eae1",
       "dependencies": [
         "denikson-BepInExPack_Valheim-5.4.2351",
         "ValheimModding-Jotunn-2.30.2",

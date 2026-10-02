@@ -20,7 +20,6 @@ namespace ValheimModPack.PinRemoval
         private List<Minimap.PinData> requestedPins;
         private HashSet<Minimap.PinData> requestedIndex;
         private bool allowed, disposed;
-        private string label;
         public Func<bool> OpenShortcut;
         public Func<string> ShortcutLabel;
         public bool IsOpen { get { return dialog.IsOpen; } }
@@ -96,23 +95,14 @@ namespace ValheimModPack.PinRemoval
             {
                 if (GUIManager.CustomGUIFront == null) return;
                 launcher = GUIManager.Instance.CreateButton("", GUIManager.CustomGUIFront.transform,
-                    new Vector2(1, 1), new Vector2(1, 1), new Vector2(-220, -370), 420, 50);
+                    new Vector2(1, 1), new Vector2(1, 1), new Vector2(-220, -405), 420, 50);
                 launcher.name = "ConfirmMapPinRemoval.DeathLauncher";
                 var sound = launcher.GetComponent<ButtonSfx>(); if (sound != null) sound.m_selectSfxPrefab = null;
                 launcher.GetComponent<Button>().onClick.AddListener(Open);
             }
             string hotkey = ShortcutLabel == null ? "" : ShortcutLabel();
-            string next = T("Удалить все метки смерти", "Remove all death pins") + (String.IsNullOrEmpty(hotkey) ? "" : " [" + hotkey + "]");
-            if (label != next)
-            {
-                var caption = launcher.GetComponentInChildren<Text>(true);
-                if (caption != null)
-                {
-                    caption.supportRichText = false; caption.resizeTextForBestFit = true;
-                    caption.resizeTextMinSize = 12; caption.resizeTextMaxSize = 17; caption.text = next;
-                }
-                label = next;
-            }
+            PinLauncherLabel.Apply(launcher, T("Удалить все метки смерти", "Remove all death pins"), hotkey,
+                T("Клавиша не назначена", "Unbound"));
             launcher.SetActive(true);
         }
         private static string T(string russian, string english)

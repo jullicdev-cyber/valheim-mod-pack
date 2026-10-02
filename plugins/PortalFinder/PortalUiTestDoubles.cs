@@ -24,6 +24,7 @@ namespace UnityEngine
     public class GameObject : Object
     {
         public string name; public bool activeSelf=true;
+        public Vector2 TestPosition; public float TestWidth, TestHeight;
         public bool activeInHierarchy { get { return !Destroyed && activeSelf; } }
         public readonly Transform transform;
         public readonly List<Component> Components=new List<Component>();
@@ -41,8 +42,10 @@ namespace UnityEngine
     public struct Vector3 { public float x,y,z; public Vector3(float x,float y,float z) { this.x=x; this.y=y; this.z=z; } }
     public struct Color { public static readonly Color black; }
     public class Font : Object { }
-    public enum TextAnchor { UpperCenter }
-    public enum KeyCode { None, Escape, F, G, LeftControl, RightControl, LeftShift, RightShift, LeftAlt, RightAlt, LeftCommand, RightCommand }
+    public enum TextAnchor { UpperCenter, MiddleCenter }
+    public enum KeyCode { None=0, Escape=27, F=102, G=103, J=106, Alpha0=48, Alpha1=49, Alpha2=50, Alpha3=51,
+        Alpha4=52, Alpha5=53, Alpha6=54, Alpha7=55, Alpha8=56, Alpha9=57, KeypadEnter=271,
+        LeftControl=306, RightControl=305, LeftShift=304, RightShift=303, LeftAlt=308, RightAlt=307, LeftCommand=310, RightCommand=309 }
     public static class Time { public static float unscaledTime=100; }
     public static class Input
     {
@@ -56,7 +59,8 @@ namespace UnityEngine.UI
     public enum HorizontalWrapMode { Wrap }
     public enum VerticalWrapMode { Truncate }
     public sealed class Text : UnityEngine.Behaviour
-    { public string text=""; public bool supportRichText=true,raycastTarget=true; public UnityEngine.TextAnchor alignment; public HorizontalWrapMode horizontalOverflow; public VerticalWrapMode verticalOverflow; }
+    { public string text=""; public bool supportRichText=true,raycastTarget=true,resizeTextForBestFit; public int fontSize,resizeTextMinSize,resizeTextMaxSize;
+        public UnityEngine.TextAnchor alignment; public HorizontalWrapMode horizontalOverflow; public VerticalWrapMode verticalOverflow; }
     public sealed class InputField : UnityEngine.Behaviour { public bool isFocused; }
     public sealed class Button : UnityEngine.Behaviour { public readonly ClickEvent onClick=new ClickEvent(); }
     public sealed class ClickEvent { private Action callback; public void AddListener(Action value) { callback+=value; } public void Invoke() { if(callback!=null) callback(); } }
@@ -81,7 +85,13 @@ namespace BepInEx.Configuration
     public struct KeyboardShortcut
     {
         public UnityEngine.KeyCode MainKey { get; private set; } public IEnumerable<UnityEngine.KeyCode> Modifiers { get; private set; }
-        public KeyboardShortcut(UnityEngine.KeyCode key,params UnityEngine.KeyCode[] modifiers) : this() { MainKey=key; Modifiers=modifiers; }
+        public KeyboardShortcut(UnityEngine.KeyCode key,params UnityEngine.KeyCode[] modifiers) : this()
+        {
+            MainKey=key;
+            var stored=(UnityEngine.KeyCode[])modifiers.Clone();
+            Array.Sort(stored); // BepInEx SanitizeKeys stores numeric enum order.
+            Modifiers=stored;
+        }
     }
 }
 namespace HarmonyLib
@@ -110,9 +120,9 @@ namespace Jotunn.Managers
         public static readonly GUIManager Instance=new GUIManager(); public static UnityEngine.GameObject CustomGUIFront=new UnityEngine.GameObject();
         public readonly UnityEngine.Font AveriaSerif=new UnityEngine.Font(); public readonly UnityEngine.Color ValheimBeige;
         public UnityEngine.GameObject CreateButton(string text,UnityEngine.Transform parent,UnityEngine.Vector2 a,UnityEngine.Vector2 b,UnityEngine.Vector2 pos,float w,float h)
-        { var result=new UnityEngine.GameObject(); result.AddComponent<UnityEngine.UI.Button>(); result.AddComponent<ButtonSfx>(); result.AddComponent<UnityEngine.UI.Text>().text=text; return result; }
+        { var result=new UnityEngine.GameObject { TestPosition=pos,TestWidth=w,TestHeight=h }; result.AddComponent<UnityEngine.UI.Button>(); result.AddComponent<ButtonSfx>(); result.AddComponent<UnityEngine.UI.Text>().text=text; return result; }
         public UnityEngine.GameObject CreateText(string text,UnityEngine.Transform parent,UnityEngine.Vector2 a,UnityEngine.Vector2 b,UnityEngine.Vector2 pos,UnityEngine.Font font,int size,UnityEngine.Color color,bool outline,UnityEngine.Color shadow,float w,float h,bool rich)
-        { var result=new UnityEngine.GameObject(); result.AddComponent<UnityEngine.UI.Text>().text=text; return result; }
+        { var result=new UnityEngine.GameObject { TestPosition=pos,TestWidth=w,TestHeight=h }; result.AddComponent<UnityEngine.UI.Text>().text=text; return result; }
     }
 }
 namespace Splatform { public struct PlatformUserID { } }

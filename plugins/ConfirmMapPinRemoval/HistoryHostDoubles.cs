@@ -5,6 +5,8 @@ using System.Reflection;
 namespace BepInEx { public static class Paths { public static string GameRootPath; } }
 namespace ValheimModPack.PinRemoval
 {
+    internal static class PinLauncherLabel
+    { internal static void Apply(UnityEngine.GameObject button, string action, string shortcut, string unbound) { } }
     public static class QuickPinController
     {
         public static string DisplayRecord(PinRecord pin) { return pin.Name; }

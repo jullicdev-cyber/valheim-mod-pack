@@ -39,7 +39,7 @@ namespace ValheimModPack.PinRemoval
         {
             if (key.MainKey == KeyCode.None) return "";
             var labels = new System.Collections.Generic.List<string>();
-            foreach (KeyCode modifier in key.Modifiers)
+            foreach (KeyCode modifier in key.Modifiers.OrderBy(LabelOrder))
             {
                 string label = KeyLabel(modifier);
                 if (!labels.Contains(label)) labels.Add(label);
@@ -47,6 +47,15 @@ namespace ValheimModPack.PinRemoval
             string main = KeyLabel(key.MainKey);
             if (!labels.Contains(main)) labels.Add(main);
             return String.Join("+", labels.ToArray());
+        }
+        private static int LabelOrder(KeyCode key)
+        {
+            key = Family(key);
+            if (key == KeyCode.LeftControl) return 0;
+            if (key == KeyCode.LeftShift) return 1;
+            if (key == KeyCode.LeftAlt) return 2;
+            if (key == KeyCode.LeftCommand) return 3;
+            return 4 + (int)key;
         }
         private static string KeyLabel(KeyCode key)
         {

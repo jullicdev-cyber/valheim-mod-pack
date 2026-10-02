@@ -21,7 +21,7 @@
   },
   {
     "path": "BepInEx/config/Bindrune/known.txt",
-    "sha256": "5852b609a9914c60caac6c287d2476249c281914b58af63202305380c6990437"
+    "sha256": "c3fca3ab00819f54c1a93afc0b778e3296510147f3a990f699b4f23a3d240755"
   },
   {
     "path": "BepInEx/config/Gonfreecss.ResourceDropModifier.cfg",
@@ -257,7 +257,7 @@
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-ConfirmMapPinRemoval/ConfirmMapPinRemoval.dll",
-    "sha256": "201abf80d0b5d6e168dbfccf06244d3da34170cfbb20ec6fba3df5f9756cff6b"
+    "sha256": "15f212e1c265b39f510c0a6cb2ac0ad52455e4488272dadd1950ed099e0ba6ae"
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-EAQSQuickStackBridge/EAQSQuickStackBridge.dll",
@@ -545,11 +545,11 @@
   },
   {
     "path": "BepInEx/config/valheimmodpack.portalfinder.cfg",
-    "sha256": "d40825d6d3c245220d066b88564d89fca6ea8960e197d84018868225c9061edc"
+    "sha256": "de5168db3b9f9e22f196908804efc64147da742d673ea2ca032a9294b401e0a9"
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-PortalFinder/PortalFinder.dll",
-    "sha256": "1a48c95f89e2f3b7142de0c61358dbd44451ea384b6c9640dd47d77fbac40772"
+    "sha256": "77f9bb8780675d3c641b4b45dff54994dbd352c010961df24ba7b8a4d173eae1"
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-PlayerSectorSync/PlayerSectorSync.dll",

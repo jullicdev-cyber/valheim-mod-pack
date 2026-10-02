@@ -150,6 +150,8 @@ public sealed class Minimap
 }
 namespace ValheimModPack.PinRemoval
 {
+    internal static class PinLauncherLabel
+    { internal static void Apply(UnityEngine.GameObject button, string action, string shortcut, string unbound) { } }
     public sealed class PinRecord { public string PresetKey, Name, BoundName; }
     public sealed class PinHistoryController
     {

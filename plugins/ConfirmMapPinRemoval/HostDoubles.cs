@@ -124,6 +124,7 @@ namespace ValheimModPack.PinRemoval
     public sealed class PinHistoryController : IDisposable
     {
         public static PinHistoryController Last;
+        public Func<string> ShortcutLabel;
         public bool IsOpen, LastAllowed; public Func<bool> OpenShortcut;
         public PinHistoryController(HarmonyLib.Harmony harmony, System.Reflection.FieldInfo pins, Action<Exception> report) { Last = this; }
         public void Tick(bool canOpen) { LastAllowed = canOpen; if (!canOpen) Close(); }
