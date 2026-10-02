@@ -13,7 +13,7 @@ namespace ValheimModPack.WorldCharacters
     [BepInIncompatibility("org.bepinex.plugins.servercharacters")]
     public sealed partial class Plugin : BaseUnityPlugin
     {
-        public const string Id = "valheimmodpack.worldcharacters", Version = "1.0.3";
+        public const string Id = "valheimmodpack.worldcharacters", Version = "1.0.4";
         private const string RpcName = "VMP_WorldCharacters_v1";
         private const int SnapshotQueueCapacity = 64;
         internal static Plugin Instance;

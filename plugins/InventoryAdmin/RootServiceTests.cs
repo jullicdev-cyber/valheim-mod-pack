@@ -45,11 +45,14 @@ namespace ValheimModPack.InventoryAdmin
                 if (args.Length != 1) throw new ArgumentException("Expected isolated state directory.");
                 Directory.CreateDirectory(args[0]); BepInEx.Paths.BepInExRootPath = Path.Combine(args[0], "BepInEx");
                 ZNet.instance = new ZNet(); Player.m_localPlayer = new Player(); Time.realtimeSinceStartup = 10;
-                ZNet.instance.Peers.Add(new ZNetPeer { m_uid = AlicePeer, m_playerID = 101, m_socket = new ZSteamSocket { Owner = Alice.Substring(6) } });
-                ZNet.instance.Peers.Add(new ZNetPeer { m_uid = BobPeer, m_playerID = 102, m_socket = new ZSteamSocket { Owner = Bob.Substring(6) } });
+                ZNet.instance.Peers.Add(new ZNetPeer { m_uid = AlicePeer, m_playerID = 101, m_playerName = "Alice", m_socket = new ZSteamSocket { Owner = Alice.Substring(6) } });
+                ZNet.instance.Peers.Add(new ZNetPeer { m_uid = BobPeer, m_playerID = 102, m_playerName = "Bob", m_socket = new ZSteamSocket { Owner = Bob.Substring(6) } });
                 WC.Durable[ZNet.Uid] = WC.Durable[AlicePeer] = WC.Durable[BobPeer] = 50;
+                WC.ApprovedOwners[ZNet.instance.Peers[0]] = Alice; WC.ApprovedOwners[ZNet.instance.Peers[1]] = Bob;
+                WC.ApprovedConnections[ZNet.instance.Peers[0].m_rpc] = ZNet.instance.Peers[0];
+                WC.ApprovedConnections[ZNet.instance.Peers[1].m_rpc] = ZNet.instance.Peers[1];
                 var plugin = new Plugin(); Call(plugin, "Awake"); Call(plugin, "EnsureSession");
-                try { Permissions(plugin); Packets(plugin); ClientPacketValidation(plugin); Operations(plugin); CheckpointFailures(plugin); RecoveryCommands(plugin); SourcePayloadValidation(plugin); Transport(); Shortcuts(plugin); }
+                try { Permissions(plugin); ApprovedOwnerRoster(plugin); DuplicateApprovedPeerIdRoster(plugin); Packets(plugin); ClientPacketValidation(plugin); Operations(plugin); CheckpointFailures(plugin); RecoveryCommands(plugin); SourcePayloadValidation(plugin); Transport(); Shortcuts(plugin); }
                 finally { Call(plugin, "OnDestroy"); }
                 System.Console.WriteLine("InventoryAdmin actual service checks passed: " + checks); return 0;
             }
@@ -71,6 +74,125 @@ namespace ValheimModPack.InventoryAdmin
             Check(!(bool)Call(plugin, "Allowed", AlicePeer), "revocation immediate");
             WC.Durable.Remove(AlicePeer); store.SetAdministrator(999, true, Alice, true);
             Check(!(bool)Call(plugin, "Allowed", AlicePeer), "administrator not ready for this character denied"); WC.Durable[AlicePeer] = 50;
+        }
+        private static void ApprovedOwnerRoster(Plugin plugin)
+        {
+            ZNetPeer alice = ZNet.instance.Peers[0], bob = ZNet.instance.Peers[1];
+            IServiceTestSocket originalAlice = alice.m_socket, originalBob = bob.m_socket;
+            var wrapper = new UnsupportedServiceTestSocket { HostName = Alice.Substring(6), ThrowOnRead = true };
+            var unapproved = new ZNetPeer { m_uid = 83, m_playerID = 103, m_playerName = "Unapproved",
+                m_socket = new UnsupportedServiceTestSocket { HostName = Alice.Substring(6) } };
+            var corrupted = new ZNetPeer { m_uid = 84, m_playerID = 104, m_playerName = "Corrupt",
+                m_socket = new ZSteamSocket { Owner = Bob.Substring(6) } };
+            var collision = new ZNetPeer { m_uid = AlicePeer, m_playerID = 101, m_playerName = "Spoofed Alice",
+                m_socket = new ZSteamSocket { Owner = Alice.Substring(6) } };
+            var store = (PermissionStore)Get(plugin, "permissions");
+            try
+            {
+                // Socket decorators can be installed after World Characters attests
+                // this concrete authenticated connection. Never re-derive ownership.
+                alice.m_socket = new DecoratedSteamSocket { Owner = Bob.Substring(6) };
+                bob.m_socket = wrapper;
+                ZNet.instance.Peers.Add(unapproved); ZNet.instance.Peers.Add(corrupted); ZNet.instance.Peers.Add(collision);
+                WC.Durable[83] = WC.Durable[84] = 50; WC.ApprovedOwners[corrupted] = "Steam_invalid";
+                WC.ApprovedConnections[corrupted.m_rpc] = corrupted;
+                Call(plugin, "Register", unapproved); Call(plugin, "Register", corrupted); Call(plugin, "Register", collision);
+                Check((bool)Call(plugin, "Allowed", AlicePeer), "approved administrator retains permission after socket decoration");
+                Check(!(bool)Call(plugin, "Allowed", BobPeer), "approved ordinary player with decorated socket remains unauthorized");
+                Check(!(bool)Call(plugin, "Allowed", unapproved.m_uid), "unapproved socket cannot authenticate by declaring administrator Steam ID");
+                Check(!(bool)Call(plugin, "Allowed", corrupted.m_uid), "corrupted approved identity fails closed without throwing");
+                Check(!(bool)Call(plugin, "Ready", collision), "different connection with same peer UID cannot borrow attested owner");
+                Check(WC.GetAdministrativeOwner(collision) == String.Empty, "approved owner is bound to concrete authenticated peer reference");
+                ZRpc approvedAliceRpc = alice.m_rpc; alice.m_rpc = new ZRpc();
+                try { Check(!(bool)Call(plugin, "Ready", alice), "same peer reference with unattested replacement RPC cannot retain approved owner"); }
+                finally { alice.m_rpc = approvedAliceRpc; }
+                Call(plugin, "UpdateHost");
+                var welcomes = (Dictionary<long, bool>)Get(plugin, "welcomes");
+                Check(welcomes.ContainsKey(AlicePeer) && welcomes.ContainsKey(BobPeer), "supported attested players receive role welcome despite decorated sockets");
+                Check(!welcomes.ContainsKey(83) && !welcomes.ContainsKey(84), "unapproved or malformed identity never receives authorization welcome");
+                var wire = (WireTransport)Get(plugin, "transport"); long receiveBytes = (long)Get(wire, "incomingBytes");
+                Call(plugin, "Receive", unapproved.m_rpc, Frame(Id(), InventoryCodec.MaximumItemBytes, 0, new byte[] {1}));
+                Call(plugin, "Receive", corrupted.m_rpc, Frame(Id(), InventoryCodec.MaximumItemBytes, 0, new byte[] {1}));
+                Call(plugin, "Receive", collision.m_rpc, Frame(Id(), InventoryCodec.MaximumItemBytes, 0, new byte[] {1}));
+                Check((long)Get(wire, "incomingBytes") == receiveBytes, "unattested connections rejected before allocating advertised receive payload");
+                Call(plugin, "RequestPlayers");
+                var window = (AdminWindow)Get(plugin, "window");
+                Check(window.Players.Count == 3, "roster still includes host and both approved players with unsupported peers present");
+                Check(window.Players.Find(p => p.PeerId == ZNet.Uid) != null, "roster preserves host entry");
+                Check(window.Players.Find(p => p.PeerId == AlicePeer).Name == "Alice", "roster preserves authenticated decorated administrator entry");
+                Check(window.Players.Find(p => p.PeerId == BobPeer).Name == "Bob", "roster preserves authenticated decorated ordinary player entry");
+                Check(window.Players.Find(p => p.PeerId == 83 || p.PeerId == 84) == null, "roster skips invalid connections without aborting response");
+                Check(wrapper.HostNameReads == 0, "approved session owner avoids socket identity read entirely");
+                Dispatch(plugin, ZNet.Uid, 18, w => { w.Write(BobPeer); w.Write(true); });
+                Check(store.IsAdministrator(999, Bob) && (bool)Call(plugin, "Allowed", BobPeer), "host grants approved account independently of socket type or declared host name");
+                Dispatch(plugin, ZNet.Uid, 18, w => { w.Write(BobPeer); w.Write(false); });
+                Check(!store.IsAdministrator(999, Bob), "host revokes correct approved account after socket decoration");
+                Reject(delegate { Dispatch(plugin, AlicePeer, 18, w => { w.Write(BobPeer); w.Write(true); }); }, "decorated administrator still cannot assign another administrator");
+                Check(!store.IsAdministrator(999, Bob), "decorated administrator unauthorized grant has no effect");
+                string approvedAlice = WC.ApprovedOwners[alice]; WC.ApprovedOwners.Remove(alice);
+                try { Check(!(bool)Call(plugin, "Allowed", AlicePeer), "approved-owner revocation removes administrator permission without socket fallback"); }
+                finally { WC.ApprovedOwners[alice] = approvedAlice; }
+                Time.realtimeSinceStartup += 1; Call(plugin, "RequestInventory", BobPeer);
+                Check(((System.Collections.IDictionary)Get(plugin, "reads")).Count == 1, "approved decorated player accepts inventory view request");
+                Time.realtimeSinceStartup += 31; Call(plugin, "UpdateHost");
+                Check(((System.Collections.IDictionary)Get(plugin, "reads")).Count == 0, "unapproved connections cannot prevent expired view request cleanup");
+                Check(window.Status.IndexOf("Player did not respond", StringComparison.Ordinal) >= 0,
+                    "view timeout still reports retry message when malformed or unapproved peers are connected");
+                Check(wrapper.HostNameReads == 0, "roster grants and request maintenance never query socket identity");
+            }
+            finally
+            {
+                alice.m_socket = originalAlice; bob.m_socket = originalBob;
+                ZNet.instance.Peers.Remove(unapproved); ZNet.instance.Peers.Remove(corrupted); ZNet.instance.Peers.Remove(collision);
+                ((System.Collections.IDictionary)Get(plugin, "peers")).Remove(unapproved.m_rpc);
+                ((System.Collections.IDictionary)Get(plugin, "peers")).Remove(corrupted.m_rpc);
+                ((System.Collections.IDictionary)Get(plugin, "peers")).Remove(collision.m_rpc);
+                WC.Durable.Remove(83); WC.Durable.Remove(84); WC.ApprovedOwners.Remove(corrupted);
+                WC.ApprovedConnections.Remove(corrupted.m_rpc);
+                store.SetAdministrator(999, true, Bob, false);
+            }
+        }
+        private static void DuplicateApprovedPeerIdRoster(Plugin plugin)
+        {
+            ZNetPeer alice = ZNet.instance.Peers[0], bob = ZNet.instance.Peers[1];
+            const string otherOwner = "Steam_76561198000000003";
+            var collision = new ZNetPeer { m_uid = AlicePeer, m_playerID = 103, m_playerName = "Other approved player",
+                m_socket = new UnsupportedServiceTestSocket { ThrowOnRead = true } };
+            var window = (AdminWindow)Get(plugin, "window");
+            try
+            {
+                ZNet.instance.Peers.Add(collision); Call(plugin, "Register", collision);
+                WC.ApprovedOwners[collision] = otherOwner; WC.ApprovedConnections[collision.m_rpc] = collision;
+                Check(WC.GetAdministrativeOwner(alice) == Alice && WC.GetAdministrativeOwner(collision) == otherOwner,
+                    "duplicate UID fixture still attests two distinct authenticated connections and owners");
+                Check(!(bool)Call(plugin, "Ready", alice), "duplicate approved UID disables original connection rather than picking first dictionary entry");
+                Check(!(bool)Call(plugin, "Ready", collision), "duplicate approved UID disables second connection rather than aliasing administrator");
+                Check(!(bool)Call(plugin, "Allowed", AlicePeer), "ambiguous actor UID cannot resolve administrator permissions");
+                Check((bool)Call(plugin, "Ready", bob), "duplicate UID leaves unrelated approved player available");
+                Reject(delegate { Dispatch(plugin, AlicePeer, 2, w => Text(w, Id())); }, "duplicate approved UID cannot request roster under another owner's role");
+                var wire = (WireTransport)Get(plugin, "transport"); long receiveBytes = (long)Get(wire, "incomingBytes");
+                Call(plugin, "Receive", alice.m_rpc, Frame(Id(), InventoryCodec.MaximumItemBytes, 0, new byte[] {1}));
+                Call(plugin, "Receive", collision.m_rpc, Frame(Id(), InventoryCodec.MaximumItemBytes, 0, new byte[] {1}));
+                Check((long)Get(wire, "incomingBytes") == receiveBytes, "both duplicate approved connections rejected before allocating receive payload");
+                Call(plugin, "RequestPlayers");
+                Check(window.Players.Count == 2, "roster remains usable with host and unrelated player while duplicate approved UID is excluded");
+                Check(window.Players.Find(p => p.PeerId == ZNet.Uid) != null, "duplicate UID cannot remove host roster entry");
+                Check(window.Players.Find(p => p.PeerId == BobPeer).Name == "Bob", "duplicate UID cannot remove unrelated player roster entry");
+                Check(window.Players.Find(p => p.PeerId == AlicePeer) == null, "neither ambiguous approved connection is exposed in roster");
+                int errors = plugin.Logger.Errors.Count; Keys(new KeyCode[0]); Time.frameCount++; Call(plugin, "Update");
+                Check(plugin.Logger.Errors.Count == errors, "duplicate approved UID does not break normal host UI update or emit frame errors");
+                collision.m_uid = ZNet.Uid;
+                Check(!(bool)Call(plugin, "Ready", collision), "remote approved peer cannot impersonate special local host UID");
+                Call(plugin, "Receive", collision.m_rpc, Frame(Id(), InventoryCodec.MaximumItemBytes, 0, new byte[] {1}));
+                Check((long)Get(wire, "incomingBytes") == receiveBytes, "remote host UID collision rejected before allocating receive payload");
+            }
+            finally
+            {
+                ZNet.instance.Peers.Remove(collision); ((System.Collections.IDictionary)Get(plugin, "peers")).Remove(collision.m_rpc);
+                WC.ApprovedOwners.Remove(collision); WC.ApprovedConnections.Remove(collision.m_rpc);
+            }
+            Check((bool)Call(plugin, "Ready", alice) && (bool)Call(plugin, "Allowed", AlicePeer), "original administrator becomes available again when colliding connection disappears");
+            Call(plugin, "RequestPlayers"); Check(window.Players.Count == 3, "full roster recovers immediately after duplicate approved connection removal");
         }
         private static void Packets(Plugin plugin)
         {

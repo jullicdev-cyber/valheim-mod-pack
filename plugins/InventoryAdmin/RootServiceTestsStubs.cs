@@ -85,8 +85,15 @@ public static class ZInput
     public static bool GetKey(UnityEngine.KeyCode key, bool ignoreInvertedControls) { return Held.Contains(key); }
     public static bool GetKeyDown(UnityEngine.KeyCode key, bool ignoreInvertedControls) { return Down.Contains(key); }
 }
-public sealed class ZSteamSocket
-{ public string Owner; public string GetHostName() { return Owner; } }
+public interface IServiceTestSocket { string GetHostName(); }
+public class ZSteamSocket : IServiceTestSocket
+{ public string Owner; public virtual string GetHostName() { return Owner; } }
+public sealed class DecoratedSteamSocket : ZSteamSocket { }
+public sealed class UnsupportedServiceTestSocket : IServiceTestSocket
+{
+    public int HostNameReads; public string HostName = "untrusted"; public bool ThrowOnRead;
+    public string GetHostName() { ++HostNameReads; if (ThrowOnRead) throw new IOException("Socket identity is no longer available."); return HostName; }
+}
 public sealed class ZRpc
 {
     public bool Connected = true; public readonly List<ZPackage> Sent = new List<ZPackage>();
@@ -96,7 +103,7 @@ public sealed class ZRpc
 }
 public sealed class ZNetPeer
 {
-    public ZSteamSocket m_socket; public ZRpc m_rpc = new ZRpc(); public long m_uid, m_playerID;
+    public IServiceTestSocket m_socket; public ZRpc m_rpc = new ZRpc(); public long m_uid, m_playerID;
     public string m_playerName = "Player"; public bool Ready = true; public bool IsReady() { return Ready; }
 }
 public sealed class ZNet
@@ -123,6 +130,8 @@ namespace ValheimModPack.WorldCharacters
     {
         public static bool AdministrativeReady = true;
         public static readonly Dictionary<long, long> Durable = new Dictionary<long, long>();
+        public static readonly Dictionary<ZNetPeer, string> ApprovedOwners = new Dictionary<ZNetPeer, string>();
+        public static readonly Dictionary<ZRpc, ZNetPeer> ApprovedConnections = new Dictionary<ZRpc, ZNetPeer>();
         public static long Next = 1000;
         public static bool IsAdministrativePeerReady(long peer) { return Durable.ContainsKey(peer); }
         public static long GetAdministrativeDurableSequence(long peer) { long value; return Durable.TryGetValue(peer, out value) ? value : 0; }
@@ -131,6 +140,14 @@ namespace ValheimModPack.WorldCharacters
             if (peer == ZNet.GetUID()) return Player.m_localPlayer.GetPlayerID();
             foreach (ZNetPeer candidate in ZNet.instance.GetPeers()) if (candidate.m_uid == peer) return candidate.m_playerID;
             return 0;
+        }
+        public static string GetAdministrativeOwner(ZNetPeer peer)
+        {
+            if (ZNet.instance == null || !ZNet.instance.IsServer() || peer == null) return String.Empty;
+            string owner; ZNetPeer approved;
+            return Durable.ContainsKey(peer.m_uid) && ApprovedOwners.TryGetValue(peer, out owner) && ZNet.instance.Peers.Contains(peer)
+                && peer.Ready && peer.m_rpc != null && peer.m_rpc.IsConnected() && ApprovedConnections.TryGetValue(peer.m_rpc, out approved)
+                && ReferenceEquals(approved, peer) ? owner : String.Empty;
         }
         public static long RequestAdministrativeSave() { return ++Next; }
         public static bool IsAdministrativeSaveDurable(long sequence) { return GetAdministrativeDurableSequence(ZNet.GetUID()) >= sequence; }
@@ -170,12 +187,12 @@ namespace ValheimModPack.InventoryAdmin
     }
     public sealed class AdminWindow : IDisposable
     {
-        public bool IsVisible, Busy; public string Status = "";
+        public bool IsVisible, Busy; public string Status = ""; public List<AdminPlayerView> Players = new List<AdminPlayerView>();
         public AdminWindow(AdminUiBindings binding) { }
         public void Show() { IsVisible = true; } public void Hide() { IsVisible = false; }
         public void Tick() { } public void SetStatus(string text) { Status = text; } public void SetBusy(bool busy) { Busy = busy; }
         public void HandleInputReset() { }
-        public void SetPlayers(List<AdminPlayerView> views) { } public void SetSnapshot(AdminInventoryView view) { }
+        public void SetPlayers(List<AdminPlayerView> views) { Players = new List<AdminPlayerView>(views); } public void SetSnapshot(AdminInventoryView view) { }
         public void Dispose() { }
     }
     public sealed class AdminPlayerView { public long PeerId; public string Name; public bool IsAdmin; }

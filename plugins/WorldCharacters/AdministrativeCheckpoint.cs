@@ -37,6 +37,18 @@ namespace ValheimModPack.WorldCharacters
         }
         public static bool IsAdministrativePeerReady(long peerId)
         { return GetAdministrativeDurableSequence(peerId) >= 0; }
+        // ServerSync can replace peer.m_socket after the Steam handshake. Read
+        // the identity approved for this exact RPC, never a claimed peer UID.
+        public static string GetAdministrativeOwner(ZNetPeer peer)
+        {
+            if (Instance == null || Instance.failed || Instance.closing || ZNet.instance == null || !ZNet.instance.IsServer()
+                || peer == null || peer.m_rpc == null || peer.m_uid == 0 || !peer.IsReady()) return String.Empty;
+            Link link;
+            if (!Instance.links.TryGetValue(peer.m_rpc, out link) || !ReferenceEquals(link.Peer, peer)
+                || !Connected(link) || link.Session == null || !link.Session.Loaded || link.Session.Closed
+                || link.Session.State.World != ZNet.instance.GetWorldUID()) return String.Empty;
+            return link.Session.State.Owner;
+        }
         public static long GetAdministrativeCharacter(long peerId)
         {
             if (Instance == null || ZNet.instance == null || !ZNet.instance.IsServer()) return 0;

@@ -305,7 +305,7 @@
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-InventoryAdmin/InventoryAdmin.dll",
-    "sha256": "366492f946fbe16d439b7f76eb2e8ac5524cd32c476b803cd682d882d126d725"
+    "sha256": "efa89d11060f7a1b78d9f5ff064b23500d3d45c4104e383b0be84789b6209eb7"
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-NordicRadio/NordicRadio.dll",
@@ -325,7 +325,7 @@
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-WorldCharacters/WorldCharacters.dll",
-    "sha256": "7137b44139ab487858ea06a6726adc6a48defb96d7e2a6269556776656477f38"
+    "sha256": "99d3f1e87e3c77ed0c2aa611616cf2dc9a6e6f4280f3f1b5f0d840e9185e4239"
   },
   {
     "path": "BepInEx/plugins/ValheimPlus.dll",

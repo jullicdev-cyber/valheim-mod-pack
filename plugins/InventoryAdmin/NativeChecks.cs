@@ -126,7 +126,7 @@ namespace ValheimModPack.InventoryAdmin
             }
             Check(ReferenceEquals(Game.instance, original), "detached gear context restores the prior native Game singleton");
             CheckBackpackBusyGuard();
-            foreach (string name in new[] { "RequestAdministrativeSave", "IsAdministrativeSaveDurable", "GetAdministrativeDurableSequence" })
+            foreach (string name in new[] { "RequestAdministrativeSave", "IsAdministrativeSaveDurable", "GetAdministrativeDurableSequence", "GetAdministrativeOwner" })
                 Check(Chainloader.PluginInfos["valheimmodpack.worldcharacters"].Instance.GetType().GetMethod(name, All) != null,
                     "World Characters durability API is present: " + name);
             Check(!(bool)WorldCharacters("IsAdministrativeSaveDurable", 1L), "unloaded menu cannot claim an administrative snapshot was durable");
@@ -134,6 +134,8 @@ namespace ValheimModPack.InventoryAdmin
                 "unknown peer has no durable administrative sequence");
             Check((long)WorldCharacters("GetAdministrativeCharacter", Int64.MinValue) == 0,
                 "unknown peer cannot impersonate an approved character identity");
+            Check((string)WorldCharacters("GetAdministrativeOwner", new object[] { null }) == String.Empty,
+                "unknown connection cannot supply an approved account identity");
             Reject(() => WorldCharacters("RequestAdministrativeSave"), "unloaded character cannot produce an administrative save acknowledgement");
             return "PASS: " + checks + " inventory administration native assertions. Detached inventories only; live multiplayer transaction/disconnect flows require a cooperative client test.\n"
                 + InventoryAdminUiNativeChecks.Run() + "\n" + InventoryAdminInputNativeChecks.Run();

@@ -13,10 +13,10 @@ namespace ValheimModPack.InventoryAdmin
 {
     [BepInPlugin(Id, "Inventory Admin", Version)]
     [BepInDependency("com.jotunn.jotunn", "2.30.2")]
-    [BepInDependency("valheimmodpack.worldcharacters", "1.0.3")]
+    [BepInDependency("valheimmodpack.worldcharacters", "1.0.4")]
     public sealed class Plugin : BaseUnityPlugin
     {
-        public const string Id = "valheimmodpack.inventoryadmin", Version = "1.0.0";
+        public const string Id = "valheimmodpack.inventoryadmin", Version = "1.0.1";
         private static Plugin active;
         private Harmony harmony;
         private ConfigEntry<KeyboardShortcut> shortcut;
@@ -124,11 +124,23 @@ namespace ValheimModPack.InventoryAdmin
         }
         private static string Account(ZNetPeer peer)
         {
-            if (peer == null || peer.m_socket == null || peer.m_socket.GetType().Name != "ZSteamSocket") throw new UnauthorizedAccessException("Authenticated Steam connection required.");
-            string value = "Steam_" + peer.m_socket.GetHostName(); PermissionPolicy.RequireSteamOwner(value); return value;
+            string value = WC.GetAdministrativeOwner(peer);
+            PermissionPolicy.RequireSteamOwner(value); return value;
+        }
+        private static bool ApprovedPeer(ZNetPeer peer)
+        {
+            if (peer == null || peer.m_rpc == null || !peer.m_rpc.IsConnected() || !peer.IsReady()
+                || peer.m_uid == 0 || peer.m_uid == ZNet.GetUID() || !WC.IsAdministrativePeerReady(peer.m_uid)) return false;
+            try { Account(peer); return true; }
+            catch (InvalidDataException) { return false; }
         }
         private bool Ready(ZNetPeer peer)
-        { return peer != null && peer.m_rpc != null && peer.m_rpc.IsConnected() && peer.IsReady() && peer.m_uid != 0 && WC.IsAdministrativePeerReady(peer.m_uid); }
+        {
+            if (!ApprovedPeer(peer)) return false;
+            foreach (ZNetPeer other in peers.Values)
+                if (!ReferenceEquals(other, peer) && other.m_uid == peer.m_uid && ApprovedPeer(other)) return false;
+            return true;
+        }
         private ZNetPeer Peer(long id)
         { return peers.Values.FirstOrDefault(p => p.m_uid == id && Ready(p)); }
         private PlayerInfo PeerInfo(long id)
@@ -163,7 +175,7 @@ namespace ValheimModPack.InventoryAdmin
             {
                 ZNetPeer peer;
                 if (!peers.TryGetValue(rpc, out peer) || !peer.IsReady() || peer.m_uid == 0) return;
-                if (IsHost) Account(peer);
+                if (IsHost) { if (!Ready(peer)) return; }
                 else if (!ReferenceEquals(peer, ZNet.instance.GetServerPeer())) return;
                 byte[] bytes = transport.Receive(rpc, package); if (bytes == null) return;
                 Dispatch(IsHost ? peer.m_uid : 0, bytes);
