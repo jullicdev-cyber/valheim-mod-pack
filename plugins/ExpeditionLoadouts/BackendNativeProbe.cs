@@ -84,6 +84,10 @@ namespace ValheimModPack.LoadoutSmoke
                 report += ValheimModPack.InterfaceInputFix.NativeChecks.Run() + "\n";
                 report += ValheimModPack.InterfaceInputFix.BindruneNativeChecks.Run() + "\n";
                 report += ValheimModPack.RenewableResourceTimers.NativeChecks.Run() + "\n";
+                var adminChecks = Assembly.LoadFrom(Path.Combine(Root, "InventoryAdminNativeChecks.dll")).GetType("ValheimModPack.InventoryAdmin.NativeChecks", true);
+                report += (string)adminChecks.GetMethod("Run", BindingFlags.Public | BindingFlags.Static).Invoke(null, null) + "\n";
+                var personalAudioChecks = Assembly.LoadFrom(Path.Combine(Root, "NordicPersonalAudioNativeChecks.dll")).GetType("ValheimModPack.NordicRadio.PersonalAudioNativeChecks", true);
+                report += (string)personalAudioChecks.GetMethod("Run", BindingFlags.Public | BindingFlags.Static).Invoke(null, null) + "\n";
                 string mapProbe = Path.Combine(Root, "PinHistoryNativeChecks.dll");
                 if (!File.Exists(mapProbe)) throw new FileNotFoundException("Map native probe missing", mapProbe);
                 var mapChecks = Assembly.LoadFrom(mapProbe).GetType("ValheimModPack.PinRemoval.NativeChecks", true);

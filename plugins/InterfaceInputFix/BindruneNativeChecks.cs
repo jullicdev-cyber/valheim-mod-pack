@@ -47,6 +47,8 @@ namespace ValheimModPack.InterfaceInputFix
                 "cfg:valheimmodpack.confirmpinremoval:Controls:ClearDeathPins",
                 "cfg:valheimmodpack.portalfinder:Controls:FindNearestToPlayer",
                 "cfg:valheimmodpack.portalfinder:Controls:SelectMapPoint",
+                "cfg:valheimmodpack.inventoryadmin:Controls:OpenInventoryAdmin",
+                "cfg:valheimmodpack.nordicradio:Controls:OpenPersonalAudio",
                 "cfg:valheimmodpack.eaqsquickstackbridge:Controls:SortShortcut" };
             bool restart = Environment.GetEnvironmentVariable("VMP_BIND_RESTART") == "1";
             foreach (string id in ids)

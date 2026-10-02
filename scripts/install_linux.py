@@ -8,6 +8,7 @@ import shutil
 import sys
 import tempfile
 import argparse
+import math
 from game_path import get_game_directory
 
 
@@ -138,6 +139,8 @@ def prepare_install(source, target, stage, names):
                 if personal.is_symlink() or not personal.is_file():
                     raise ValueError('Personal Quick Stack data must be a regular file: ' + personal.name)
                 shutil.copy2(personal, stage / 'BepInEx/config' / personal.name)
+        merge_radio_personal_audio(previous_config / 'valheimmodpack.nordicradio.cfg',
+                                   stage / 'BepInEx/config/valheimmodpack.nordicradio.cfg')
     # These are personal Bindrune state, not shared modpack settings.
     for relative in ('BepInEx/bindrune.keys', 'BepInEx/bindrune.spare', 'BepInEx/config/Bindrune/situations.txt', 'BepInEx/config/isimp.Bindrune.cfg'):
         personal = target / relative
@@ -156,6 +159,77 @@ def prepare_install(source, target, stage, names):
     wrapper = stage / 'valheim-modded.sh'
     wrapper.write_text('#!/bin/sh\ncd -- "$(dirname -- "$0")" || exit 1\nexec ./start_game_bepinex.sh "$@"\n', encoding='utf-8')
     wrapper.chmod(0o755)
+
+
+def merge_radio_personal_audio(previous, staged):
+    """Retain only valid local gain/mute; shared settings stay from the new pack."""
+    previous, staged = Path(previous), Path(staged)
+    if previous.is_symlink():
+        raise ValueError('Personal NordicRadio audio settings must be an unlinked regular file.')
+    if not previous.exists():
+        return
+    if not previous.is_file() or any(parent.is_symlink() for parent in previous.parents):
+        raise ValueError('Personal NordicRadio audio settings must be an unlinked regular file.')
+    if not staged.is_file() or previous.stat().st_size > 1024 * 1024:
+        return
+    try:
+        previous_lines = previous.read_text(encoding='utf-8-sig').splitlines()
+    except UnicodeError:
+        return  # An unreadable old preference must not break a pack installation.
+    values, seen, audio = {}, set(), False
+    for line in previous_lines:
+        text = line.strip()
+        section = re.fullmatch(r'\[([^\]]+)\]', text)
+        if section:
+            audio = section[1] == 'Audio'
+            continue
+        if not audio or text.startswith(('#', ';')) or '=' not in text:
+            continue
+        key, value = (part.strip() for part in text.split('=', 1))
+        if key not in ('PersonalVolume', 'PersonalMuted'):
+            continue
+        if key in seen:
+            values.pop(key, None)
+            continue
+        seen.add(key)
+        if key == 'PersonalMuted':
+            if value.lower() in ('true', 'false'):
+                values[key] = value.lower()
+        elif re.fullmatch(r'[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?', value):
+            try:
+                number = float(value)
+                if math.isfinite(number) and 0 <= number <= 1:
+                    values[key] = format(number, '.17g')
+            except ValueError:
+                pass
+    if not values:
+        return
+    output, written, audio, found_audio = [], set(), False, False
+    def insert_missing():
+        for key in ('PersonalVolume', 'PersonalMuted'):
+            if key in values and key not in written:
+                output.append(key + ' = ' + values[key])
+                written.add(key)
+    for line in staged.read_text(encoding='utf-8-sig').splitlines():
+        text = line.strip()
+        section = re.fullmatch(r'\[([^\]]+)\]', text)
+        if section:
+            next_audio = section[1] == 'Audio'
+            if audio and not next_audio:
+                insert_missing()
+            audio = next_audio
+            found_audio |= audio
+        key = text.split('=', 1)[0].strip() if '=' in text else ''
+        if audio and key in values and not text.startswith(('#', ';')):
+            output.append(key + ' = ' + values[key])
+            written.add(key)
+        else:
+            output.append(line)
+    if not found_audio:
+        output.extend(('', '[Audio]'))
+    if audio or not found_audio:
+        insert_missing()
+    staged.write_text('\n'.join(output) + '\n', encoding='utf-8')
 
 
 def ensure_game_closed():

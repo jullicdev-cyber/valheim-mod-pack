@@ -14,24 +14,44 @@ namespace ValheimModPack.NordicRadio
     public sealed class Plugin : BaseUnityPlugin
     {
         public const string Id = "valheimmodpack.nordicradio";
-        public const string Version = "1.3.3";
+        public const string Version = "1.3.4";
         public static Plugin Instance { get; private set; }
         public RadioService Service { get; private set; }
         public string DataRoot { get; private set; }
         private ConfigEntry<float> personalVolume, nearDistance, farDistance, amplification, backgroundMusicVolume;
+        private ConfigEntry<bool> personalMuted;
+        private ConfigEntry<KeyboardShortcut> personalAudioShortcut;
         private ConfigEntry<int> wood, bronze, leather, core, uploadRate, downloadWindow, maxQueuedKiB;
         private readonly Dictionary<IRadioTarget, RadioAudio> radios = new Dictionary<IRadioTarget, RadioAudio>();
         private RadioWindow window;
+        private PersonalAudioWindow personalAudioWindow;
+        private PersonalAudioControls personalAudioControls;
         private MusicDucking musicDucking;
         internal PortableController Portable { get; private set; }
-        internal bool RadioWindowVisible { get { return window != null && window.IsVisible; } }
+        internal bool RadioWindowVisible { get { return (window != null && window.IsVisible) || (personalAudioWindow != null && personalAudioWindow.IsVisible); } }
         private float nextWatch, nextSelection, nextError;
         private bool ready;
         public float PersonalVolume
         {
-            get { return SafeFloat(personalVolume.Value, 0.8f, 0, 1); }
-            set { personalVolume.Value = Single.IsNaN(value) ? 0 : Mathf.Clamp01(value); }
+            get { return PersonalMuted ? 0 : PersonalVolumeSetting; }
+            set
+            {
+                personalVolume.Value = SafeFloat(value, 0, 0, 1);
+                PersonalMuted = false;
+            }
         }
+        public float PersonalVolumeSetting { get { return SafeFloat(personalVolume.Value, 0.8f, 0, 1); } }
+        public bool PersonalMuted
+        {
+            get { return personalMuted != null && personalMuted.Value; }
+            set
+            {
+                if (personalMuted == null) return;
+                personalMuted.Value = value;
+                foreach (var audio in radios.Values) audio.ApplyPersonalMute();
+            }
+        }
+        public string PersonalAudioShortcutLabel { get { return personalAudioShortcut == null ? "" : PersonalAudioControls.Label(personalAudioShortcut.Value); } }
         public float NearDistance { get { return SafeFloat(nearDistance.Value, 2.5f, 0.5f, 20); } }
         public float FarDistance { get { return SafeFloat(farDistance.Value, 150, NearDistance + 1, RadioProtocol.MaxAudioDistance); } }
         public float Amplification { get { return SafeFloat(amplification.Value, 1, 1, 6); } }
@@ -52,6 +72,8 @@ namespace ValheimModPack.NordicRadio
             try
             {
                 personalVolume = Config.Bind("Audio", "PersonalVolume", 0.8f, new ConfigDescription("Local radio volume; does not change other players.", new AcceptableValueRange<float>(0, 1)));
+                personalMuted = Config.Bind("Audio", "PersonalMuted", false, "Mute all NordicRadio audio only on this PC. Preferred PersonalVolume is preserved; other players and shared playback are unchanged.");
+                personalAudioShortcut = Config.Bind("Controls", "OpenPersonalAudio", new KeyboardShortcut(KeyCode.F8, KeyCode.LeftControl), "Open local radio volume and mute settings from gameplay, without a radio item. Rebind with Bindrune; consumes the opening shortcut.");
                 nearDistance = Config.Bind("Audio", "NearDistance", 2.5f, new ConfigDescription("Full-volume distance in metres; fades progressively beyond this distance.", new AcceptableValueRange<float>(0.5f, 20)));
                 farDistance = Config.Bind("Audio", "FarDistance", 150f, new ConfigDescription("Maximum audible radius in metres; sound stops earlier if Valheim unloads the object. World loading distances are unchanged.", new AcceptableValueRange<float>(5, RadioProtocol.MaxAudioDistance)));
                 amplification = Config.Bind("Audio", "Amplification", 1f, new ConfigDescription("Local signal gain before spatial attenuation and game effects volume. 1 leaves the signal unchanged; higher values amplify and gently limit peaks.", new AcceptableValueRange<float>(1, 6)));
@@ -70,6 +92,8 @@ namespace ValheimModPack.NordicRadio
                     new RecoveringRadioTransport(new SteamSocketRadioTransport(message => Logger.LogInfo(message)),
                         new RoutedRadioTransport(), message => Logger.LogWarning(message)));
                 window = new RadioWindow(this);
+                personalAudioWindow = new PersonalAudioWindow(this);
+                personalAudioControls = new PersonalAudioControls(this, personalAudioShortcut, personalAudioWindow);
                 musicDucking = new MusicDucking();
                 Portable = new PortableController(this);
                 PrefabManager.OnVanillaPrefabsAvailable += Register;
@@ -98,7 +122,7 @@ namespace ValheimModPack.NordicRadio
         public void OpenRadio(IRadioTarget piece)
         {
             if (!ready || piece == null || !piece.IsReady || Player.m_localPlayer == null) return;
-            try { Service.Watch(piece.Id); window.Show(piece); }
+            try { personalAudioWindow.Hide(); Service.Watch(piece.Id); window.Show(piece); }
             catch (Exception error) { window.Hide(); Report(error); }
         }
         private void Update()
@@ -107,6 +131,7 @@ namespace ValheimModPack.NordicRadio
             try
             {
                 window.Tick();
+                personalAudioWindow.Tick(); personalAudioControls.Tick();
                 Service.UploadKiBPerSecond = uploadRate.Value;
                 Service.DownloadWindow = downloadWindow.Value;
                 Service.MaxQueuedKiB = maxQueuedKiB.Value;
@@ -165,7 +190,7 @@ namespace ValheimModPack.NordicRadio
                     musicDucking.Update(strongestHorn, SafeFloat(backgroundMusicVolume.Value, 0.2f, 0, 1), Time.unscaledDeltaTime);
                 }
             }
-            catch (Exception error) { window.Hide(); if (musicDucking != null) musicDucking.Reset(); Report(error); }
+            catch (Exception error) { window.Hide(); if (personalAudioWindow != null) personalAudioWindow.Hide(); if (musicDucking != null) musicDucking.Reset(); Report(error); }
         }
         internal void Report(Exception error)
         {
@@ -174,6 +199,8 @@ namespace ValheimModPack.NordicRadio
         private void OnDisable()
         {
             if (window != null) window.Hide();
+            if (personalAudioControls != null) personalAudioControls.Reset();
+            if (personalAudioWindow != null) personalAudioWindow.Hide();
             if (Portable != null) Portable.Reset();
             if (musicDucking != null) musicDucking.Reset();
             foreach (var pair in radios)
@@ -187,6 +214,8 @@ namespace ValheimModPack.NordicRadio
             ready = false;
             PrefabManager.OnVanillaPrefabsAvailable -= Register;
             if (window != null) window.Hide();
+            if (personalAudioControls != null) { personalAudioControls.Dispose(); personalAudioControls = null; }
+            if (personalAudioWindow != null) personalAudioWindow.Hide();
             if (Portable != null) { Portable.Dispose(); Portable = null; }
             if (musicDucking != null) { musicDucking.Dispose(); musicDucking = null; }
             foreach (var audio in radios.Values) audio.Dispose();

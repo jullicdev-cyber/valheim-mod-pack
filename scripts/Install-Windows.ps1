@@ -57,6 +57,72 @@ function Remove-InstallTransaction([string]$Directory, [string]$GameRoot) {
     }
 }
 
+function Merge-RadioPersonalAudio([string]$Previous, [string]$Staged) {
+    # Only two local preferences survive shared-config replacement. Never copy
+    # old distance, amplification, recipe or networking settings into a new pack.
+    $previousEntry = Get-Item -LiteralPath $Previous -Force -ErrorAction SilentlyContinue
+    if ($null -eq $previousEntry) { return }
+    if ($previousEntry.PSIsContainer -or ($previousEntry.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw 'Personal NordicRadio audio settings must be an unlinked regular file.'
+    }
+    $ancestor = Split-Path $previousEntry.FullName -Parent
+    while ($ancestor) {
+        $ancestorEntry = Get-Item -LiteralPath $ancestor -Force -ErrorAction Stop
+        if ($ancestorEntry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Personal NordicRadio audio settings must be an unlinked regular file.' }
+        $ancestor = Split-Path $ancestor -Parent
+    }
+    if (-not (Test-Path -LiteralPath $Staged -PathType Leaf) -or $previousEntry.Length -gt 1MB) { return }
+    $values = @{}
+    $seen = @{}
+    $audio = $false
+    foreach ($line in [IO.File]::ReadAllLines($Previous)) {
+        $trimmed = $line.Trim()
+        if ($trimmed -match '^\[([^\]]+)\]$') { $audio = $Matches[1] -ceq 'Audio'; continue }
+        if (-not $audio -or $trimmed.StartsWith('#') -or $trimmed.StartsWith(';') -or $trimmed -notmatch '^([^=]+)=(.*)$') { continue }
+        $key = $Matches[1].Trim(); $value = $Matches[2].Trim()
+        if ($key -cne 'PersonalVolume' -and $key -cne 'PersonalMuted') { continue }
+        if ($seen.ContainsKey($key)) { $values.Remove($key); continue }
+        $seen[$key] = $true
+        if ($key -ceq 'PersonalMuted') {
+            if ($value -match '^(true|false)$') { $values[$key] = $value.ToLowerInvariant() }
+        } else {
+            [double]$number = 0
+            if ($value -match '^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$' -and
+                [double]::TryParse($value, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$number) -and
+                -not [double]::IsNaN($number) -and -not [double]::IsInfinity($number) -and $number -ge 0 -and $number -le 1) {
+                $values[$key] = $number.ToString('R', [Globalization.CultureInfo]::InvariantCulture)
+            }
+        }
+    }
+    if ($values.Count -eq 0) { return }
+    $lines = New-Object 'System.Collections.Generic.List[string]'
+    $audio = $false; $foundAudio = $false; $written = @{}
+    foreach ($line in [IO.File]::ReadAllLines($Staged)) {
+        $trimmed = $line.Trim()
+        if ($trimmed -match '^\[([^\]]+)\]$') {
+            $nextAudio = $Matches[1] -ceq 'Audio'
+            if ($audio -and -not $nextAudio) {
+                foreach ($key in @('PersonalVolume','PersonalMuted')) {
+                    if ($values.ContainsKey($key) -and -not $written.ContainsKey($key)) { $lines.Add($key + ' = ' + $values[$key]); $written[$key] = $true }
+                }
+            }
+            $audio = $nextAudio; if ($audio) { $foundAudio = $true }
+        }
+        if ($audio -and $trimmed -match '^(PersonalVolume|PersonalMuted)\s*=') {
+            $key = $Matches[1]
+            if ($values.ContainsKey($key)) { $lines.Add($key + ' = ' + $values[$key]); $written[$key] = $true; continue }
+        }
+        $lines.Add($line)
+    }
+    if (-not $foundAudio) { $lines.Add(''); $lines.Add('[Audio]') }
+    if ($audio -or -not $foundAudio) {
+        foreach ($key in @('PersonalVolume','PersonalMuted')) {
+            if ($values.ContainsKey($key) -and -not $written.ContainsKey($key)) { $lines.Add($key + ' = ' + $values[$key]) }
+        }
+    }
+    [IO.File]::WriteAllLines($Staged, $lines, (New-Object System.Text.UTF8Encoding($false)))
+}
+
 $transaction = $null
 $retainRecovery = $false
 
@@ -94,6 +160,7 @@ try {
                 Copy-PersonalEntry $personal $stagedConfig
             }
         }
+        Merge-RadioPersonalAudio (Join-Path $previousConfig 'valheimmodpack.nordicradio.cfg') (Join-Path $stagedConfig 'valheimmodpack.nordicradio.cfg')
     }
     # Bindrune keeps personal key overrides outside config; replacing BepInEx must retain them.
     foreach ($relative in @('BepInEx/bindrune.keys', 'BepInEx/bindrune.spare', 'BepInEx/config/Bindrune/situations.txt', 'BepInEx/config/isimp.Bindrune.cfg')) {

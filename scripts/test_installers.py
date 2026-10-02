@@ -6,12 +6,108 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import sys
+import configparser
+import os
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'scripts'))
 spec = importlib.util.spec_from_file_location('installer', ROOT / 'scripts/install_linux.py')
 installer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(installer)
+
+RADIO_DEFAULTS = '''## Current pack audio settings
+[Audio]
+## The preferred volume is local to this client.
+PersonalVolume = 0.8
+PersonalMuted = false
+NearDistance = 15
+Amplification = 1
+BackgroundMusicVolume = 0.2
+[Network]
+UploadKiBPerSecond = 1024
+[Controls]
+OpenPersonalAudio = F8 + LeftControl
+'''
+
+
+def radio_values(path):
+    config = configparser.RawConfigParser()
+    config.read_string(path.read_text(encoding='utf-8-sig'))
+    return config
+
+
+class PersonalAudioMergeTests(unittest.TestCase):
+    """Small stage-only cases exercise the same merge code as both installers."""
+    def run_cases(self, windows=False):
+        with tempfile.TemporaryDirectory(prefix='vh-audio-merge-') as directory:
+            fixture = Path(directory)
+            cases = [
+                ('preserve', '[Audio]\nPersonalVolume = 0.37\nPersonalMuted = TRUE\nNearDistance = 999\nAmplification = 6\n[Network]\nUploadKiBPerSecond = 64\n', .37, True),
+                ('zero', '[Audio]\nPersonalVolume = 0\nPersonalMuted = false\n', 0, False),
+                ('unity', '[Audio]\nPersonalVolume = 1\nPersonalMuted = true\n', 1, True),
+                ('exponent', '[Audio]\nPersonalVolume = 2.5e-1\nPersonalMuted = false\n', .25, False),
+                ('old-version', '[Audio]\nPersonalVolume = 0.42\n', .42, False),
+                ('wrong-section', '[Network]\nPersonalVolume = 0.31\nPersonalMuted = true\n', .8, False),
+                ('duplicate', '[Audio]\nPersonalVolume = 0.2\nPersonalVolume = 0.4\nPersonalMuted = true\nPersonalMuted = false\n', .8, False),
+                ('invalid-mute', '[Audio]\nPersonalVolume = .5\nPersonalMuted = yes\n', .5, False),
+                ('commented', '[Audio]\n# PersonalVolume = .25\n; PersonalMuted = true\n', .8, False),
+            ]
+            for value in ('nan', 'inf', '-inf', '1.01', '-0.1', '0,5', '0_0.5', 'abc', '1e999', '٠.٥'):
+                cases.append(('invalid-' + str(len(cases)), '[Audio]\nPersonalVolume = ' + value + '\nPersonalMuted = true\n', .8, True))
+            folders = []
+            for name, previous, _, _ in cases:
+                folder = fixture / name
+                folder.mkdir()
+                (folder / 'old.cfg').write_text(previous, encoding='utf-8-sig')
+                (folder / 'new.cfg').write_text(RADIO_DEFAULTS, encoding='utf-8')
+                folders.append(folder)
+            # A new config section/key is inserted inside Audio rather than Network.
+            extra = fixture / 'missing-new-key'
+            extra.mkdir()
+            (extra / 'old.cfg').write_text('[Audio]\nPersonalVolume=.65\nPersonalMuted=true\n', encoding='utf-8')
+            (extra / 'new.cfg').write_text(RADIO_DEFAULTS.replace('PersonalMuted = false\n', ''), encoding='utf-8')
+            folders.append(extra)
+            if windows:
+                script = '''
+$ErrorActionPreference = 'Stop'
+$parseErrors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile($env:RADIO_INSTALLER, [ref]$null, [ref]$parseErrors)
+if ($parseErrors.Count) { throw 'Installer syntax errors' }
+$definition = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Merge-RadioPersonalAudio' }, $true)
+if (-not $definition) { throw 'Personal audio merge function missing' }
+. ([scriptblock]::Create($definition.Extent.Text))
+foreach ($case in Get-ChildItem -LiteralPath $env:RADIO_FIXTURE -Directory) {
+    Merge-RadioPersonalAudio (Join-Path $case.FullName 'old.cfg') (Join-Path $case.FullName 'new.cfg')
+}
+'''
+                env = dict(os.environ, RADIO_INSTALLER=str(ROOT / 'scripts/Install-Windows.ps1'), RADIO_FIXTURE=str(fixture))
+                result = subprocess.run(['powershell.exe', '-NoProfile', '-Command', script], env=env, capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            else:
+                for folder in folders:
+                    installer.merge_radio_personal_audio(folder / 'old.cfg', folder / 'new.cfg')
+            for name, _, volume, muted in cases:
+                with self.subTest(name=name, windows=windows):
+                    path = fixture / name / 'new.cfg'
+                    config = radio_values(path)
+                    self.assertAlmostEqual(config.getfloat('Audio', 'PersonalVolume'), volume)
+                    self.assertEqual(config.getboolean('Audio', 'PersonalMuted'), muted)
+                    self.assertEqual(config.getfloat('Audio', 'NearDistance'), 15)
+                    self.assertEqual(config.getfloat('Audio', 'Amplification'), 1)
+                    self.assertEqual(config.getint('Network', 'UploadKiBPerSecond'), 1024)
+                    self.assertEqual(config.get('Controls', 'OpenPersonalAudio'), 'F8 + LeftControl')
+                    self.assertIn('## The preferred volume is local to this client.', path.read_text())
+            config = radio_values(extra / 'new.cfg')
+            self.assertAlmostEqual(config.getfloat('Audio', 'PersonalVolume'), .65)
+            self.assertTrue(config.getboolean('Audio', 'PersonalMuted'))
+            self.assertFalse(config.has_option('Network', 'PersonalMuted'))
+
+    def test_linux_merge_personal_audio_and_validation(self):
+        self.run_cases()
+
+    @unittest.skipUnless(sys.platform == 'win32', 'Windows PowerShell test')
+    def test_windows_merge_personal_audio_and_validation(self):
+        self.run_cases(windows=True)
 
 
 class InstallTests(unittest.TestCase):
@@ -85,6 +181,58 @@ class InstallTests(unittest.TestCase):
         self.assertFalse((self.target / 'ValheimModpack-backups').exists())
         self.assertEqual(list(self.target.glob('.valheim-modpack-install-*')), [])
         self.assertEqual(list(self.target.glob('.valheim-modpack-txn-*')), [])
+
+    def set_radio_preferences(self):
+        (self.target / 'BepInEx/config/valheimmodpack.nordicradio.cfg').write_text(
+            '[Audio]\nPersonalVolume = .37\nPersonalMuted = true\nNearDistance = 999\nAmplification = 6\n[Network]\nUploadKiBPerSecond = 64\n', encoding='utf-8')
+
+    def assert_radio_preferences(self):
+        config = radio_values(self.target / 'BepInEx/config/valheimmodpack.nordicradio.cfg')
+        source = radio_values(ROOT / 'Game/BepInEx/config/valheimmodpack.nordicradio.cfg')
+        self.assertAlmostEqual(config.getfloat('Audio', 'PersonalVolume'), .37)
+        self.assertTrue(config.getboolean('Audio', 'PersonalMuted'))
+        for section, key in [('Audio', 'NearDistance'), ('Audio', 'Amplification'), ('Network', 'UploadKiBPerSecond')]:
+            self.assertEqual(config.get(section, key), source.get(section, key))
+
+    def test_linux_personal_audio_survives_reinstall(self):
+        self.set_radio_preferences()
+        for _ in range(2):
+            installer.install(ROOT, self.target)
+            self.assert_radio_preferences()
+        self.assert_no_automatic_backups()
+
+    @unittest.skipUnless(sys.platform == 'win32', 'Windows PowerShell test')
+    def test_windows_personal_audio_survives_reinstall(self):
+        self.set_radio_preferences()
+        command = ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+                   str(ROOT / 'scripts/Install-Windows.ps1'), '-SkipMusic', '-SettingsDirectory', str(self.settings), '-GameDirectory', str(self.target)]
+        for _ in range(2):
+            result = subprocess.run(command, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assert_radio_preferences()
+        self.assert_no_automatic_backups()
+
+    def test_linux_linked_radio_config_rejected_without_changes(self):
+        external = self.target.parent / 'external-radio.cfg'
+        external.write_text('[Audio]\nPersonalVolume=.2\n', encoding='utf-8')
+        self.make_symlink(self.target / 'BepInEx/config/valheimmodpack.nordicradio.cfg', external)
+        with self.assertRaisesRegex(ValueError, 'unlinked regular file'):
+            installer.install(ROOT, self.target)
+        self.assertEqual((self.target / 'BepInEx/old-plugin.txt').read_text(), 'old mod')
+        self.assertEqual(external.read_text(), '[Audio]\nPersonalVolume=.2\n')
+        self.assert_no_automatic_backups()
+
+    @unittest.skipUnless(sys.platform == 'win32', 'Windows PowerShell test')
+    def test_windows_linked_radio_config_rejected_without_changes(self):
+        external = self.target.parent / 'external-radio.cfg'
+        external.write_text('[Audio]\nPersonalVolume=.2\n', encoding='utf-8')
+        self.make_symlink(self.target / 'BepInEx/config/valheimmodpack.nordicradio.cfg', external)
+        result = subprocess.run(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+                                 str(ROOT / 'scripts/Install-Windows.ps1'), '-SkipMusic', '-SettingsDirectory', str(self.settings), '-GameDirectory', str(self.target)], capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual((self.target / 'BepInEx/old-plugin.txt').read_text(), 'old mod')
+        self.assertEqual(external.read_text(), '[Audio]\nPersonalVolume=.2\n')
+        self.assert_no_automatic_backups()
 
     def test_linux_rollback(self):
         rename = Path.rename

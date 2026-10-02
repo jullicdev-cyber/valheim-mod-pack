@@ -27,6 +27,10 @@ namespace ValheimModPack.NordicRadio
                 ? Mathf.Clamp01(source.volume * plugin.Amplification) : 0; }
         }
         internal RadioAudio(Plugin plugin, IRadioTarget piece) { this.plugin = plugin; this.piece = piece; }
+        internal void ApplyPersonalMute()
+        {
+            if (source != null) source.mute = plugin.PersonalMuted;
+        }
         internal void Tick()
         {
             if (disposed || piece == null || !piece.IsReady) return;
@@ -119,6 +123,7 @@ namespace ValheimModPack.NordicRadio
             source.playOnAwake = false; source.loop = false;
             source.spatialBlend = 1; source.dopplerLevel = 0; source.spread = 0;
             source.priority = 128; source.volume = 0;
+            source.mute = plugin.PersonalMuted;
             amplifier = emitter.AddComponent<RadioGain>();
             amplifier.Gain = plugin.Amplification;
             playback = new RadioPlayback(source, amplifier);

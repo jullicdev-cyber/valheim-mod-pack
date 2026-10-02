@@ -34,6 +34,7 @@ namespace ValheimModPack.NordicRadio
         private Button previousPage;
         private Button nextPage;
         private Button refreshButton;
+        private Button personalMuteButton;
         private bool russian;
         private bool ownsInputBlock;
         private int generation;
@@ -112,7 +113,7 @@ namespace ValheimModPack.NordicRadio
                 Label(T("Для всех", "Everyone"), -155, 43, 118, 28, 16, false);
                 ButtonAt("-", 60, 43, 66, 32, () => ChangePersonalVolume(-0.1f));
                 ButtonAt("+", 250, 43, 66, 32, () => ChangePersonalVolume(0.1f));
-                Label(T("Только мне", "Only me"), 155, 43, 118, 28, 16, false);
+                personalMuteButton = ButtonAt("", 155, 43, 118, 28, () => { plugin.PersonalMuted = !plugin.PersonalMuted; });
                 Label(T("Композиции", "Tracks"), -120, -4, 324, 32, 22, true);
                 refreshButton = ButtonAt(T("Обновить", "Rescan"), 206, -4, 150, 32,
                     () => { if (ZNet.instance != null && ZNet.instance.IsServer()) plugin.Service.RefreshLibrary(); });
@@ -218,7 +219,7 @@ namespace ValheimModPack.NordicRadio
 
         private void ChangePersonalVolume(float change)
         {
-            plugin.PersonalVolume = Mathf.Clamp01(plugin.PersonalVolume + change);
+            plugin.PersonalVolume = Mathf.Clamp01(plugin.PersonalVolumeSetting + change);
         }
 
         private void Refresh()
@@ -260,7 +261,8 @@ namespace ValheimModPack.NordicRadio
             SetButtonText(repeatButton, T("Повтор: ", "Repeat: ") + OnOff(state != null && state.Repeat));
             SetButtonText(shuffleButton, T("Случайно: ", "Shuffle: ") + OnOff(state != null && state.Shuffle));
             SetText(sharedVolume, T("Громкость радио: ", "Radio volume: ") + Percent(state == null ? 0.7f : state.Volume));
-            SetText(personalVolume, T("Личная громкость: ", "Personal volume: ") + Percent(plugin.PersonalVolume));
+            SetText(personalVolume, T("Личная громкость: ", "Personal volume: ") + Percent(plugin.PersonalVolumeSetting));
+            SetButtonText(personalMuteButton, plugin.PersonalMuted ? T("Вкл. мне", "Unmute") : T("Выкл. мне", "Mute"));
             refreshButton.interactable = ZNet.instance.IsServer();
             playButton.interactable = count > 0;
             for (int slot = 0; slot < PageSize; ++slot)

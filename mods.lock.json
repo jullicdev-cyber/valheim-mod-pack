@@ -1,5 +1,5 @@
 {
-  "packVersion": "1.16.1",
+  "packVersion": "1.17.0",
   "created": "2026-09-25",
   "targetGameVersion": "1.0.16",
   "packages": [
@@ -287,10 +287,10 @@
     },
     {
       "id": "ValheimModPack-NordicRadio",
-      "version": "1.3.3",
+      "version": "1.3.4",
       "source": "local-plugins/NordicRadio.dll",
       "destination": "BepInEx/plugins/ValheimModPack-NordicRadio/NordicRadio.dll",
-      "sha256": "b36180686795b2ed206eecc7b36108673f616ed5fb31bbda0013a5661735c76f",
+      "sha256": "afd9815ac180d74e91414953731c0729bc66bf083d6bdc1768910454d768272c",
       "dependencies": [
         "denikson-BepInExPack_Valheim-5.4.2351",
         "ValheimModding-Jotunn-2.30.2"
@@ -342,10 +342,10 @@
     },
     {
       "id": "ValheimModPack-WorldCharacters",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "source": "local-plugins/WorldCharacters.dll",
       "destination": "BepInEx/plugins/ValheimModPack-WorldCharacters/WorldCharacters.dll",
-      "sha256": "0a0f81d3365a061848d68504b5bc0ba6672acc064fe96bb46e460f676aa2953d",
+      "sha256": "7137b44139ab487858ea06a6726adc6a48defb96d7e2a6269556776656477f38",
       "dependencies": [
         "denikson-BepInExPack_Valheim-5.4.2351"
       ]
@@ -382,6 +382,18 @@
       "sha256": "8150996d84c51b891fff5619f6fd5b46b8a710222bb6b4578d53b7cec02c85e7",
       "dependencies": [
         "denikson-BepInExPack_Valheim-5.4.2351"
+      ]
+    },
+    {
+      "id": "ValheimModPack-InventoryAdmin",
+      "version": "1.0.0",
+      "source": "local-plugins/InventoryAdmin.dll",
+      "destination": "BepInEx/plugins/ValheimModPack-InventoryAdmin/InventoryAdmin.dll",
+      "sha256": "366492f946fbe16d439b7f76eb2e8ac5524cd32c476b803cd682d882d126d725",
+      "dependencies": [
+        "denikson-BepInExPack_Valheim-5.4.2351",
+        "ValheimModding-Jotunn-2.30.2",
+        "ValheimModPack-WorldCharacters-1.0.3"
       ]
     }
   ]

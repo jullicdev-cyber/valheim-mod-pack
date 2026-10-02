@@ -9,6 +9,8 @@ namespace ValheimModPack.NordicRadio
     {
         public RadioService Service;
         public float PersonalVolume;
+        public float PersonalVolumeSetting;
+        public bool PersonalMuted;
     }
     public interface IRadioTarget
     {

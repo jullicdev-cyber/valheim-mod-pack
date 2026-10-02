@@ -13,3 +13,5 @@ cfg:valheimmodpack.confirmpinremoval:Controls:ClearDeathPins	Map
 cfg:valheimmodpack.portalfinder:Controls:FindNearestToPlayer	Map
 cfg:valheimmodpack.portalfinder:Controls:SelectMapPoint	Map
 cfg:valheimmodpack.eaqsquickstackbridge:Controls:SortShortcut	Inventory,Container,Crafting
+cfg:valheimmodpack.inventoryadmin:Controls:OpenInventoryAdmin	World,Vehicle
+cfg:valheimmodpack.nordicradio:Controls:OpenPersonalAudio	World,Vehicle

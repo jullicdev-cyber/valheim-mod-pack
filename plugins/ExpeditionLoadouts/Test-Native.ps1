@@ -54,6 +54,8 @@ LogLevels = All
 $mapProbe = Join-Path $smoke 'PinHistoryNativeChecks.dll'
 & (Join-Path $root 'plugins/ConfirmMapPinRemoval/Build-NativeChecks.ps1') -GameDirectory $GameDirectory -PluginAssembly (Join-Path $root 'local-plugins/ConfirmMapPinRemoval.dll') -OutputDirectory $smoke
 & (Join-Path $root 'plugins/EAQSQuickStackBridge/Build-NativeChecks.ps1') -GameDirectory $GameDirectory -PluginAssembly (Join-Path $root 'local-plugins/EAQSQuickStackBridge.dll') -OutputDirectory $smoke
+& (Join-Path $root 'plugins/InventoryAdmin/Build-NativeChecks.ps1') -GameDirectory $GameDirectory -PluginAssembly (Join-Path $root 'local-plugins/InventoryAdmin.dll') -OutputDirectory $smoke
+& (Join-Path $root 'plugins/NordicRadio/Build-PersonalAudioChecks.ps1') -GameDirectory $GameDirectory -PluginAssembly (Join-Path $root 'local-plugins/NordicRadio.dll') -OutputDirectory $smoke
 $managed = Join-Path $GameDirectory 'valheim_Data/Managed'
 $refs = @((Join-Path $root 'Game/BepInEx/core/BepInEx.dll'),(Join-Path $root 'Game/BepInEx/plugins/Jotunn.dll'),(Join-Path $root 'local-plugins/ExpeditionLoadouts.dll'),(Join-Path $root 'local-plugins/ChestSearch.dll'))
 $refs += @('Game/BepInEx/core/0Harmony.dll','local-plugins/InterfaceInputFix.dll','local-plugins/RenewableResourceTimers.dll','Game/BepInEx/plugins/isimp-Bindrune/Bindrune.dll') | ForEach-Object { Join-Path $root $_ }
@@ -103,7 +105,7 @@ try {
     if (-not $result.StartsWith('PASS') -or $result.Contains('FAIL')) { throw 'Native verification failed.' }
     Move-Item -LiteralPath $resultFile -Destination (Join-Path $smoke ('result-phase-' + $phase + '.txt'))
     }
-    foreach ($name in @('ExpeditionLoadouts','ChestSearch','ConfirmMapPinRemoval','EAQSQuickStackBridge','InterfaceInputFix','RenewableResourceTimers','NordicRadio','WorldCharacters','FermenterCompatibility')) {
+    foreach ($name in @('ExpeditionLoadouts','ChestSearch','ConfirmMapPinRemoval','EAQSQuickStackBridge','InterfaceInputFix','RenewableResourceTimers','NordicRadio','WorldCharacters','FermenterCompatibility','InventoryAdmin')) {
         Write-Output ($name + ' SHA256: ' + (Get-FileHash -LiteralPath (Join-Path $smoke "BepInEx/plugins/$name.dll")).Hash)
     }
 } finally {

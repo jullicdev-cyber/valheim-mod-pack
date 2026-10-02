@@ -23,6 +23,8 @@ function Run-Suite([string]$Name,[string]$Script,[string[]]$Arguments=@()) {
 }
 Run-Suite 'pack-integrity' 'scripts/Verify.ps1'
 Run-Suite 'plugin-dependencies' 'scripts/Audit-Plugins.ps1'
+Run-Suite 'inventory-admin-policy' 'plugins/InventoryAdmin/Test-Policy.ps1'
+Run-Suite 'inventory-admin-service' 'plugins/InventoryAdmin/Test-Service.ps1'
 foreach($entry in @('WorldCharacters','ChestSearch','InterfaceInputFix','RenewableResourceTimers','ConfirmMapPinRemoval','NordicRadio','PortalFinder','PlayerSectorSync')) {
     Run-Suite $entry ('plugins/'+$entry+'/Test.ps1') @('-GameDirectory',$GameDirectory)
 }
