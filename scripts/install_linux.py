@@ -167,6 +167,8 @@ def prepare_install(source, target, stage, names):
                 shutil.copy2(personal, stage / 'BepInEx/config' / personal.name)
         merge_radio_personal_audio(previous_config / 'valheimmodpack.nordicradio.cfg',
                                    stage / 'BepInEx/config/valheimmodpack.nordicradio.cfg')
+        preserve_portal_configuration(previous_config / 'yay.spikehimself.xportal.cfg',
+                                      stage / 'BepInEx/config/yay.spikehimself.xportal.cfg')
     # These are personal Bindrune state, not shared modpack settings.
     for relative in ('BepInEx/bindrune.keys', 'BepInEx/bindrune.spare', 'BepInEx/config/Bindrune/situations.txt', 'BepInEx/config/isimp.Bindrune.cfg'):
         personal = target / relative
@@ -185,6 +187,19 @@ def prepare_install(source, target, stage, names):
     wrapper = stage / 'valheim-modded.sh'
     wrapper.write_text('#!/bin/sh\ncd -- "$(dirname -- "$0")" || exit 1\nexec ./start_game_bepinex.sh "$@"\n', encoding='utf-8')
     wrapper.chmod(0o755)
+
+
+def preserve_portal_configuration(previous, staged):
+    """Keep the same-GUID XPortal/AnyPortal+ config without decoding or rewriting."""
+    previous, staged = Path(previous), Path(staged)
+    if previous.is_symlink():
+        raise ValueError('Portal configuration must be an unlinked regular file.')
+    if not previous.exists():
+        return
+    if not previous.is_file() or any(parent.is_symlink() for parent in previous.parents):
+        raise ValueError('Portal configuration must be an unlinked regular file.')
+    staged.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(previous, staged)
 
 
 def merge_radio_personal_audio(previous, staged):

@@ -17,14 +17,44 @@ namespace ValheimModPack.AnyPortalPlus
     {
         private static int checks;
         private static Sprite fixtureIcon;
+        private static object diagnosticPanel;
         private static readonly BindingFlags Flags = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
-        private static void Check(bool value, string message) { checks++; if (!value) throw new InvalidOperationException("AnyPortal+ native UI: " + message); }
+        private static void Check(bool value, string message)
+        {
+            checks++;
+            if (!value) throw new InvalidOperationException("AnyPortal+ native UI: " + message + "; " + ViewState());
+        }
+        private static string ViewState()
+        {
+            if (diagnosticPanel == null) return "panel not constructed";
+            try
+            {
+                var search = Get(diagnosticPanel, "searchInputField") as InputField;
+                var group = Get(diagnosticPanel, "groupByBiomeToggle") as Toggle;
+                var sort = Get(diagnosticPanel, "sortDropdown") as Dropdown;
+                var rows = Get(diagnosticPanel, "rows") as Button[];
+                var detail = new System.Text.StringBuilder("search='").Append(search == null ? "<null>" : search.text)
+                    .Append("' grouped=").Append(group == null ? "<null>" : group.isOn.ToString())
+                    .Append(" rebuilding=").Append(Get(diagnosticPanel, "rebuilding"))
+                    .Append(" page=").Append(Get(diagnosticPanel, "page"))
+                    .Append(" sort=").Append(sort == null ? -1 : sort.value)
+                    .Append(" entries=").Append(((IList)Get(diagnosticPanel, "entries")).Count)
+                    .Append(" displayRows=").Append(((IList)Get(diagnosticPanel, "displayRows")).Count);
+                if (rows != null) for (int i = 0; i < Math.Min(3, rows.Length); i++) if (rows[i] != null)
+                    detail.Append(" row").Append(i).Append("[active=").Append(rows[i].gameObject.activeSelf)
+                        .Append(" interactable=").Append(rows[i].interactable)
+                        .Append(" text='").Append(rows[i].GetComponentInChildren<Text>().text).Append("']");
+                return detail.ToString();
+            }
+            catch (Exception error) { return "state diagnostic unavailable: " + error.Message; }
+        }
         private static object Get(object value, string field) { return value.GetType().GetField(field, Flags).GetValue(value); }
         private static void Set(object value, string field, object result) { value.GetType().GetField(field, Flags).SetValue(value, result); }
         private static void Call(object value, string method, params object[] arguments) { value.GetType().GetMethod(method, Flags).Invoke(value, arguments); }
         private static bool FixtureSprite(int icon, ref Sprite __result) { __result = icon < 0 ? null : fixtureIcon; return false; }
         public static string Run()
         {
+            diagnosticPanel = null;
             string isolated = System.Environment.GetEnvironmentVariable("VMP_ANYPORTAL_UI_PROBE_ROOT")
                 ?? System.Environment.GetEnvironmentVariable("VMP_QOL_SMOKE_ROOT");
             Check(!String.IsNullOrEmpty(isolated) && Path.GetFullPath(Paths.BepInExRootPath).StartsWith(Path.GetFullPath(isolated) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase),
@@ -42,12 +72,22 @@ namespace ValheimModPack.AnyPortalPlus
             var harmony = new Harmony("valheimmodpack.anyportalplus.uiprobe");
             var texture = new Texture2D(8, 8); fixtureIcon = Sprite.Create(texture, new Rect(0, 0, 8, 8), new Vector2(.5f, .5f));
             object panel = Activator.CreateInstance(panelType, true);
+            diagnosticPanel = panel;
             try
             {
                 harmony.Patch(AccessTools.Method(markersType, "GetIconSprite"), prefix: new HarmonyMethod(typeof(PortalUiNativeChecks), "FixtureSprite"));
                 Call(panel, "InitialiseUI");
                 var main = (GameObject)Get(panel, "mainPanel"); Check(main != null && !main.activeSelf, "native wood panel constructs without opening gameplay input");
                 RectTransform rect = main.GetComponent<RectTransform>(); Check(rect.rect.width >= 979 && rect.rect.height >= 859, "requested native panel dimensions");
+                // Jotunn styles Unity's DefaultControls toggle, which starts checked.
+                // Establish the requested view explicitly before testing row count.
+                var grouping = (Toggle)Get(panel, "groupByBiomeToggle"); grouping.isOn = false;
+                ((Dropdown)Get(panel, "sortDropdown")).value = 0;
+                Check(!grouping.isOn, "native fixture explicitly starts with an ungrouped portal view");
+                // Activate only the fixture canvas. There is no gameplay session
+                // or portal interaction, and no shared input request is acquired.
+                main.SetActive(true);
+                Check(main.activeInHierarchy, "isolated native portal canvas is visible while events are tested");
                 var icons = (Dropdown)Get(panel, "iconDropdown");
                 Check(icons.options.Count == 6 && icons.options[0].image == null, "None plus five map-icon options");
                 Check(icons.itemImage != null && icons.captionImage != null, "dropdown has actual Unity option and caption images");
@@ -74,7 +114,11 @@ namespace ValheimModPack.AnyPortalPlus
                 var rowIcons = (Image[])Get(panel, "rowIcons"); Check(rowIcons[0].gameObject.activeSelf && rowIcons[0].sprite == fixtureIcon, "portal row displays its separate image");
                 Check((ZDOID)Get(panel, "selectedTargetId") == new ZDOID(1L, 2), "native search event preserves selected identity");
                 search.text = "Nothing matches"; Check(((Text)Get(panel, "emptyLabel")).gameObject.activeSelf, "native empty-results caption is visible");
-                search.text = ""; ((Toggle)Get(panel, "groupByBiomeToggle")).isOn = true;
+                search.text = ""; grouping.isOn = true;
+                search.text = "Selected";
+                Check(rows[0].gameObject.activeSelf && !rows[0].interactable && rows[1].gameObject.activeSelf && rows[1].interactable && !rows[2].gameObject.activeSelf,
+                    "grouped native search shows exactly its biome heading and one matching portal");
+                search.text = "";
                 ((Button)Get(panel, "nextButton")).onClick.Invoke(); Check((int)Get(panel, "page") == 1, "native page button advances list");
                 Check(!rows[0].interactable, "continued grouped page starts with nonselectable biome heading");
                 search.text = "Selected"; Check((int)Get(panel, "page") == 0, "search resets native paging");
@@ -84,7 +128,10 @@ namespace ValheimModPack.AnyPortalPlus
             }
             finally
             {
+                GameObject main = Get(panel, "mainPanel") as GameObject;
+                if (main != null) main.SetActive(false);
                 Call(panel, "Dispose"); harmony.UnpatchSelf();
+                diagnosticPanel = null;
                 if (fixtureIcon != null) UnityEngine.Object.DestroyImmediate(fixtureIcon); fixtureIcon = null;
                 UnityEngine.Object.DestroyImmediate(texture);
             }

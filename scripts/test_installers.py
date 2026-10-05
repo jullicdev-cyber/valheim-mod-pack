@@ -29,6 +29,11 @@ UploadKiBPerSecond = 1024
 OpenPersonalAudio = F8 + LeftControl
 '''
 
+PORTAL_CONFIG = ('## Настройки прежнего XPortal\r\n[General]\r\nNexusID = 2239\r\n'
+                 'DefaultPortal = {"x":123.5,"y":2.0,"z":-321.25}\r\n'
+                 'DisplayPortalColour = true\r\nHidePortalDistance = true\r\n'
+                 'DoublePortalCosts = true\r\n[Controls]\r\nNextPortal = PageDown\r\n').encode('utf-8-sig')
+
 
 def radio_values(path):
     config = configparser.RawConfigParser()
@@ -141,6 +146,7 @@ class InstallTests(unittest.TestCase):
         (self.target / 'BepInEx/config/AzuAutoStore_player_123.dat').write_bytes(b'legacy Azu favorites fixture')
         (self.target / 'BepInEx/config/AzuExtendedPlayerInventory_player_-456.dat').write_bytes(b'legacy Azu EPI favorites fixture')
         (self.target / 'BepInEx/config/unknown-old-mod.cfg').write_bytes(b'old config must not survive')
+        (self.target / 'BepInEx/config/yay.spikehimself.xportal.cfg').write_bytes(PORTAL_CONFIG)
         (self.target / 'ValheimModpack/ExpeditionLoadouts').mkdir(parents=True)
         (self.target / 'ValheimModpack/ExpeditionLoadouts/character.json').write_bytes(b'personal loadout fixture')
         (self.target / 'ValheimModpack/MapPinHistory').mkdir()
@@ -163,6 +169,7 @@ class InstallTests(unittest.TestCase):
         self.assertEqual((location / 'ValheimModpack/WorldCharacters/characters/world-account-character.wchar').read_bytes(), b'authoritative character fixture')
         self.assertEqual((location / 'BepInEx/config/AzuAutoStore_player_123.dat').read_bytes(), b'legacy Azu favorites fixture')
         self.assertEqual((location / 'BepInEx/config/AzuExtendedPlayerInventory_player_-456.dat').read_bytes(), b'legacy Azu EPI favorites fixture')
+        self.assertEqual((location / 'BepInEx/config/yay.spikehimself.xportal.cfg').read_bytes(), PORTAL_CONFIG)
 
     def test_linux_install_and_reinstall(self):
         installer.install(ROOT, self.target)
@@ -199,6 +206,68 @@ class InstallTests(unittest.TestCase):
         for _ in range(2):
             installer.install(ROOT, self.target)
             self.assert_radio_preferences()
+        self.assert_no_automatic_backups()
+
+    def test_linux_portal_config_survives_install_and_reinstall_byte_for_byte(self):
+        for _ in range(2):
+            installer.install(ROOT, self.target)
+            self.assertEqual((self.target / 'BepInEx/config/yay.spikehimself.xportal.cfg').read_bytes(), PORTAL_CONFIG)
+        self.assert_no_automatic_backups()
+
+    @unittest.skipUnless(sys.platform == 'win32', 'Windows PowerShell test')
+    def test_windows_portal_config_survives_install_and_reinstall_byte_for_byte(self):
+        command = ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+                   str(ROOT / 'scripts/Install-Windows.ps1'), '-SkipMusic', '-SettingsDirectory', str(self.settings), '-GameDirectory', str(self.target)]
+        for _ in range(2):
+            result = subprocess.run(command, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual((self.target / 'BepInEx/config/yay.spikehimself.xportal.cfg').read_bytes(), PORTAL_CONFIG)
+        self.assert_no_automatic_backups()
+
+    def test_linux_linked_portal_config_rejected_without_changes(self):
+        external = self.target.parent / 'external-portal.cfg'
+        external.write_bytes(PORTAL_CONFIG)
+        portal = self.target / 'BepInEx/config/yay.spikehimself.xportal.cfg'
+        portal.unlink()
+        self.make_symlink(portal, external)
+        with self.assertRaisesRegex(ValueError, 'unlinked regular file'):
+            installer.install(ROOT, self.target)
+        self.assertEqual((self.target / 'BepInEx/old-plugin.txt').read_text(), 'old mod')
+        self.assertEqual(external.read_bytes(), PORTAL_CONFIG)
+        self.assert_no_automatic_backups()
+
+    @unittest.skipUnless(sys.platform == 'win32', 'Windows PowerShell test')
+    def test_windows_linked_portal_config_rejected_without_changes(self):
+        external = self.target.parent / 'external-portal.cfg'
+        external.write_bytes(PORTAL_CONFIG)
+        portal = self.target / 'BepInEx/config/yay.spikehimself.xportal.cfg'
+        portal.unlink()
+        self.make_symlink(portal, external)
+        result = subprocess.run(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+                                 str(ROOT / 'scripts/Install-Windows.ps1'), '-SkipMusic', '-SettingsDirectory', str(self.settings), '-GameDirectory', str(self.target)], capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual((self.target / 'BepInEx/old-plugin.txt').read_text(), 'old mod')
+        self.assertEqual(external.read_bytes(), PORTAL_CONFIG)
+        self.assert_no_automatic_backups()
+
+    def test_linux_directory_portal_config_rejected_without_changes(self):
+        portal = self.target / 'BepInEx/config/yay.spikehimself.xportal.cfg'
+        portal.unlink()
+        portal.mkdir()
+        with self.assertRaisesRegex(ValueError, 'unlinked regular file'):
+            installer.install(ROOT, self.target)
+        self.assertEqual((self.target / 'BepInEx/old-plugin.txt').read_text(), 'old mod')
+        self.assert_no_automatic_backups()
+
+    @unittest.skipUnless(sys.platform == 'win32', 'Windows PowerShell test')
+    def test_windows_directory_portal_config_rejected_without_changes(self):
+        portal = self.target / 'BepInEx/config/yay.spikehimself.xportal.cfg'
+        portal.unlink()
+        portal.mkdir()
+        result = subprocess.run(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+                                 str(ROOT / 'scripts/Install-Windows.ps1'), '-SkipMusic', '-SettingsDirectory', str(self.settings), '-GameDirectory', str(self.target)], capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual((self.target / 'BepInEx/old-plugin.txt').read_text(), 'old mod')
         self.assert_no_automatic_backups()
 
     @unittest.skipUnless(sys.platform == 'win32', 'Windows PowerShell test')
@@ -414,6 +483,7 @@ class InstallTests(unittest.TestCase):
         self.assertEqual((self.target / 'NordicRadio/Music/скальд.mp3').read_bytes(), b'personal music fixture')
         self.assertEqual((self.target / 'NordicRadio/Cache/fixture.mp3').read_bytes(), b'cached music fixture')
         self.assertEqual((self.target / 'unrelated.txt').read_text(), 'keep')
+        self.assertEqual((self.target / 'BepInEx/config/yay.spikehimself.xportal.cfg').read_bytes(), PORTAL_CONFIG)
         invalid = self.target / 'invalid'
         invalid.mkdir()
         command[-1] = str(invalid)

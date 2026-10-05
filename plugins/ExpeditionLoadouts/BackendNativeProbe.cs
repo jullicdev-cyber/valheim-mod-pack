@@ -24,6 +24,7 @@ namespace ValheimModPack.LoadoutSmoke
     [BepInDependency("isimp.Bindrune", "0.5.0")]
     [BepInDependency("Azumatt.Recycle_N_Reclaim", "1.4.5")]
     [BepInDependency("com.orianaventure.mod.VentureFloatingItems", "1.0.1")]
+    [BepInDependency("yay.spikehimself.xportal", "1.3.0")]
     public sealed class BackendNativeProbe : BaseUnityPlugin
     {
         private static readonly BindingFlags All = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
@@ -82,6 +83,15 @@ namespace ValheimModPack.LoadoutSmoke
                 Check(GUIManager.CustomGUIFront != null, "Native probe GUI canvas initialized");
                 report += ValheimModPack.ChestSearch.NativeChecks.Run() + "\n";
                 report += ValheimModPack.InterfaceInputFix.NativeChecks.Run() + "\n";
+                if (SystemInfo.graphicsDeviceType != UnityEngine.Rendering.GraphicsDeviceType.Null)
+                {
+                    var portalUiChecks = Assembly.LoadFrom(Path.Combine(Root, "AnyPortalPlusUiNativeChecks.dll"))
+                        .GetType("ValheimModPack.AnyPortalPlus.PortalUiNativeChecks", true);
+                    string portalUiResult = (string)portalUiChecks.GetMethod("Run", BindingFlags.Public | BindingFlags.Static).Invoke(null, null);
+                    Check(portalUiResult.StartsWith("AnyPortal+ native UI PASS:", StringComparison.Ordinal), "AnyPortal+ graphical UI probe completed");
+                    report += portalUiResult + "\n";
+                }
+                else report += "SKIP: AnyPortal+ native UI requires -WithGraphics.\n";
                 report += ValheimModPack.InterfaceInputFix.BindruneNativeChecks.Run() + "\n";
                 report += ValheimModPack.RenewableResourceTimers.NativeChecks.Run() + "\n";
                 var adminChecks = Assembly.LoadFrom(Path.Combine(Root, "InventoryAdminNativeChecks.dll")).GetType("ValheimModPack.InventoryAdmin.NativeChecks", true);

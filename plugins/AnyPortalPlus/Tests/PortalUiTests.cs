@@ -30,6 +30,7 @@ internal static class PortalUiTests
             Check(ReferenceEquals(InputManager.Instance.Buttons[0].ShortcutConfig,XPortalConfig.Instance.Local.PreviousPortalShortcut),"previous key has the actual editable config backing");
             Check(ReferenceEquals(InputManager.Instance.Buttons[1].ShortcutConfig,XPortalConfig.Instance.Local.NextPortalShortcut),"next key has the actual editable config backing");
             panel.ConfigurePortal(current);Check(panel.IsActive()&&GUIManager.Requests==4,"opening owns one input lease");panel.Show();Check(GUIManager.Requests==4,"duplicate show is idempotent");
+            ((Toggle)Get(panel,"groupByBiomeToggle")).isOn=false; // Explicit plain-list fixture; Unity's default toggle starts checked.
             var rowButtons=(Button[])Get(panel,"rows");var icons=(Image[])Get(panel,"rowIcons");var search=(InputField)Get(panel,"searchInputField");var sort=(Dropdown)Get(panel,"sortDropdown");var chooser=(Dropdown)Get(panel,"iconDropdown");
             Check(rowButtons.Length==10,"bounded reusable portal rows");Check(chooser.options.Count==6&&chooser.value==0&&chooser.options[0].image==null,"default icon is absent and five native choices are available");
             Check(chooser.itemImage!=null&&chooser.captionImage!=null&&chooser.options[5].image!=null,"icon dropdown renders images in options and current caption");

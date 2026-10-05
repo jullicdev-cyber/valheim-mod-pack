@@ -13,7 +13,14 @@ function Resolve-PackChild([string]$BaseDirectory, [string]$RelativePath) {
 }
 function Require-LockedHash([string]$File, [string]$Expected, [string]$Label) {
     if (-not (Test-Path -LiteralPath $File -PathType Leaf)) { throw "Missing $Label" }
-    if ($Expected -notmatch '^[a-fA-F0-9]{64}$' -or (Get-FileHash -LiteralPath $File -Algorithm SHA256).Hash -ne $Expected) {
+    if ($Expected -notmatch '^[a-fA-F0-9]{64}$') { throw "Hash mismatch: $Label" }
+    # Keep the installer usable in Windows PowerShell even when its inherited
+    # PSModulePath does not expose the Get-FileHash module.
+    $stream = [IO.File]::OpenRead($File)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $hash = [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '').ToLowerInvariant() }
+    finally { $stream.Dispose(); $sha.Dispose() }
+    if ($hash -ne $Expected) {
         throw "Hash mismatch: $Label"
     }
 }

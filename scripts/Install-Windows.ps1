@@ -123,6 +123,27 @@ function Merge-RadioPersonalAudio([string]$Previous, [string]$Staged) {
     [IO.File]::WriteAllLines($Staged, $lines, (New-Object System.Text.UTF8Encoding($false)))
 }
 
+function Preserve-PortalConfiguration([string]$Previous, [string]$Staged) {
+    # AnyPortal+ deliberately retains XPortal's GUID and config schema. Keep
+    # existing choices byte-for-byte; the plugin adds new keys and migrates its
+    # obsolete upstream Nexus identifier when it next starts.
+    $entry = Get-Item -LiteralPath $Previous -Force -ErrorAction SilentlyContinue
+    if ($null -eq $entry) { return }
+    if ($entry.PSIsContainer -or ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw 'Portal configuration must be an unlinked regular file.'
+    }
+    $ancestor = Split-Path $entry.FullName -Parent
+    while ($ancestor) {
+        $parent = Get-Item -LiteralPath $ancestor -Force -ErrorAction Stop
+        if ($parent.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            throw 'Portal configuration must be an unlinked regular file.'
+        }
+        $ancestor = Split-Path $ancestor -Parent
+    }
+    New-Item -ItemType Directory -Path (Split-Path $Staged -Parent) -Force | Out-Null
+    Copy-Item -LiteralPath $entry.FullName -Destination $Staged -Force
+}
+
 $transaction = $null
 $retainRecovery = $false
 
@@ -161,6 +182,7 @@ try {
             }
         }
         Merge-RadioPersonalAudio (Join-Path $previousConfig 'valheimmodpack.nordicradio.cfg') (Join-Path $stagedConfig 'valheimmodpack.nordicradio.cfg')
+        Preserve-PortalConfiguration (Join-Path $previousConfig 'yay.spikehimself.xportal.cfg') (Join-Path $stagedConfig 'yay.spikehimself.xportal.cfg')
     }
     # Bindrune keeps personal key overrides outside config; replacing BepInEx must retain them.
     foreach ($relative in @('BepInEx/bindrune.keys', 'BepInEx/bindrune.spare', 'BepInEx/config/Bindrune/situations.txt', 'BepInEx/config/isimp.Bindrune.cfg')) {
