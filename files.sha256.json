@@ -69,7 +69,7 @@
   },
   {
     "path": "BepInEx/config/valheimmodpack.inventoryadmin.cfg",
-    "sha256": "3815f58a54b24f76d4e694151654b9140e6e0625988b355e6e54eee28b586451"
+    "sha256": "67c00791f5840d40ad177496fbd4062c277ab4c2eb3e72dd3f1e97ee3f43decd"
   },
   {
     "path": "BepInEx/config/valheimmodpack.nordicradio.cfg",
@@ -305,7 +305,7 @@
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-InventoryAdmin/InventoryAdmin.dll",
-    "sha256": "efa89d11060f7a1b78d9f5ff064b23500d3d45c4104e383b0be84789b6209eb7"
+    "sha256": "b5741fd5083b09d1f0ab2461fa67b1c301d57b8da87a78a335693436237aea8b"
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-NordicRadio/NordicRadio.dll",

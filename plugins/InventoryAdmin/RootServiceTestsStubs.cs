@@ -4,7 +4,9 @@ using System.Collections.Generic;
 
 namespace UnityEngine
 {
-    public enum KeyCode { None, F8, F9, LeftControl, RightControl, LeftShift, RightShift, LeftAlt, RightAlt, LeftCommand, RightCommand }
+    public enum KeyCode { None, F8, F9, F10, LeftControl, RightControl, LeftShift, RightShift, LeftAlt, RightAlt, LeftCommand, RightCommand }
+    public struct Vector3 { public float x,y,z; public Vector3(float x,float y,float z) { this.x=x; this.y=y; this.z=z; } }
+    public sealed class Transform { public Vector3 position; }
     public static class Time { public static float realtimeSinceStartup; public static int frameCount; }
     public static class Input { public static bool GetKey(KeyCode key) { return false; } public static bool GetKeyDown(KeyCode key) { return false; } }
     public class GameObject { public string name; public T GetComponent<T>() where T : class { return null; } }
@@ -46,6 +48,7 @@ public sealed class Localization
 public sealed class Player
 {
     public static Player m_localPlayer; public long Character = 100; public string Name = "Host";
+    public readonly UnityEngine.Transform transform = new UnityEngine.Transform(); public bool Dead; public bool IsDead() { return Dead; }
     public long GetPlayerID() { return Character; } public string GetPlayerName() { return Name; }
     public bool IsTeleporting() { return false; } public bool InCutscene() { return false; }
 }
@@ -105,6 +108,20 @@ public sealed class ZNetPeer
 {
     public IServiceTestSocket m_socket; public ZRpc m_rpc = new ZRpc(); public long m_uid, m_playerID;
     public string m_playerName = "Player"; public bool Ready = true; public bool IsReady() { return Ready; }
+    public ZDOID m_characterID; public UnityEngine.Vector3 m_refPos; public bool m_publicRefPos;
+}
+public struct ZDOID { public long UserID; public uint ID; public bool IsNone() { return UserID == 0 && ID == 0; } }
+public static class ZDOVars { public const int s_playerID=1,s_dead=2; }
+public sealed class ZDO
+{
+    public UnityEngine.Vector3 Position; public long Character; public bool Dead;
+    public long GetLong(int key,long fallback) { return Character; } public bool GetBool(int key,bool fallback) { return Dead; }
+}
+public sealed class ZDOMan
+{
+    public static ZDOMan instance;
+    public readonly Dictionary<ZDOID,ZDO> Zdos = new Dictionary<ZDOID,ZDO>();
+    public ZDO GetZDO(ZDOID id) { ZDO value; return Zdos.TryGetValue(id,out value) ? value : null; }
 }
 public sealed class ZNet
 {
@@ -182,6 +199,8 @@ namespace ValheimModPack.InventoryAdmin
     public sealed class AdminUiBindings
     {
         public Func<bool> CanUse, IsHost; public Func<long> LocalPeerId; public Func<string> ShortcutLabel;
+        public Func<bool> IsTrackingPlayers; public Func<string> TrackingShortcutLabel; public Action<bool> SetTrackingPlayers;
+        public Func<long,bool> CanFindPlayerOnMap; public Action<long> FindPlayerOnMap;
         public Func<string,string,string> Translate; public Action RequestPlayers; public Action<long> RequestInventory;
         public Action<string,string,int> Delete, Take; public Action<long,bool> SetAdmin; public Action<Exception> Error; public Action OnClosed;
     }
@@ -194,6 +213,11 @@ namespace ValheimModPack.InventoryAdmin
         public void HandleInputReset() { }
         public void SetPlayers(List<AdminPlayerView> views) { Players = new List<AdminPlayerView>(views); } public void SetSnapshot(AdminInventoryView view) { }
         public void Dispose() { }
+    }
+    public sealed class AdminMapOverlay
+    {
+        public AdminMapOverlay(Func<bool> access,Func<bool> tracking,Func<IList<PlayerLocation>> locations) { }
+        public void Tick() { } public void Clear() { } public bool CanFind(long id) { return false; } public bool Find(long id) { return false; }
     }
     public sealed class AdminPlayerView { public long PeerId; public string Name; public bool IsAdmin; }
     public sealed class AdminItemView

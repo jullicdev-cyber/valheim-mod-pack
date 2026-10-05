@@ -9,7 +9,7 @@ using BepInEx.Configuration;
 
 namespace ValheimModPack.InventoryAdmin
 {
-    internal static class RootServiceTests
+    internal static partial class RootServiceTests
     {
         private const string Bob = "Steam_76561198000000002", Alice = "Steam_76561198000000001";
         private const long BobPeer = 82, AlicePeer = 81;
@@ -52,7 +52,7 @@ namespace ValheimModPack.InventoryAdmin
                 WC.ApprovedConnections[ZNet.instance.Peers[0].m_rpc] = ZNet.instance.Peers[0];
                 WC.ApprovedConnections[ZNet.instance.Peers[1].m_rpc] = ZNet.instance.Peers[1];
                 var plugin = new Plugin(); Call(plugin, "Awake"); Call(plugin, "EnsureSession");
-                try { Permissions(plugin); ApprovedOwnerRoster(plugin); DuplicateApprovedPeerIdRoster(plugin); Packets(plugin); ClientPacketValidation(plugin); Operations(plugin); CheckpointFailures(plugin); RecoveryCommands(plugin); SourcePayloadValidation(plugin); Transport(); Shortcuts(plugin); }
+                try { Permissions(plugin); ApprovedOwnerRoster(plugin); DuplicateApprovedPeerIdRoster(plugin); Packets(plugin); ClientPacketValidation(plugin); Operations(plugin); CheckpointFailures(plugin); RecoveryCommands(plugin); SourcePayloadValidation(plugin); Transport(); Shortcuts(plugin); Locations(plugin); }
                 finally { Call(plugin, "OnDestroy"); }
                 System.Console.WriteLine("InventoryAdmin actual service checks passed: " + checks); return 0;
             }

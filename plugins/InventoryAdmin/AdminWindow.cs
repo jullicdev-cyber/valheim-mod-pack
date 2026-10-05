@@ -22,8 +22,10 @@ namespace ValheimModPack.InventoryAdmin
         private ZNet network;
         private AdminInventoryView snapshot;
         private InputField quantity;
+        private Toggle showPlayersOnMap;
+        private Text mapTrackingLabel;
         private Text heading, subtitle, playerHeading, itemsHeading, playerPages, itemPages, selection, details, status, receiverText, roleHint, quantityHeading;
-        private Button playerPrev, playerNext, itemPrev, itemNext, take, delete, refresh, grant, revoke;
+        private Button playerPrev, playerNext, itemPrev, itemNext, take, delete, refresh, grant, revoke, findSelectedOnMap;
         private long selectedPeer;
         private string selectedItem, notice = "", dragSnapshot, dragItem;
         private int playerPage, itemPage, generation, dragQuantity;
@@ -75,7 +77,7 @@ namespace ValheimModPack.InventoryAdmin
             var overlayRect = overlay.GetComponent<RectTransform>();
             overlayRect.anchorMin = Vector2.zero; overlayRect.anchorMax = Vector2.one; overlayRect.offsetMin = overlayRect.offsetMax = Vector2.zero;
             overlay.GetComponent<Image>().color = new Color(0, 0, 0, .6f);
-            panel = GUIManager.Instance.CreateWoodpanel(overlay.transform, center, center, Vector2.zero, 1130, 780, false);
+            panel = GUIManager.Instance.CreateWoodpanel(overlay.transform, center, center, Vector2.zero, 1130, 860, false);
             panel.name = "InventoryAdmin.WoodPanel";
             var group = panel.AddComponent<CanvasGroup>(); group.interactable = true; group.blocksRaycasts = true;
             heading = Label("", 0, 331, 975, 46, 29, true);
@@ -130,7 +132,30 @@ namespace ValheimModPack.InventoryAdmin
             selection = Label("", -25, -218, 477, 35, 17, false);
             details = Label("", 126, -268, 780, 62, 15, false);
             refresh = ButtonAt("", 388, -218, 250, 42, Refresh);
-            status = Label("", 0, -340, 1030, 57, 16, false);
+            showPlayersOnMap = GUIManager.Instance.CreateToggle(panel.transform, 28, 28).GetComponent<Toggle>();
+            showPlayersOnMap.gameObject.name = "InventoryAdmin.ShowPlayersOnMap";
+            showPlayersOnMap.gameObject.layer = GUIManager.UILayer;
+            var mapToggleRect = showPlayersOnMap.GetComponent<RectTransform>();
+            mapToggleRect.anchorMin = mapToggleRect.anchorMax = center;
+            mapToggleRect.pivot = center; mapToggleRect.sizeDelta = new Vector2(720, 44);
+            mapToggleRect.anchoredPosition = new Vector2(-145, -332); mapToggleRect.localScale = Vector3.one;
+            var mapToggleBackground = showPlayersOnMap.transform.Find("Background").GetComponent<RectTransform>();
+            mapToggleBackground.anchorMin = mapToggleBackground.anchorMax = new Vector2(0, .5f);
+            mapToggleBackground.pivot = center; mapToggleBackground.anchoredPosition = new Vector2(16, 0);
+            mapToggleBackground.sizeDelta = new Vector2(28, 28);
+            mapTrackingLabel = showPlayersOnMap.GetComponentInChildren<Text>();
+            mapTrackingLabel.font = GUIManager.Instance.AveriaSerif;
+            mapTrackingLabel.fontSize = 18; mapTrackingLabel.color = GUIManager.Instance.ValheimBeige;
+            mapTrackingLabel.supportRichText = false; mapTrackingLabel.alignment = TextAnchor.MiddleLeft;
+            mapTrackingLabel.horizontalOverflow = HorizontalWrapMode.Wrap; mapTrackingLabel.verticalOverflow = VerticalWrapMode.Truncate;
+            mapTrackingLabel.resizeTextForBestFit = true; mapTrackingLabel.resizeTextMinSize = 13; mapTrackingLabel.resizeTextMaxSize = 18;
+            mapTrackingLabel.rectTransform.anchorMin = Vector2.zero; mapTrackingLabel.rectTransform.anchorMax = Vector2.one;
+            mapTrackingLabel.rectTransform.offsetMin = new Vector2(40, 1); mapTrackingLabel.rectTransform.offsetMax = new Vector2(-4, -1);
+            showPlayersOnMap.onValueChanged.AddListener(value => Invoke(created, () => SetMapTracking(value), false));
+            controls.Add(showPlayersOnMap);
+            findSelectedOnMap = ButtonAt("", 388, -332, 250, 44, FindSelectedOnMap);
+            findSelectedOnMap.gameObject.name = "InventoryAdmin.FindSelectedOnMap";
+            status = Label("", 0, -390, 1030, 57, 16, false);
             Repaint(); Scale();
         }
         private bool ValidContext()
@@ -236,6 +261,20 @@ namespace ValheimModPack.InventoryAdmin
             var player = SelectedPlayer();
             if (!Host() || busy || player == null || player.PeerId == Self() || player.IsAdmin == value) return;
             if (bindings.SetAdmin != null) bindings.SetAdmin(player.PeerId, value);
+        }
+        private void SetMapTracking(bool value)
+        {
+            if (busy || !Allowed() || bindings.SetTrackingPlayers == null) return;
+            bindings.SetTrackingPlayers(value); Repaint();
+        }
+        private void FindSelectedOnMap()
+        {
+            var player = SelectedPlayer();
+            if (busy || !Allowed() || player == null || bindings.FindPlayerOnMap == null
+                || bindings.CanFindPlayerOnMap == null || !bindings.CanFindPlayerOnMap(player.PeerId)) return;
+            long peerId = player.PeerId;
+            // Release our input lease before Valheim opens its large map.
+            Hide(); bindings.FindPlayerOnMap(peerId);
         }
         private void TakeSelected()
         {
@@ -381,6 +420,15 @@ namespace ValheimModPack.InventoryAdmin
             revoke.interactable = !busy && selected != null && selected.PeerId != Self() && selected.IsAdmin;
             roleHint.text = Host() ? T("Назначать администраторов может только хост.", "Only the host can assign administrators.")
                 : T("Доступ администратора. Назначение доступно только хосту.", "Administrator access. Only the host can assign roles.");
+            bool tracking = bindings.IsTrackingPlayers != null && bindings.IsTrackingPlayers();
+            showPlayersOnMap.SetIsOnWithoutNotify(tracking);
+            showPlayersOnMap.interactable = !busy && Allowed() && bindings.SetTrackingPlayers != null;
+            string mapShortcut = bindings.TrackingShortcutLabel == null ? "" : bindings.TrackingShortcutLabel();
+            mapTrackingLabel.text = T("Показывать игроков на карте, включая скрытых", "Show players on the map, including hidden players")
+                + (String.IsNullOrEmpty(mapShortcut) ? "" : "  (" + mapShortcut + ")");
+            findSelectedOnMap.GetComponentInChildren<Text>().text = T("Найти игрока на карте", "Find player on map");
+            findSelectedOnMap.interactable = !busy && Allowed() && selected != null && bindings.FindPlayerOnMap != null
+                && bindings.CanFindPlayerOnMap != null && bindings.CanFindPlayerOnMap(selected.PeerId);
             var current = SelectedItem();
             selection.text = current == null ? T("Выберите предмет в инвентаре игрока.", "Select an item in the player's inventory.") : Safe(current.Name, 70);
             details.text = current == null ? "" : Safe(current.Prefab, 65) + " • " + Group(current.Group) + " • " + T("Количество: ", "Quantity: ") + current.Count
@@ -439,7 +487,7 @@ namespace ValheimModPack.InventoryAdmin
         {
             if (overlay == null || panel == null) return;
             var rect = overlay.GetComponent<RectTransform>();
-            float scale = Mathf.Min(1, Mathf.Min(rect.rect.width / 1160, rect.rect.height / 810));
+            float scale = Mathf.Min(1, Mathf.Min(rect.rect.width / 1160, rect.rect.height / 890));
             if (scale > .01f) panel.transform.localScale = Vector3.one * scale;
         }
         public void Hide()
@@ -459,9 +507,11 @@ namespace ValheimModPack.InventoryAdmin
             catch (Exception error) { Report(error); }
             finally
             {
-                overlay = panel = null; localPlayer = null; network = null; snapshot = null; quantity = null; selectedPeer = 0; selectedItem = null;
+                overlay = panel = null; localPlayer = null; network = null; snapshot = null; quantity = null; showPlayersOnMap = null;
+                selectedPeer = 0; selectedItem = null;
                 heading = subtitle = playerHeading = itemsHeading = playerPages = itemPages = selection = details = status = receiverText = roleHint = quantityHeading = null;
-                take = delete = refresh = grant = revoke = playerPrev = playerNext = itemPrev = itemNext = null;
+                mapTrackingLabel = null;
+                take = delete = refresh = grant = revoke = playerPrev = playerNext = itemPrev = itemNext = findSelectedOnMap = null;
                 players.Clear(); controls.Clear(); Array.Clear(playerRows, 0, playerRows.Length); Array.Clear(itemRows, 0, itemRows.Length); Array.Clear(icons, 0, icons.Length);
                 notice = ""; busy = false; playerPage = itemPage = 0;
                 try { inputLease.Release(); } catch (Exception error) { Report(error); }

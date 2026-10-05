@@ -11,7 +11,7 @@ namespace ValheimModPack.InventoryAdmin
     {
         internal const string RpcName = "VMP_InventoryAdmin_v1";
         private const int Chunk = 16384, Maximum = InventoryCodec.MaximumItemBytes + 65536;
-        private sealed class Outgoing { internal ZRpc Rpc; internal byte[] Bytes; internal string Id = Guid.NewGuid().ToString("N"); internal int Offset; }
+        private sealed class Outgoing { internal ZRpc Rpc; internal byte[] Bytes; internal string Id = Guid.NewGuid().ToString("N"); internal int Offset; internal string Key; internal Func<bool> Guard; }
         private sealed class Incoming { internal string Id; internal byte[] Bytes; internal int Offset; internal float Started; }
         private readonly Queue<Outgoing> queue = new Queue<Outgoing>();
         private readonly Dictionary<ZRpc, Incoming> incoming = new Dictionary<ZRpc, Incoming>();
@@ -26,6 +26,25 @@ namespace ValheimModPack.InventoryAdmin
                 throw new IOException("Inventory channel capacity exceeded.");
             queue.Enqueue(new Outgoing { Rpc = rpc, Bytes = bytes }); queuedBytes += bytes.Length;
         }
+        // Private, short-lived data must be authorized when it actually leaves
+        // the queue. Atomic frames allow cancellation without stranding a
+        // partially reconstructed inventory message on the receiver.
+        internal void SendGuarded(ZRpc rpc, byte[] bytes, string key, Func<bool> guard)
+        {
+            if (bytes == null || bytes.Length == 0 || bytes.Length > Chunk || String.IsNullOrEmpty(key) || guard == null)
+                throw new InvalidDataException("Guarded messages must fit a single frame.");
+            foreach (Outgoing pending in queue)
+                if (ReferenceEquals(pending.Rpc, rpc) && pending.Key == key)
+                {
+                    if (queuedBytes + bytes.Length - pending.Bytes.Length > 16 * 1024 * 1024)
+                        throw new IOException("Inventory channel capacity exceeded.");
+                    queuedBytes += bytes.Length - pending.Bytes.Length;
+                    pending.Bytes = bytes; pending.Guard = guard; return;
+                }
+            Send(rpc, bytes);
+            Outgoing[] messages = queue.ToArray();
+            messages[messages.Length - 1].Key = key; messages[messages.Length - 1].Guard = guard;
+        }
         internal void Tick()
         {
             float now = Time.realtimeSinceStartup;
@@ -33,7 +52,9 @@ namespace ValheimModPack.InventoryAdmin
             for (int i = 0; i < 4 && queue.Count != 0; ++i)
             {
                 Outgoing message = queue.Peek();
-                if (!message.Rpc.IsConnected()) { queue.Dequeue(); queuedBytes -= message.Bytes.Length; continue; }
+                bool allowed = message.Rpc.IsConnected();
+                if (allowed && message.Guard != null) { try { allowed = message.Guard(); } catch { allowed = false; } }
+                if (!allowed) { queue.Dequeue(); queuedBytes -= message.Bytes.Length; continue; }
                 int length = Math.Min(Chunk, message.Bytes.Length - message.Offset);
                 if (credit < length) break;
                 var packet = new ZPackage(); packet.Write(1); packet.Write(message.Id); packet.Write(message.Bytes.Length); packet.Write(message.Offset);

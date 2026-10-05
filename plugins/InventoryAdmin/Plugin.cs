@@ -14,12 +14,25 @@ namespace ValheimModPack.InventoryAdmin
     [BepInPlugin(Id, "Inventory Admin", Version)]
     [BepInDependency("com.jotunn.jotunn", "2.30.2")]
     [BepInDependency("valheimmodpack.worldcharacters", "1.0.4")]
-    public sealed class Plugin : BaseUnityPlugin
+    public sealed partial class Plugin : BaseUnityPlugin
     {
-        public const string Id = "valheimmodpack.inventoryadmin", Version = "1.0.1";
+        public const string Id = "valheimmodpack.inventoryadmin", Version = "1.1.0";
         private static Plugin active;
         private Harmony harmony;
         private ConfigEntry<KeyboardShortcut> shortcut;
+        private ConfigEntry<KeyboardShortcut> mapShortcut;
+        private ConfigEntry<bool> mapTracking;
+        private readonly PlayerLocationCache locationCache = new PlayerLocationCache();
+        private readonly Dictionary<long, LocationSubscription> locationSubscriptions = new Dictionary<long, LocationSubscription>();
+        private readonly Dictionary<ZRpc, PositionSample> positionSamples = new Dictionary<ZRpc, PositionSample>();
+        private AdminMapOverlay mapOverlay;
+        private string locationToken = "";
+        private float locationRefresh, locationSnapshot;
+        private float locationErrorAt;
+        private long locationSequence;
+        private const float LocationLeaseSeconds = 12, LocationRefreshSeconds = 3, LocationSnapshotSeconds = 2;
+        private sealed class LocationSubscription { internal string Token; internal float Until; internal ZRpc Rpc; }
+        private sealed class PositionSample { internal ZDOID Character; internal float At; }
         private readonly WireTransport transport = new WireTransport();
         private readonly Dictionary<ZRpc, ZNetPeer> peers = new Dictionary<ZRpc, ZNetPeer>();
         private readonly Dictionary<long, bool> welcomes = new Dictionary<long, bool>();
@@ -59,8 +72,16 @@ namespace ValheimModPack.InventoryAdmin
             active = this;
             shortcut = Config.Bind("Controls", "OpenInventoryAdmin", new KeyboardShortcut(KeyCode.F9, KeyCode.LeftControl),
                 "Open player inventory administration. Host or assigned administrator only. Rebind in Bindrune.");
+            mapShortcut = Config.Bind("Controls", "TogglePlayerTracking", new KeyboardShortcut(KeyCode.F10, KeyCode.LeftControl),
+                "Toggle private player markers for host/assigned admins. Rebind in Bindrune.");
+            mapTracking = Config.Bind("Map", "ShowPlayersOnMap", true,
+                "Show online players, including those with public map visibility disabled. Only authorized admins receive positions.");
+            mapOverlay = new AdminMapOverlay(CanUse, () => mapTracking.Value,
+                () => locationCache.Snapshot(Time.realtimeSinceStartup));
             window = new AdminWindow(new AdminUiBindings { CanUse = CanUse, IsHost = () => IsHost, LocalPeerId = () => ZNet.GetUID(),
                 ShortcutLabel = () => Label(shortcut.Value), Translate = T, RequestPlayers = RequestPlayers, RequestInventory = RequestInventory,
+                IsTrackingPlayers = () => mapTracking.Value, TrackingShortcutLabel = () => Label(mapShortcut.Value), SetTrackingPlayers = SetTrackingPlayers,
+                CanFindPlayerOnMap = id => mapOverlay.CanFind(id), FindPlayerOnMap = id => { if (!mapOverlay.Find(id)) window.SetStatus(T("Координаты игрока пока недоступны.", "Player position is not available yet.")); },
                 Delete = (v, i, n) => RequestMutation(v, i, n, InventoryOperation.Delete), Take = (v, i, n) => RequestMutation(v, i, n, InventoryOperation.Take),
                 SetAdmin = RequestRole, Error = e => Logger.LogError(e), OnClosed = () => { displayed = null; viewRequest = ""; } });
             harmony = new Harmony(Id); harmony.PatchAll(typeof(Plugin).Assembly);
@@ -96,6 +117,7 @@ namespace ValheimModPack.InventoryAdmin
                 EnsureSession(); transport.Tick();
                 if (network == null || world == 0) return;
                 if (IsHost) UpdateHost();
+                UpdatePlayerMap();
                 UpdateLocalOperations(); window.Tick();
                 RefreshClaimed();
                 if (CanUse() && ShortcutDown(shortcut.Value) && (window.IsVisible || CanOpen()))
@@ -103,6 +125,11 @@ namespace ValheimModPack.InventoryAdmin
                     claimed = shortcut.Value.MainKey; released = -1;
                     GameplayInputCache.ConsumeAll();
                     if (window.IsVisible) window.Hide(); else window.Show();
+                }
+                else if ((window.IsVisible || CanOpen()) && ShortcutDown(mapShortcut.Value))
+                {
+                    claimed = mapShortcut.Value.MainKey; released = -1; GameplayInputCache.ConsumeAll();
+                    SetTrackingPlayers(!mapTracking.Value);
                 }
             }
             catch (Exception e) { Logger.LogError(e); if (window != null) window.SetStatus(e.Message); }
@@ -255,6 +282,20 @@ namespace ValheimModPack.InventoryAdmin
         private void ServerMessage(long actor, int kind, BinaryReader r)
         {
             if (!IsHost) throw new UnauthorizedAccessException("Server message on client.");
+            if (kind == 20)
+            {
+                string token = Token(r); bool enabled = Flag(r); End(r); RequireAllowed(actor);
+                LocationSubscription previous;
+                if (!enabled)
+                {
+                    if (locationSubscriptions.TryGetValue(actor, out previous) && previous.Token == token) locationSubscriptions.Remove(actor);
+                    return;
+                }
+                ZNetPeer target = actor == ZNet.GetUID() ? null : Peer(actor);
+                if (!locationSubscriptions.TryGetValue(actor, out previous) || previous.Token != token || previous.Rpc != (target == null ? null : target.m_rpc))
+                    previous = new LocationSubscription { Token = token, Rpc = target == null ? null : target.m_rpc };
+                previous.Until = Time.realtimeSinceStartup + LocationLeaseSeconds; locationSubscriptions[actor] = previous; return;
+            }
             if (kind == 2)
             {
                 string id = Token(r); End(r); RequireAllowed(actor);
@@ -354,6 +395,16 @@ namespace ValheimModPack.InventoryAdmin
                 RequireAllowed(actor); if (actor != ZNet.GetUID()) throw new UnauthorizedAccessException("Only the host can assign administrators.");
                 PlayerInfo info = PeerInfo(target); if (info.OwnerId == "local-host") throw new InvalidOperationException("Host permissions are permanent.");
                 permissions.SetAdministrator(world, true, info.OwnerId, enabled); welcomes.Remove(target);
+                if (!enabled)
+                {
+                    LocationSubscription subscription;
+                    if (locationSubscriptions.TryGetValue(target, out subscription))
+                    {
+                        locationSubscriptions.Remove(target);
+                        try { Send(target, 22, w => Text(w, subscription.Token)); }
+                        catch (Exception e) { Logger.LogWarning("Player tracking revoke: " + e.Message); }
+                    }
+                }
                 Result(actor, "", true, T("Права администратора обновлены.", "Administrator permissions updated.")); return;
             }
             throw new InvalidDataException("Unexpected inventory client message.");
@@ -418,8 +469,20 @@ namespace ValheimModPack.InventoryAdmin
         }
         private void ClientMessage(int kind, BinaryReader r)
         {
+            if (kind == 21)
+            {
+                string token = Token(r); long sequence = r.ReadInt64();
+                byte[] bytes = PolicyBinary.ReadBytes(r, 16384); End(r);
+                if (!CanUse() || !mapTracking.Value || token != locationToken) return;
+                locationCache.TryReplace(world, token, sequence, PlayerLocationCodec.Decode(bytes), Time.realtimeSinceStartup); return;
+            }
+            if (kind == 22)
+            {
+                string token = Token(r); End(r);
+                if (token == locationToken) ClearLocations(); return;
+            }
             if (kind == 1)
-            { bool allow = Flag(r); string owner = Text(r); End(r); PermissionPolicy.RequireSteamOwner(owner); authorized = allow; ownOwner = owner; if (!authorized) window.Hide(); return; }
+            { bool allow = Flag(r); string owner = Text(r); End(r); PermissionPolicy.RequireSteamOwner(owner); if (authorized != allow) ClearLocations(); authorized = allow; ownOwner = owner; if (!authorized) window.Hide(); return; }
             if (kind == 3)
             {
                 string id = Token(r); List<PlayerInfo> players = InventoryCodec.DecodePlayers(Bytes(r)); End(r); if (id != playerRequest || !CanUse()) return;
@@ -558,13 +621,15 @@ namespace ValheimModPack.InventoryAdmin
         {
             if (peer == null || peer.m_rpc == null) return;
             transport.Remove(peer.m_rpc); peers.Remove(peer.m_rpc); welcomes.Remove(peer.m_uid);
+            positionSamples.Remove(peer.m_rpc); locationSubscriptions.Remove(peer.m_uid);
             if (IsHost && operation != null && (operation.Source == peer.m_uid || operation.Actor == peer.m_uid))
                 FailOperation("Participant disconnected; inspect retained transaction.", operation.RemoveSent || operation.DeliverySent);
-            if (!IsHost) { authorized = false; window.Hide(); }
+            if (!IsHost) { authorized = false; window.Hide(); ClearLocations(); }
         }
         private void ResetSession()
         {
             if (window != null) window.Hide();
+            ClearLocations(); locationSubscriptions.Clear(); positionSamples.Clear(); locationRefresh = locationSnapshot = locationErrorAt = 0; locationSequence = 0;
             if (operation != null && journal != null) { try { journal.RequireRecovery(operation.Record.Id, "World session ended."); } catch (Exception e) { Logger.LogError(e); } }
             operation = null; if (permissions != null) permissions.Dispose(); if (journal != null) journal.Dispose(); permissions = null; journal = null;
             transport.Clear(); peers.Clear(); welcomes.Clear(); requestTimes.Clear(); reads.Clear(); served.Clear(); captures.Clear(); localOperations.Clear();
@@ -577,6 +642,13 @@ namespace ValheimModPack.InventoryAdmin
             {
                 EnsureSession();
                 if (args.Length < 2 || args[1] == "open") { if (CanUse()) window.Show(); else args.Context.AddString(T("Нет прав либо персонаж ещё не загружен.", "Permission denied or character not loaded.")); return; }
+                if (args[1] == "map")
+                {
+                    if (!CanUse()) throw new UnauthorizedAccessException("Administrator only.");
+                    if (args.Length > 2 && args[2] != "on" && args[2] != "off") throw new ArgumentException("ia map [on|off]");
+                    SetTrackingPlayers(args.Length < 3 ? !mapTracking.Value : args[2] == "on");
+                    args.Context.AddString(mapTracking.Value ? T("Игроки на карте: включено.", "Player tracking: on.") : T("Игроки на карте: выключено.", "Player tracking: off.")); return;
+                }
                 if (!IsHost) throw new UnauthorizedAccessException("Host only.");
                 if (args[1] == "pending")
                 {
@@ -643,12 +715,14 @@ namespace ValheimModPack.InventoryAdmin
         private static bool BlockNative(string button, ref bool result)
         {
             if (active == null || button == "JoyButtonB") return true;
-            if (active.window.IsVisible || active.claimed != KeyCode.None || active.CanOpen() && ShortcutHeld(active.shortcut.Value))
+            if (active.window.IsVisible || active.claimed != KeyCode.None || active.CanOpen() && (ShortcutHeld(active.shortcut.Value) || ShortcutHeld(active.mapShortcut.Value)))
             { GameplayInputCache.Consume(button); result = false; return false; }
             return true;
         }
         [HarmonyPatch(typeof(ZNet), "OnNewConnection")]
         private static class ConnectionPatch { private static void Postfix(ZNetPeer peer) { if (active != null) active.Register(peer); } }
+        [HarmonyPatch(typeof(ZNet), "RPC_ServerSyncedPlayerData")]
+        private static class PositionPatch { private static void Postfix(ZRpc rpc) { if (active != null) active.RememberPosition(rpc); } }
         [HarmonyPatch(typeof(ZNet), "Disconnect")]
         private static class DisconnectPatch { private static void Prefix(ZNetPeer peer) { if (active != null) active.Removed(peer); } }
         [HarmonyPatch(typeof(ZInput), "GetButtonDown")]

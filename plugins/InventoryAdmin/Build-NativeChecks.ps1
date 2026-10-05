@@ -8,7 +8,7 @@ if (-not $PluginAssembly) { $PluginAssembly = Join-Path $root 'local-plugins/Inv
 $managed = Join-Path $GameDirectory 'valheim_Data/Managed'
 $refs = @($PluginAssembly, (Join-Path $root 'Game/BepInEx/core/BepInEx.dll'),
     (Join-Path $root 'Game/BepInEx/core/0Harmony.dll'), (Join-Path $root 'Game/BepInEx/plugins/Jotunn.dll'))
-$refs += @('assembly_valheim.dll', 'assembly_guiutils.dll', 'assembly_utils.dll', 'SoftReferenceableAssets.dll',
+$refs += @('assembly_valheim.dll', 'assembly_guiutils.dll', 'assembly_utils.dll', 'SoftReferenceableAssets.dll', 'Splatform.dll',
     'UnityEngine.dll', 'UnityEngine.CoreModule.dll', 'UnityEngine.UI.dll', 'UnityEngine.UIModule.dll', 'UnityEngine.InputLegacyModule.dll',
     'UnityEngine.TextRenderingModule.dll', 'netstandard.dll') | ForEach-Object { Join-Path $managed $_ }
 $output = Join-Path $OutputDirectory 'InventoryAdminNativeChecks.dll'

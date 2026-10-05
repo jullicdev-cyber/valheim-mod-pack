@@ -31,6 +31,11 @@ namespace ValheimModPack.InventoryAdmin
         public Func<bool> CanUse, IsHost;
         public Func<long> LocalPeerId;
         public Func<string> ShortcutLabel;
+        public Func<bool> IsTrackingPlayers;
+        public Func<string> TrackingShortcutLabel;
+        public Action<bool> SetTrackingPlayers;
+        public Func<long, bool> CanFindPlayerOnMap;
+        public Action<long> FindPlayerOnMap;
         public Func<string, string, string> Translate;
         public Action RequestPlayers;
         public Action<long> RequestInventory;
