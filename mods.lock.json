@@ -1,5 +1,5 @@
 {
-  "packVersion": "1.18.0",
+  "packVersion": "1.19.0",
   "created": "2026-09-25",
   "targetGameVersion": "1.0.16",
   "packages": [
@@ -61,20 +61,6 @@
       ],
       "sourceSubdirectory": "",
       "destination": "BepInEx/plugins/Advize-PlantEasily"
-    },
-    {
-      "id": "SpikeHimself-XPortal",
-      "version": "1.2.25",
-      "source": "Thunderstore",
-      "page": "https://thunderstore.io/c/valheim/p/SpikeHimself/XPortal/",
-      "downloadUrl": "https://thunderstore.io/package/download/SpikeHimself/XPortal/1.2.25/",
-      "sha256": "8d36d7e863b07db634bc839a84befd4a6e843f0e795e593caec5cff4ae3c1b31",
-      "dependencies": [
-        "denikson-BepInExPack_Valheim-5.4.2333",
-        "ValheimModding-Jotunn-2.30.0"
-      ],
-      "sourceSubdirectory": "plugins",
-      "destination": "BepInEx/plugins"
     },
     {
       "id": "Mushroom_Vikings-MushroomSync",
@@ -263,6 +249,100 @@
   ],
   "localPlugins": [
     {
+      "id": "ValheimModPack-AnyPortalPlus",
+      "version": "1.3.0",
+      "source": "local-plugins/XPortal.dll",
+      "destination": "BepInEx/plugins/XPortal/XPortal.dll",
+      "sha256": "cb47f03e7a3cc8f20622253eee58f7d4ca2a7718509f7bf95399e222e183ee95",
+      "dependencies": [
+        "denikson-BepInExPack_Valheim-5.4.2351",
+        "ValheimModding-Jotunn-2.30.2"
+      ],
+      "upstream": {
+        "repository": "https://github.com/SpikeHimself/XPortal",
+        "tag": "v1.2.25",
+        "commit": "360eccc528f87c137b07dff9905800159e90d8dc",
+        "license": "GPL-3.0"
+      },
+      "resourceFiles": [
+        {
+          "source": "plugins/AnyPortalPlus/Resources/LICENSE",
+          "destination": "BepInEx/plugins/XPortal/LICENSE",
+          "sha256": "81cbae84a29ce7e770bf2bc7b178e50bda0ce8de6067aba661b0bc7b05b562f8"
+        },
+        {
+          "source": "plugins/AnyPortalPlus/Resources/ORIGIN.md",
+          "destination": "BepInEx/plugins/XPortal/ORIGIN.md",
+          "sha256": "de9a68cffd2c82df95784eb41843de11c016b991bf5782824b89e582d6feec97"
+        },
+        {
+          "source": "plugins/AnyPortalPlus/Resources/Translations/Chinese/xportal-translation-chinese.json",
+          "destination": "BepInEx/plugins/XPortal/Translations/Chinese/xportal-translation-chinese.json",
+          "sha256": "8931e588bf322a7a8ceab49ff494eb2bd9241a053761dfc038082796856d205e"
+        },
+        {
+          "source": "plugins/AnyPortalPlus/Resources/Translations/Dutch/xportal-translations-dutch.json",
+          "destination": "BepInEx/plugins/XPortal/Translations/Dutch/xportal-translations-dutch.json",
+          "sha256": "ec632b470d90f1466548ae8f7099f604084460681dfe18294823fe958ee83df2"
+        },
+        {
+          "source": "plugins/AnyPortalPlus/Resources/Translations/English/xportal-translations-english.json",
+          "destination": "BepInEx/plugins/XPortal/Translations/English/xportal-translations-english.json",
+          "sha256": "38c9b0d469b18cc51feb3b84cbb60445b262f5f74709e5a3c5d4cf967d553929"
+        },
+        {
+          "source": "plugins/AnyPortalPlus/Resources/Translations/French/xportal-translations-french.json",
+          "destination": "BepInEx/plugins/XPortal/Translations/French/xportal-translations-french.json",
+          "sha256": "3549282fe06d9e24b027e2f8974f07736892948b72b3af82cc219b4516240ee3"
+        },
+        {
+          "source": "plugins/AnyPortalPlus/Resources/Translations/German/xportal-translations-german.json",
+          "destination": "BepInEx/plugins/XPortal/Translations/German/xportal-translations-german.json",
+          "sha256": "0b4c95250d7262fea38aa4c5cdd289d87be857578daccd495c41dabe29a894d7"
+        },
+        {
+          "source": "plugins/AnyPortalPlus/Resources/Translations/Italian/xportal-translations-italian.json",
+          "destination": "BepInEx/plugins/XPortal/Translations/Italian/xportal-translations-italian.json",
+          "sha256": "9aca740196380462d575f3c1f71d14cb8373520cad5cf91f862e0147bcaee7d6"
+        },
+        {
+          "source": "plugins/AnyPortalPlus/Resources/Translations/Japanese/xportal-translations-japanese.json",
+          "destination": "BepInEx/plugins/XPortal/Translations/Japanese/xportal-translations-japanese.json",
+          "sha256": "a8e2afaafe4a8e9cdf9bccee9fe4c2b7d3d777aa7ddd641bec02e333a02e2ead"
+        },
+        {
+          "source": "plugins/AnyPortalPlus/Resources/Translations/Korean/xportal-translations-korean.json",
+          "destination": "BepInEx/plugins/XPortal/Translations/Korean/xportal-translations-korean.json",
+          "sha256": "2635d2c7445de9fc663763c5ceaf1b3e73a81318dba20c9ff675cd5082938780"
+        },
+        {
+          "source": "plugins/AnyPortalPlus/Resources/Translations/Polish/xportal-translations-polish.json",
+          "destination": "BepInEx/plugins/XPortal/Translations/Polish/xportal-translations-polish.json",
+          "sha256": "66bfd72bca72ba82e9b2f46ea6a95581d73efa61d4b9f79ea8cec31818379773"
+        },
+        {
+          "source": "plugins/AnyPortalPlus/Resources/Translations/Portuguese_Brazilian/xportal-translations-portuguese_brazillian.json",
+          "destination": "BepInEx/plugins/XPortal/Translations/Portuguese_Brazilian/xportal-translations-portuguese_brazillian.json",
+          "sha256": "130917fdcfb8abff8ce5a462cca4fbaa44bf0f844b7bfbcd940cb128700f0ddc"
+        },
+        {
+          "source": "plugins/AnyPortalPlus/Resources/Translations/Russian/xportal-translations-russian.json",
+          "destination": "BepInEx/plugins/XPortal/Translations/Russian/xportal-translations-russian.json",
+          "sha256": "808337c876814385cd87cdc7732a86dc3f821185796ef93cab969f2e2acd060e"
+        },
+        {
+          "source": "plugins/AnyPortalPlus/Resources/Translations/Spanish/xportal-translations-spanish.json",
+          "destination": "BepInEx/plugins/XPortal/Translations/Spanish/xportal-translations-spanish.json",
+          "sha256": "49c49fc9e42e31dada26ddb65e8b793b413b19632e8a6a91bf61c0d51e2f32a2"
+        },
+        {
+          "source": "plugins/AnyPortalPlus/Resources/Translations/Ukrainian/xportal-translations-ukrainian.json",
+          "destination": "BepInEx/plugins/XPortal/Translations/Ukrainian/xportal-translations-ukrainian.json",
+          "sha256": "fbd4a99b0e00474fe57f896b777cb12ddfbaa1b5ba133a833860cb31da69789a"
+        }
+      ]
+    },
+    {
       "id": "ValheimModPack-EAQSQuickStackBridge",
       "version": "1.2.0",
       "source": "local-plugins/EAQSQuickStackBridge.dll",
@@ -326,8 +406,8 @@
         "denikson-BepInExPack_Valheim-5.4.2351",
         "ValheimModding-Jotunn-2.30.2"
       ],
-      "version": "1.1.0",
-      "sha256": "3ebf70e9860b7525df9bf9577abf37dc37d42eb4eec4de288ea435fe320bbbb9"
+      "version": "1.1.1",
+      "sha256": "4df11c1fce9a87eef1c9c750da31d5b428769a0868f3f992b9981ed2ccce220f"
     },
     {
       "id": "ValheimModPack-RenewableResourceTimers",
@@ -371,7 +451,7 @@
       "dependencies": [
         "denikson-BepInExPack_Valheim-5.4.2351",
         "ValheimModding-Jotunn-2.30.2",
-        "SpikeHimself-XPortal-1.2.25"
+        "ValheimModPack-AnyPortalPlus-1.3.0"
       ]
     },
     {

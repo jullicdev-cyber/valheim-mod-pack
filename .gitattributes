@@ -9,5 +9,9 @@
 *.sh text eol=lf
 *.py text eol=lf
 *.cmd text eol=crlf
-Game/** -text
+Game/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
 config/** -text
+plugins/AnyPortalPlus/Resources/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+# Preserve upstream generated resources and the unmodified reconnect patch verbatim.
+plugins/AnyPortalPlus/Source/Properties/Resources.* -whitespace
+plugins/AnyPortalPlus/Source/Patches/ZDOMan.cs -whitespace

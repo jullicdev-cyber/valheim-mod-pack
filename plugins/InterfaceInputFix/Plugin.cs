@@ -19,7 +19,7 @@ namespace ValheimModPack.InterfaceInputFix
     [NetworkCompatibility(CompatibilityLevel.NotEnforced, VersionStrictness.None)]
     public sealed class Plugin : BaseUnityPlugin
     {
-        public const string Id = "valheimmodpack.interfaceinputfix", Version = "1.1.0";
+        public const string Id = "valheimmodpack.interfaceinputfix", Version = "1.1.1";
         private static Plugin active;
         private Harmony harmony;
         private InputLease portalLease;
@@ -49,7 +49,9 @@ namespace ValheimModPack.InterfaceInputFix
         {
             PluginInfo info;
             if (!Chainloader.PluginInfos.TryGetValue(guid, out info)) return null;
-            if (info.Metadata.Version.ToString() != version)
+            string actual = info.Metadata.Version.ToString();
+            bool supported = actual == version || guid == "yay.spikehimself.xportal" && version == "1.2.25" && actual == "1.3.0";
+            if (!supported)
             {
                 Logger.LogWarning(guid + " " + info.Metadata.Version + " is not the tested " + version + "; its compatibility patch is skipped.");
                 return null;

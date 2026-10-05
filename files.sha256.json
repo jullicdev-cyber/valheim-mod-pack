@@ -65,7 +65,7 @@
   },
   {
     "path": "BepInEx/config/valheimmodpack.expeditionloadouts.cfg",
-    "sha256": "3afe10fcd896ffc7350fdee49ebb62c9077c9c24dfe88b053bc6c0dd0c2a8db6"
+    "sha256": "77c8ad627c2465be5f72f3011b77a5cfaebf98dfcfe1ae1fc0533cb8ecf13f14"
   },
   {
     "path": "BepInEx/config/valheimmodpack.inventoryadmin.cfg",
@@ -301,7 +301,7 @@
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-InterfaceInputFix/InterfaceInputFix.dll",
-    "sha256": "3ebf70e9860b7525df9bf9577abf37dc37d42eb4eec4de288ea435fe320bbbb9"
+    "sha256": "4df11c1fce9a87eef1c9c750da31d5b428769a0868f3f992b9981ed2ccce220f"
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-InventoryAdmin/InventoryAdmin.dll",
@@ -480,6 +480,14 @@
     "sha256": "d1cd997f647b16327697b42f710453f7e7e8dcf97ed61fd359ddefc764d799df"
   },
   {
+    "path": "BepInEx/plugins/XPortal/LICENSE",
+    "sha256": "81cbae84a29ce7e770bf2bc7b178e50bda0ce8de6067aba661b0bc7b05b562f8"
+  },
+  {
+    "path": "BepInEx/plugins/XPortal/ORIGIN.md",
+    "sha256": "de9a68cffd2c82df95784eb41843de11c016b991bf5782824b89e582d6feec97"
+  },
+  {
     "path": "BepInEx/plugins/XPortal/Translations/Chinese/xportal-translation-chinese.json",
     "sha256": "8931e588bf322a7a8ceab49ff494eb2bd9241a053761dfc038082796856d205e"
   },
@@ -533,7 +541,7 @@
   },
   {
     "path": "BepInEx/plugins/XPortal/XPortal.dll",
-    "sha256": "f133fb57501260276e1783f20dd89f8675e7e1efcf29571d53e0d40f3ae6cd5b"
+    "sha256": "cb47f03e7a3cc8f20622253eee58f7d4ca2a7718509f7bf95399e222e183ee95"
   },
   {
     "path": "changelog.txt",

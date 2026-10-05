@@ -27,6 +27,32 @@ def verify_pack(root):
         path = source / entry['path']
         if path.is_symlink() or hashlib.sha256(path.read_bytes()).hexdigest() != entry['sha256']:
             raise ValueError('Pack checksum mismatch: ' + entry['path'])
+    verify_locked_plugins(source, lock)
+
+
+def verify_locked_plugins(source, lock):
+    """Local forks and their resources participate in the same dependency graph."""
+    entries = list(lock.get('packages', [])) + list(lock.get('localPlugins', []))
+    versions = {}
+    for mod in entries:
+        if mod['id'] in versions:
+            raise ValueError('Duplicate locked plugin: ' + mod['id'])
+        if not re.fullmatch(r'\d+\.\d+\.\d+', mod['version']):
+            raise ValueError('Invalid locked plugin version: ' + mod['id'])
+        versions[mod['id']] = tuple(int(v) for v in mod['version'].split('.'))
+    for mod in entries:
+        for dependency in mod.get('dependencies', []):
+            parsed = re.fullmatch(r'(.+)-(\d+\.\d+\.\d+)', dependency)
+            if parsed is None:
+                raise ValueError('Unknown dependency format: ' + dependency)
+            minimum = tuple(int(v) for v in parsed[2].split('.'))
+            if parsed[1] not in versions or versions[parsed[1]] < minimum:
+                raise ValueError('Missing/incompatible dependency: ' + dependency)
+    for mod in lock.get('localPlugins', []):
+        for file in [mod] + list(mod.get('resourceFiles', [])):
+            path = source / file['destination']
+            if not path.is_file() or path.is_symlink() or hashlib.sha256(path.read_bytes()).hexdigest() != file['sha256']:
+                raise ValueError('Local plugin/resource checksum mismatch: ' + file['destination'])
 
 
 def install(root, target):

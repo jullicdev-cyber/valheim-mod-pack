@@ -1,6 +1,16 @@
 [CmdletBinding()]
 param([string]$OutputDirectory)
 $ErrorActionPreference = 'Stop'
+function Resolve-PackChild([string]$BaseDirectory, [string]$RelativePath) {
+    if ([string]::IsNullOrWhiteSpace($RelativePath) -or [IO.Path]::IsPathRooted($RelativePath) -or
+        $RelativePath -match '(^|[\\/])\.\.?([\\/]|$)') { throw "Unsafe locked path: $RelativePath" }
+    $base = [IO.Path]::GetFullPath($BaseDirectory).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+    $file = [IO.Path]::GetFullPath((Join-Path $base $RelativePath))
+    if (-not $file.StartsWith($base + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Locked path escapes its directory: $RelativePath"
+    }
+    return $file
+}
 $root = Split-Path $PSScriptRoot -Parent
 $version = (Get-Content -LiteralPath (Join-Path $root 'VERSION') -Raw).Trim()
 $versionLock = Get-Content -LiteralPath (Join-Path $root 'mods.lock.json') -Raw | ConvertFrom-Json
@@ -34,6 +44,17 @@ foreach ($local in $lock.localPlugins) {
     $target = Join-Path $output $local.destination
     New-Item -ItemType Directory -Force (Split-Path $target -Parent) | Out-Null
     Copy-Item -LiteralPath $source -Destination $target
+    foreach ($resource in $local.resourceFiles) {
+        $resourceSource = Resolve-PackChild $root $resource.source
+        $resourceTarget = Resolve-PackChild $output $resource.destination
+        if (-not (Test-Path -LiteralPath $resourceSource -PathType Leaf)) { throw "Missing local resource: $($local.id): $($resource.source)" }
+        if ($resource.sha256 -notmatch '^[a-fA-F0-9]{64}$' -or
+            (Get-FileHash -LiteralPath $resourceSource -Algorithm SHA256).Hash -ne $resource.sha256) {
+            throw "Local resource hash mismatch: $($local.id): $($resource.source)"
+        }
+        New-Item -ItemType Directory -Force (Split-Path $resourceTarget -Parent) | Out-Null
+        Copy-Item -LiteralPath $resourceSource -Destination $resourceTarget -Force
+    }
 }
 $config = Join-Path $output 'BepInEx/config'
 New-Item -ItemType Directory -Force $config | Out-Null

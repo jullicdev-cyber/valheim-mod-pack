@@ -23,6 +23,11 @@ function Run-Suite([string]$Name,[string]$Script,[string[]]$Arguments=@()) {
 }
 Run-Suite 'pack-integrity' 'scripts/Verify.ps1'
 Run-Suite 'plugin-dependencies' 'scripts/Audit-Plugins.ps1'
+Run-Suite 'anyportal-list' 'plugins/AnyPortalPlus/Tests/Test-List.ps1'
+Run-Suite 'anyportal-core' 'plugins/AnyPortalPlus/Tests/Test-Core.ps1'
+Run-Suite 'anyportal-map-markers' 'plugins/AnyPortalPlus/Test-Markers.ps1'
+Run-Suite 'anyportal-ui' 'plugins/AnyPortalPlus/Test-Ui.ps1'
+Run-Suite 'anyportal-package-resources' 'plugins/AnyPortalPlus/Test-PackResources.ps1'
 Run-Suite 'inventory-admin-policy' 'plugins/InventoryAdmin/Test-Policy.ps1'
 Run-Suite 'inventory-admin-service' 'plugins/InventoryAdmin/Test-Service.ps1'
 Run-Suite 'inventory-admin-locations' 'plugins/InventoryAdmin/Test-Locations.ps1'
