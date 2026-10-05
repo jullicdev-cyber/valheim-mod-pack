@@ -17,7 +17,7 @@ namespace ValheimModPack.InventoryAdmin
         private readonly Button[] playerRows = new Button[PlayerPageSize], itemRows = new Button[ItemPageSize];
         private readonly Image[] icons = new Image[ItemPageSize];
         private readonly List<Selectable> controls = new List<Selectable>();
-        private GameObject overlay, panel, confirmation, dragGhost;
+        private GameObject overlay, panel, confirmation, dragGhost, groupRadiusModal, groupRadiusPanel;
         private Player localPlayer;
         private ZNet network;
         private AdminInventoryView snapshot;
@@ -26,6 +26,17 @@ namespace ValheimModPack.InventoryAdmin
         private Text mapTrackingLabel;
         private Text heading, subtitle, playerHeading, itemsHeading, playerPages, itemPages, selection, details, status, receiverText, roleHint, quantityHeading;
         private Button playerPrev, playerNext, itemPrev, itemNext, take, delete, refresh, grant, revoke, findSelectedOnMap;
+        private Button openGroupRadius;
+        private readonly List<Selectable> groupRadiusControls = new List<Selectable>();
+        private readonly Button[] groupRadiusPlayers = new Button[PlayerPageSize];
+        private Button groupRadiusPrev, groupRadiusNext, groupRadiusApply, groupRadiusLeader, groupRadiusExemptionApply, groupRadiusReload, groupRadiusBack;
+        private Toggle groupRadiusEnabled, groupRadiusExempt;
+        private InputField groupRadiusValue;
+        private Text groupRadiusHeading, groupRadiusSubtitle, groupRadiusPlayersHeading, groupRadiusPages, groupRadiusEnabledLabel,
+            groupRadiusValueLabel, groupRadiusCurrent, groupRadiusSelected, groupRadiusExemptLabel, groupRadiusHint, groupRadiusStatus;
+        private long groupRadiusRevision = -1;
+        private bool groupRadiusSettingsDirty, groupRadiusExemptionDirty, groupRadiusPainting;
+        private bool GroupRadiusHasDrafts { get { return groupRadiusSettingsDirty || groupRadiusExemptionDirty; } }
         private long selectedPeer;
         private string selectedItem, notice = "", dragSnapshot, dragItem;
         private int playerPage, itemPage, generation, dragQuantity;
@@ -67,6 +78,13 @@ namespace ValheimModPack.InventoryAdmin
                 if (bindings.RequestPlayers != null) bindings.RequestPlayers();
             }
             catch (Exception error) { Report(error); Hide(); }
+        }
+        public void ShowGroupRadius()
+        {
+            if (!IsVisible) Show();
+            if (!IsVisible) return;
+            try { OpenGroupRadius(); }
+            catch (Exception error) { Report(error); SetStatus(T("Не удалось открыть настройки радиуса группы.", "Could not open group radius settings.")); }
         }
         // Called separately by the isolated menu probe, without a real player or an input lease.
         private void BuildVisuals()
@@ -130,8 +148,10 @@ namespace ValheimModPack.InventoryAdmin
             grant = ButtonAt("", -394, -224, 228, 42, () => ChangeRole(true));
             revoke = ButtonAt("", -394, -275, 228, 42, () => ChangeRole(false));
             selection = Label("", -25, -218, 477, 35, 17, false);
-            details = Label("", 126, -268, 780, 62, 15, false);
+            details = Label("", -25, -268, 477, 62, 15, false);
             refresh = ButtonAt("", 388, -218, 250, 42, Refresh);
+            openGroupRadius = ButtonAt("", 388, -275, 250, 42, OpenGroupRadius);
+            openGroupRadius.gameObject.name = "InventoryAdmin.OpenGroupRadius";
             showPlayersOnMap = GUIManager.Instance.CreateToggle(panel.transform, 28, 28).GetComponent<Toggle>();
             showPlayersOnMap.gameObject.name = "InventoryAdmin.ShowPlayersOnMap";
             showPlayersOnMap.gameObject.layer = GUIManager.UILayer;
@@ -178,7 +198,7 @@ namespace ValheimModPack.InventoryAdmin
                 if (Input.GetKeyDown(KeyCode.Escape) || ZInput.GetButtonDown("JoyButtonB"))
                 {
                     if (ZInput.GetButtonDown("JoyButtonB")) ZInput.ResetButtonStatus("JoyButtonB");
-                    if (confirmation != null) CancelConfirmation(); else Hide();
+                    if (confirmation != null) CancelConfirmation(); else if (groupRadiusModal != null) BackFromGroupRadius(); else Hide();
                     return;
                 }
                 if (Time.unscaledTime >= nextRefresh) { nextRefresh = Time.unscaledTime + .25f; Repaint(); Scale(); }
@@ -276,6 +296,284 @@ namespace ValheimModPack.InventoryAdmin
             // Release our input lease before Valheim opens its large map.
             Hide(); bindings.FindPlayerOnMap(peerId);
         }
+        private void OpenGroupRadius()
+        {
+            if (groupRadiusModal != null || busy || !Allowed() || bindings.GetGroupRadius == null) return;
+            CancelDrag(); CancelConfirmation();
+            if (quantity != null) quantity.DeactivateInputField();
+            var center = new Vector2(.5f, .5f);
+            groupRadiusModal = new GameObject("InventoryAdmin.GroupRadiusModal", typeof(RectTransform), typeof(Image));
+            groupRadiusModal.layer = GUIManager.UILayer; groupRadiusModal.transform.SetParent(overlay.transform, false);
+            var rect = groupRadiusModal.GetComponent<RectTransform>();
+            rect.anchorMin = Vector2.zero; rect.anchorMax = Vector2.one; rect.offsetMin = rect.offsetMax = Vector2.zero;
+            groupRadiusModal.GetComponent<Image>().color = new Color(0, 0, 0, .1f);
+            groupRadiusPanel = GUIManager.Instance.CreateWoodpanel(groupRadiusModal.transform, center, center, Vector2.zero, 960, 750, false);
+            groupRadiusPanel.name = "InventoryAdmin.GroupRadiusWoodPanel";
+            groupRadiusHeading = GroupRadiusLabel("", 0, 302, 790, 42, 28, true);
+            GroupRadiusButton("X", 424, 308, 42, 36, BackFromGroupRadius);
+            groupRadiusSubtitle = GroupRadiusLabel("", 0, 258, 860, 40, 16, false);
+            groupRadiusPlayersHeading = GroupRadiusLabel("", -306, 203, 246, 34, 22, true);
+            for (int i = 0; i < PlayerPageSize; i++)
+            {
+                int slot = i;
+                groupRadiusPlayers[i] = GroupRadiusButton("", -306, 153 - i * 54, 246, 46, () => SelectGroupRadiusPlayer(slot));
+            }
+            groupRadiusPrev = GroupRadiusButton("<", -405, -178, 42, 32, () => { if (playerPage > 0) playerPage--; RepaintGroupRadius(); });
+            groupRadiusPages = GroupRadiusLabel("", -306, -178, 130, 32, 16, false);
+            groupRadiusNext = GroupRadiusButton(">", -207, -178, 42, 32, () => { playerPage++; RepaintGroupRadius(); });
+            groupRadiusEnabled = GroupRadiusToggle("InventoryAdmin.GroupRadiusEnabled", -127, 192, 550, out groupRadiusEnabledLabel);
+            groupRadiusValueLabel = GroupRadiusLabel("", 4, 134, 286, 40, 18, false);
+            groupRadiusValue = GUIManager.Instance.CreateInputField(groupRadiusPanel.transform, center, center, new Vector2(225, 134),
+                InputField.ContentType.Standard, "500", 20, 154, 40).GetComponent<InputField>();
+            groupRadiusValue.gameObject.name = "InventoryAdmin.GroupRadiusValue";
+            groupRadiusValue.characterLimit = 16; groupRadiusValue.textComponent.supportRichText = false;
+            var placeholder = groupRadiusValue.placeholder as Text; if (placeholder != null) placeholder.supportRichText = false;
+            groupRadiusControls.Add(groupRadiusValue);
+            int created = generation; GameObject modal = groupRadiusModal;
+            groupRadiusEnabled.onValueChanged.AddListener(value => GroupRadiusDraftChanged(created, modal, true));
+            groupRadiusExempt = GroupRadiusToggle("InventoryAdmin.GroupRadiusExempt", -127, -90, 550, out groupRadiusExemptLabel);
+            groupRadiusExempt.onValueChanged.AddListener(value => GroupRadiusDraftChanged(created, modal, false));
+            groupRadiusValue.onValueChanged.AddListener(value => GroupRadiusDraftChanged(created, modal, true));
+            groupRadiusApply = GroupRadiusButton("", 159, 72, 510, 42, ApplyGroupRadiusSettings);
+            groupRadiusCurrent = GroupRadiusLabel("", 159, 11, 550, 64, 17, false);
+            groupRadiusSelected = GroupRadiusLabel("", 159, -48, 550, 38, 18, false);
+            groupRadiusLeader = GroupRadiusButton("", 159, -149, 510, 42, ApplyGroupRadiusLeader);
+            groupRadiusExemptionApply = GroupRadiusButton("", 159, -203, 510, 42, ApplyGroupRadiusExemption);
+            groupRadiusHint = GroupRadiusLabel("", 0, -258, 858, 54, 15, false);
+            groupRadiusReload = GroupRadiusButton("", -212, -310, 402, 42, ReloadGroupRadius);
+            groupRadiusBack = GroupRadiusButton("", 212, -310, 402, 42, BackFromGroupRadius);
+            groupRadiusStatus = GroupRadiusLabel("", 0, -353, 858, 40, 15, false);
+            groupRadiusRevision = -1; groupRadiusSettingsDirty = groupRadiusExemptionDirty = false; notice = "";
+            panel.SetActive(false); groupRadiusModal.transform.SetAsLastSibling();
+            RepaintGroupRadius(); Scale();
+            if (EventSystem.current != null) EventSystem.current.SetSelectedGameObject(groupRadiusBack.gameObject);
+        }
+        private void GroupRadiusDraftChanged(int created, GameObject modal, bool settings)
+        {
+            if (groupRadiusPainting || created != generation || !ReferenceEquals(modal, groupRadiusModal) || !IsVisible) return;
+            if (settings) groupRadiusSettingsDirty = true; else groupRadiusExemptionDirty = true;
+            RepaintGroupRadius();
+        }
+        private static bool ValidGroupRadiusView(GroupRadiusAdminView view)
+        {
+            return view != null && view.ExemptPeers != null && view.Revision >= 0 && !Single.IsNaN(view.Radius) && !Single.IsInfinity(view.Radius)
+                && view.Radius >= 50 && view.Radius <= 10000;
+        }
+        private GroupRadiusAdminView GroupRadiusSnapshot()
+        { return bindings.GetGroupRadius == null ? null : bindings.GetGroupRadius(); }
+        private void LoadGroupRadiusDraft(GroupRadiusAdminView view)
+        {
+            if (!ValidGroupRadiusView(view)) return;
+            groupRadiusPainting = true;
+            try
+            {
+                groupRadiusRevision = view.Revision;
+                groupRadiusEnabled.SetIsOnWithoutNotify(view.Enabled);
+                groupRadiusValue.text = view.Radius.ToString("0.###", CultureInfo.InvariantCulture);
+                groupRadiusExempt.SetIsOnWithoutNotify(selectedPeer != 0 && view.ExemptPeers.Contains(selectedPeer));
+                groupRadiusSettingsDirty = groupRadiusExemptionDirty = false;
+            }
+            finally { groupRadiusPainting = false; }
+        }
+        private void ReloadGroupRadius()
+        {
+            if (busy || !Allowed()) return;
+            var view = GroupRadiusSnapshot();
+            if (!ValidGroupRadiusView(view))
+            { notice = T("Настройки ещё не получены. Дождитесь ответа сервера.", "Settings have not arrived yet. Wait for the server response."); }
+            else { LoadGroupRadiusDraft(view); notice = T("Загружены текущие настройки сервера.", "Current server settings loaded."); }
+            if (bindings.RequestPlayers != null) bindings.RequestPlayers();
+            RepaintGroupRadius();
+        }
+        private void SelectGroupRadiusPlayer(int slot)
+        {
+            int index = playerPage * PlayerPageSize + slot;
+            if (busy || !Allowed() || index < 0 || index >= players.Count) return;
+            long peer = players[index].PeerId;
+            if (peer != selectedPeer)
+            {
+                selectedPeer = peer; snapshot = null; selectedItem = null; itemPage = 0;
+                var view = GroupRadiusSnapshot();
+                groupRadiusExempt.SetIsOnWithoutNotify(ValidGroupRadiusView(view) && view.ExemptPeers.Contains(peer));
+                groupRadiusExemptionDirty = false;
+            }
+            RepaintGroupRadius();
+        }
+        private bool CanSubmitGroupRadius(out GroupRadiusAdminView view)
+        {
+            view = GroupRadiusSnapshot();
+            if (groupRadiusModal == null || busy || !Allowed()) return false;
+            if (!ValidGroupRadiusView(view))
+            { notice = T("Дождитесь актуальных настроек сервера.", "Wait for current server settings."); RepaintGroupRadius(); return false; }
+            if (view.ReadOnly)
+            { notice = String.IsNullOrEmpty(view.Notice) ? T("Настройки доступны только для чтения.", "Settings are read-only.") : Safe(view.Notice, 350); RepaintGroupRadius(); return false; }
+            if (view.Revision != groupRadiusRevision)
+            { notice = T("Настройки изменились. Нажмите «Обновить», затем повторите действие.", "Settings changed. Press Refresh, then try the action again."); RepaintGroupRadius(); return false; }
+            return true;
+        }
+        private void ApplyGroupRadiusSettings()
+        {
+            GroupRadiusAdminView view;
+            if (bindings.UpdateGroupRadius == null || !CanSubmitGroupRadius(out view)) return;
+            float radius;
+            if (!Single.TryParse(groupRadiusValue.text, NumberStyles.Float, CultureInfo.InvariantCulture, out radius)
+                || Single.IsNaN(radius) || Single.IsInfinity(radius) || radius < 50 || radius > 10000)
+            {
+                notice = T("Введите радиус от 50 до 10000 м. Десятичный разделитель — точка.", "Enter a radius from 50 to 10000 m. Use a dot for decimals.");
+                RepaintGroupRadius(); return;
+            }
+            bindings.UpdateGroupRadius(groupRadiusRevision, groupRadiusEnabled.isOn, radius);
+            groupRadiusSettingsDirty = false; RepaintGroupRadius();
+        }
+        private void ApplyGroupRadiusLeader()
+        {
+            GroupRadiusAdminView view;
+            if (bindings.SetGroupRadiusLeader == null || !CanSubmitGroupRadius(out view)) return;
+            var player = SelectedPlayer(); if (player == null) return;
+            bindings.SetGroupRadiusLeader(groupRadiusRevision, player.PeerId);
+            RepaintGroupRadius();
+        }
+        private void ApplyGroupRadiusExemption()
+        {
+            GroupRadiusAdminView view;
+            if (bindings.SetGroupRadiusExemption == null || !CanSubmitGroupRadius(out view)) return;
+            var player = SelectedPlayer(); if (player == null) return;
+            bindings.SetGroupRadiusExemption(groupRadiusRevision, player.PeerId, groupRadiusExempt.isOn);
+            groupRadiusExemptionDirty = false; RepaintGroupRadius();
+        }
+        private void RepaintGroupRadius()
+        {
+            if (groupRadiusModal == null || groupRadiusHeading == null) return;
+            var view = GroupRadiusSnapshot();
+            bool valid = ValidGroupRadiusView(view);
+            if (valid && !GroupRadiusHasDrafts && view.Revision != groupRadiusRevision) LoadGroupRadiusDraft(view);
+            bool stale = valid && view.Revision != groupRadiusRevision;
+            bool can = !busy && Allowed() && valid && !stale && !view.ReadOnly;
+            string shortcut = bindings.GroupRadiusShortcutLabel == null ? "" : bindings.GroupRadiusShortcutLabel();
+            groupRadiusHeading.text = T("Радиус группы", "Group radius");
+            groupRadiusSubtitle.text = T("Настройки действуют для всего сервера. Открыть: ", "Settings apply to the whole server. Open: ")
+                + (String.IsNullOrEmpty(shortcut) ? T("Клавиша не назначена", "Unbound") : shortcut);
+            groupRadiusPlayersHeading.text = T("Игроки онлайн", "Online players");
+            int pages = Math.Max(1, (players.Count + PlayerPageSize - 1) / PlayerPageSize);
+            playerPage = Math.Max(0, Math.Min(playerPage, pages - 1)); groupRadiusPages.text = (playerPage + 1) + " / " + pages;
+            for (int i = 0; i < PlayerPageSize; i++)
+            {
+                int index = playerPage * PlayerPageSize + i;
+                var player = index < players.Count ? players[index] : null;
+                groupRadiusPlayers[i].interactable = !busy && Allowed() && player != null;
+                groupRadiusPlayers[i].GetComponentInChildren<Text>().text = player == null ? "" : (player.PeerId == selectedPeer ? "› " : "")
+                    + Safe(player.Name, 48) + (player.PeerId == Self() ? T(" (вы)", " (you)") : "")
+                    + (valid && player.PeerId == view.LeaderPeerId ? T("\nЦентральный игрок", "\nCentral player") : "");
+            }
+            groupRadiusPrev.interactable = !busy && Allowed() && playerPage > 0;
+            groupRadiusNext.interactable = !busy && Allowed() && playerPage + 1 < pages;
+            groupRadiusEnabledLabel.text = T("Ограничивать удаление от центрального игрока", "Limit distance from the central player");
+            groupRadiusValueLabel.text = T("Радиус, м (50–10000)", "Radius, m (50–10000)");
+            groupRadiusEnabled.interactable = groupRadiusValue.interactable = can;
+            groupRadiusApply.GetComponentInChildren<Text>().text = T("Применить режим и радиус", "Apply mode and radius");
+            groupRadiusApply.interactable = can && bindings.UpdateGroupRadius != null;
+            bool leaderOnline = false;
+            if (valid) foreach (var player in players) if (player.PeerId == view.LeaderPeerId) { leaderOnline = true; break; }
+            groupRadiusCurrent.text = !valid ? T("Ожидаю настройки сервера…", "Waiting for server settings…")
+                : T("Сейчас: ", "Current: ") + (view.Enabled ? T("включено", "enabled") : T("выключено", "disabled")) + " • "
+                    + view.Radius.ToString("0.###", CultureInfo.InvariantCulture) + T(" м\nЦентральный игрок: ", " m\nCentral player: ")
+                    + (view.LeaderPeerId == 0 && String.IsNullOrEmpty(view.LeaderName) ? T("не выбран", "not selected") : Safe(view.LeaderName, 48)
+                        + (leaderOnline ? "" : T(" (не в сети)", " (offline)")));
+            var selected = SelectedPlayer();
+            groupRadiusSelected.text = selected == null ? T("Выберите игрока слева.", "Select a player on the left.")
+                : T("Выбран: ", "Selected: ") + Safe(selected.Name, 48);
+            groupRadiusExemptLabel.text = T("Личное исключение из ограничения", "Personal exemption from the limit");
+            groupRadiusExempt.interactable = can && selected != null;
+            groupRadiusLeader.GetComponentInChildren<Text>().text = T("Сделать выбранного игрока центральным", "Make selected player the center");
+            groupRadiusLeader.interactable = can && selected != null && bindings.SetGroupRadiusLeader != null && selected.PeerId != view.LeaderPeerId;
+            groupRadiusExemptionApply.GetComponentInChildren<Text>().text = T("Применить исключение выбранного игрока", "Apply selected player's exemption");
+            groupRadiusExemptionApply.interactable = can && selected != null && bindings.SetGroupRadiusExemption != null
+                && groupRadiusExempt.isOn != view.ExemptPeers.Contains(selected.PeerId);
+            groupRadiusHint.text = T("Центральный игрок автоматически исключён. Если он недоступен, ограничение приостанавливается. Изменения сохраняются после применения.",
+                "The central player is automatically exempt. The limit pauses when that player is unavailable. Changes are saved after Apply.");
+            groupRadiusReload.GetComponentInChildren<Text>().text = T("Обновить настройки и игроков", "Refresh settings and players");
+            groupRadiusReload.interactable = !busy && Allowed();
+            groupRadiusBack.GetComponentInChildren<Text>().text = T("Назад к инвентарям", "Back to inventories");
+            groupRadiusStatus.text = busy ? T("Ожидаю результат сервера…", "Waiting for the server result…")
+                : !Allowed() ? T("Доступ администратора отозван.", "Administrator access was revoked.")
+                : valid && view.ReadOnly ? (String.IsNullOrEmpty(view.Notice) ? T("Настройки доступны только для чтения.", "Settings are read-only.") : Safe(view.Notice, 350))
+                : stale ? T("Настройки изменились. Обновите их перед применением.", "Settings changed. Refresh them before applying.") : notice;
+            SetNavigation(groupRadiusControls);
+        }
+        private Text GroupRadiusLabel(string value, float x, float y, float width, float height, int size, bool headingStyle)
+        {
+            var original = panel; panel = groupRadiusPanel;
+            try { return Label(value, x, y, width, height, size, headingStyle); }
+            finally { panel = original; }
+        }
+        private Button GroupRadiusButton(string caption, float x, float y, float width, float height, Action action)
+        {
+            var center = new Vector2(.5f, .5f); int created = generation; GameObject modal = groupRadiusModal;
+            var button = GUIManager.Instance.CreateButton(caption, groupRadiusPanel.transform, center, center, new Vector2(x, y), width, height).GetComponent<Button>();
+            Style(button); groupRadiusControls.Add(button);
+            button.onClick.AddListener(() => InvokeGroupRadius(created, modal, action)); return button;
+        }
+        private Toggle GroupRadiusToggle(string name, float x, float y, float width, out Text label)
+        {
+            var center = new Vector2(.5f, .5f);
+            var toggle = GUIManager.Instance.CreateToggle(groupRadiusPanel.transform, 28, 28).GetComponent<Toggle>();
+            toggle.gameObject.name = name; toggle.gameObject.layer = GUIManager.UILayer;
+            var rect = toggle.GetComponent<RectTransform>(); rect.anchorMin = rect.anchorMax = center; rect.pivot = new Vector2(0, .5f);
+            rect.sizeDelta = new Vector2(width, 42); rect.anchoredPosition = new Vector2(x, y); rect.localScale = Vector3.one;
+            var background = toggle.transform.Find("Background").GetComponent<RectTransform>();
+            background.anchorMin = background.anchorMax = new Vector2(0, .5f); background.pivot = center;
+            background.anchoredPosition = new Vector2(16, 0); background.sizeDelta = new Vector2(28, 28);
+            label = toggle.GetComponentInChildren<Text>(); label.font = GUIManager.Instance.AveriaSerif;
+            label.fontSize = 18; label.color = GUIManager.Instance.ValheimBeige; label.supportRichText = false;
+            label.alignment = TextAnchor.MiddleLeft; label.horizontalOverflow = HorizontalWrapMode.Wrap; label.verticalOverflow = VerticalWrapMode.Truncate;
+            label.resizeTextForBestFit = true; label.resizeTextMinSize = 13; label.resizeTextMaxSize = 18;
+            label.rectTransform.anchorMin = Vector2.zero; label.rectTransform.anchorMax = Vector2.one;
+            label.rectTransform.offsetMin = new Vector2(40, 1); label.rectTransform.offsetMax = new Vector2(-4, -1);
+            groupRadiusControls.Add(toggle); return toggle;
+        }
+        private void InvokeGroupRadius(int created, GameObject modal, Action action)
+        {
+            if (created != generation || !IsVisible || !ReferenceEquals(modal, groupRadiusModal) || modal == null || !modal.activeInHierarchy) return;
+            try { if (!ValidContext()) { Hide(); return; } action(); }
+            catch (Exception error)
+            {
+                Report(error); notice = T("Не удалось применить настройки радиуса группы. ", "Could not apply group radius settings. ") + Safe(error.Message, 160);
+                RepaintGroupRadius();
+            }
+        }
+        private static void SetNavigation(IList<Selectable> source)
+        {
+            var active = new List<Selectable>();
+            foreach (var control in source) if (control != null && control.gameObject.activeInHierarchy && control.IsInteractable()) active.Add(control);
+            for (int i = 0; i < active.Count; i++) active[i].navigation = new Navigation
+            {
+                mode = Navigation.Mode.Explicit, selectOnUp = active[(i + active.Count - 1) % active.Count], selectOnLeft = active[(i + active.Count - 1) % active.Count],
+                selectOnDown = active[(i + 1) % active.Count], selectOnRight = active[(i + 1) % active.Count]
+            };
+        }
+        private void BackFromGroupRadius()
+        {
+            if (groupRadiusModal == null) return;
+            CloseGroupRadiusVisuals(); panel.SetActive(true); notice = ""; Repaint();
+            if (EventSystem.current != null) EventSystem.current.SetSelectedGameObject(openGroupRadius.gameObject);
+            if (!busy && Allowed() && selectedPeer != 0 && snapshot == null && bindings.RequestInventory != null) bindings.RequestInventory(selectedPeer);
+        }
+        private void CloseGroupRadiusVisuals()
+        {
+            if (groupRadiusValue != null) groupRadiusValue.DeactivateInputField();
+            if (groupRadiusModal != null)
+            {
+                if (EventSystem.current != null && EventSystem.current.currentSelectedGameObject != null
+                    && EventSystem.current.currentSelectedGameObject.transform.IsChildOf(groupRadiusModal.transform)) EventSystem.current.SetSelectedGameObject(null);
+                groupRadiusModal.SetActive(false); UnityEngine.Object.Destroy(groupRadiusModal);
+            }
+            groupRadiusModal = groupRadiusPanel = null; groupRadiusEnabled = groupRadiusExempt = null; groupRadiusValue = null;
+            groupRadiusHeading = groupRadiusSubtitle = groupRadiusPlayersHeading = groupRadiusPages = groupRadiusEnabledLabel = groupRadiusValueLabel
+                = groupRadiusCurrent = groupRadiusSelected = groupRadiusExemptLabel = groupRadiusHint = groupRadiusStatus = null;
+            groupRadiusPrev = groupRadiusNext = groupRadiusApply = groupRadiusLeader = groupRadiusExemptionApply = groupRadiusReload = groupRadiusBack = null;
+            groupRadiusControls.Clear(); Array.Clear(groupRadiusPlayers, 0, groupRadiusPlayers.Length);
+            groupRadiusRevision = -1; groupRadiusSettingsDirty = groupRadiusExemptionDirty = groupRadiusPainting = false;
+        }
         private void TakeSelected()
         {
             var item = SelectedItem(); int count = Quantity(item);
@@ -329,7 +627,7 @@ namespace ValheimModPack.InventoryAdmin
         }
         internal void BeginDrag(int slot, int created, PointerEventData eventData)
         {
-            if (created != generation || !IsVisible || !ValidContext() || busy || confirmation != null || selectedPeer == Self()) return;
+            if (created != generation || !IsVisible || !ValidContext() || busy || groupRadiusModal != null || confirmation != null || selectedPeer == Self()) return;
             int index = itemPage * ItemPageSize + slot;
             if (snapshot == null || index < 0 || index >= snapshot.Items.Count || snapshot.Items[index] == null) return;
             if (selectedItem != snapshot.Items[index].ItemToken) SelectItem(slot);
@@ -351,7 +649,7 @@ namespace ValheimModPack.InventoryAdmin
         }
         internal void Drop(int created)
         {
-            if (created != generation || !IsVisible || !ValidContext() || busy || confirmation != null || dragGhost == null) return;
+            if (created != generation || !IsVisible || !ValidContext() || busy || groupRadiusModal != null || confirmation != null || dragGhost == null) return;
             var item = SelectedItem();
             if (snapshot == null || item == null || snapshot.SnapshotToken != dragSnapshot || item.ItemToken != dragItem
                 || dragQuantity < 1 || dragQuantity > item.Count || selectedPeer == Self() || bindings.Take == null) { CancelDrag(); return; }
@@ -375,6 +673,7 @@ namespace ValheimModPack.InventoryAdmin
         private void Repaint()
         {
             if (heading == null) return;
+            if (groupRadiusModal != null) { RepaintGroupRadius(); return; }
             string shortcut = bindings.ShortcutLabel == null ? "" : bindings.ShortcutLabel();
             heading.text = T("Инвентари игроков", "Player inventories");
             subtitle.text = T("Открыть / закрыть: ", "Open / close: ") + (String.IsNullOrEmpty(shortcut) ? T("Клавиша не назначена", "Unbound") : shortcut)
@@ -413,6 +712,8 @@ namespace ValheimModPack.InventoryAdmin
             quantityHeading.text = T("Количество", "Quantity");
             delete.GetComponentInChildren<Text>().text = T("Удалить предмет…", "Delete item…");
             refresh.GetComponentInChildren<Text>().text = T("Обновить", "Refresh"); refresh.interactable = !busy;
+            openGroupRadius.GetComponentInChildren<Text>().text = T("Радиус группы", "Group radius");
+            openGroupRadius.interactable = !busy && Allowed() && bindings.GetGroupRadius != null;
             grant.GetComponentInChildren<Text>().text = T("Назначить администратором", "Grant administrator");
             revoke.GetComponentInChildren<Text>().text = T("Снять администраторство", "Revoke administrator");
             grant.gameObject.SetActive(Host()); revoke.gameObject.SetActive(Host());
@@ -479,7 +780,7 @@ namespace ValheimModPack.InventoryAdmin
         }
         private void Invoke(int created, Action action, bool isConfirmation)
         {
-            if (created != generation || !IsVisible || (confirmation != null && !isConfirmation)) return;
+            if (created != generation || !IsVisible || groupRadiusModal != null || (confirmation != null && !isConfirmation)) return;
             try { if (!ValidContext()) { Hide(); return; } action(); }
             catch (Exception error) { Report(error); Hide(); }
         }
@@ -489,13 +790,18 @@ namespace ValheimModPack.InventoryAdmin
             var rect = overlay.GetComponent<RectTransform>();
             float scale = Mathf.Min(1, Mathf.Min(rect.rect.width / 1160, rect.rect.height / 890));
             if (scale > .01f) panel.transform.localScale = Vector3.one * scale;
+            if (groupRadiusPanel != null)
+            {
+                float groupScale = Mathf.Min(1, Mathf.Min(rect.rect.width / 990, rect.rect.height / 780));
+                if (groupScale > .01f) groupRadiusPanel.transform.localScale = Vector3.one * groupScale;
+            }
         }
         public void Hide()
         {
             bool wasVisible = IsVisible; generation++;
             try
             {
-                CancelDrag(); CancelConfirmation();
+                CancelDrag(); CancelConfirmation(); CloseGroupRadiusVisuals();
                 if (quantity != null) quantity.DeactivateInputField();
                 if (overlay != null)
                 {
@@ -511,7 +817,7 @@ namespace ValheimModPack.InventoryAdmin
                 selectedPeer = 0; selectedItem = null;
                 heading = subtitle = playerHeading = itemsHeading = playerPages = itemPages = selection = details = status = receiverText = roleHint = quantityHeading = null;
                 mapTrackingLabel = null;
-                take = delete = refresh = grant = revoke = playerPrev = playerNext = itemPrev = itemNext = findSelectedOnMap = null;
+                take = delete = refresh = grant = revoke = playerPrev = playerNext = itemPrev = itemNext = findSelectedOnMap = openGroupRadius = null;
                 players.Clear(); controls.Clear(); Array.Clear(playerRows, 0, playerRows.Length); Array.Clear(itemRows, 0, itemRows.Length); Array.Clear(icons, 0, icons.Length);
                 notice = ""; busy = false; playerPage = itemPage = 0;
                 try { inputLease.Release(); } catch (Exception error) { Report(error); }

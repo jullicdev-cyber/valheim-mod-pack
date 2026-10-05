@@ -16,6 +16,8 @@ $argsList = @('/nologo', '/target:library', '/codepage:65001', '/optimize+', ('/
 $argsList += $refs | ForEach-Object { '/reference:' + $_ }
 $argsList += Join-Path $PSScriptRoot 'NativeChecks.cs'
 $argsList += Join-Path $PSScriptRoot 'UiNativeChecks.cs'
+$argsList += Join-Path $PSScriptRoot 'GroupRadiusUiNativeChecks.cs'
+$argsList += Join-Path $PSScriptRoot 'GroupRadiusMotionNativeChecks.cs'
 & (Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe') @argsList
 if ($LASTEXITCODE -ne 0) { throw 'Inventory administration native probe compilation failed.' }
 Write-Output "Built optional native checks: $output"

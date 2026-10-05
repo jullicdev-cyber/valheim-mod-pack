@@ -12,12 +12,12 @@
     "sha256": "6aa985fa58371c03b01fc68c112005fe7d0b0150eadb4675a245a11622a2a772"
   },
   {
-    "path": "BepInEx/config/Azumatt.Recycle_N_Reclaim.cfg",
-    "sha256": "1a9bc67878931c998feb37b4592e82eacad85c8808f93fc45d9a64269eb57afa"
-  },
-  {
     "path": "BepInEx/config/Azumatt.Recycle_N_Reclaim_ExcludeLists.yml",
     "sha256": "781f7a0ca0e358b3b0f0d8c05c8b116b4a5d2e1f66309bdf3c4758aa0e06585d"
+  },
+  {
+    "path": "BepInEx/config/Azumatt.Recycle_N_Reclaim.cfg",
+    "sha256": "1a9bc67878931c998feb37b4592e82eacad85c8808f93fc45d9a64269eb57afa"
   },
   {
     "path": "BepInEx/config/BepInEx.cfg",
@@ -69,7 +69,7 @@
   },
   {
     "path": "BepInEx/config/valheimmodpack.inventoryadmin.cfg",
-    "sha256": "67c00791f5840d40ad177496fbd4062c277ab4c2eb3e72dd3f1e97ee3f43decd"
+    "sha256": "139debdc7233985cb0192ef68463c8d568a6d2e5b03bebbf977f6b9139f3cfad"
   },
   {
     "path": "BepInEx/config/valheimmodpack.nordicradio.cfg",
@@ -305,7 +305,7 @@
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-InventoryAdmin/InventoryAdmin.dll",
-    "sha256": "b5741fd5083b09d1f0ab2461fa67b1c301d57b8da87a78a335693436237aea8b"
+    "sha256": "dd54d5bfb3a49f7d8371381fad9ef3ffcb861c0fa338e8b1c350fc4e927342ee"
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-NordicRadio/NordicRadio.dll",
@@ -344,12 +344,12 @@
     "sha256": "82db3dde2c87f01310cd4ec59d2b7bac0e8e87dbc5d60bc091c75cb276860c07"
   },
   {
-    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Chinese.json",
-    "sha256": "cb4e0d585fd5f5113685e3b3fb2a335d778cab515b03712745bccd576147e0fb"
-  },
-  {
     "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Chinese_Trad.json",
     "sha256": "31dc97fa33cee77fd5fd4f127d7ffe261e9fff29c0aa7ec5e8e0499263f0654d"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Chinese.json",
+    "sha256": "cb4e0d585fd5f5113685e3b3fb2a335d778cab515b03712745bccd576147e0fb"
   },
   {
     "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Croatian.json",

@@ -138,7 +138,8 @@ namespace ValheimModPack.InventoryAdmin
                 "unknown connection cannot supply an approved account identity");
             Reject(() => WorldCharacters("RequestAdministrativeSave"), "unloaded character cannot produce an administrative save acknowledgement");
             return "PASS: " + checks + " inventory administration native assertions. Detached inventories only; live multiplayer transaction/disconnect flows require a cooperative client test.\n"
-                + InventoryAdminUiNativeChecks.Run() + "\n" + InventoryAdminInputNativeChecks.Run();
+                + InventoryAdminUiNativeChecks.Run() + "\n" + InventoryAdminInputNativeChecks.Run()
+                + "\n" + GroupRadiusUiNativeChecks.Run() + "\n" + GroupRadiusMotionNativeChecks.Run();
         }
 
         private static void CheckBackpackBusyGuard()

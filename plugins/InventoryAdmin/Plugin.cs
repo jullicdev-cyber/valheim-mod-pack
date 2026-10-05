@@ -16,7 +16,7 @@ namespace ValheimModPack.InventoryAdmin
     [BepInDependency("valheimmodpack.worldcharacters", "1.0.4")]
     public sealed partial class Plugin : BaseUnityPlugin
     {
-        public const string Id = "valheimmodpack.inventoryadmin", Version = "1.1.0";
+        public const string Id = "valheimmodpack.inventoryadmin", Version = "1.2.0";
         private static Plugin active;
         private Harmony harmony;
         private ConfigEntry<KeyboardShortcut> shortcut;
@@ -76,12 +76,15 @@ namespace ValheimModPack.InventoryAdmin
                 "Toggle private player markers for host/assigned admins. Rebind in Bindrune.");
             mapTracking = Config.Bind("Map", "ShowPlayersOnMap", true,
                 "Show online players, including those with public map visibility disabled. Only authorized admins receive positions.");
+            BindGroupRadius();
             mapOverlay = new AdminMapOverlay(CanUse, () => mapTracking.Value,
                 () => locationCache.Snapshot(Time.realtimeSinceStartup));
             window = new AdminWindow(new AdminUiBindings { CanUse = CanUse, IsHost = () => IsHost, LocalPeerId = () => ZNet.GetUID(),
                 ShortcutLabel = () => Label(shortcut.Value), Translate = T, RequestPlayers = RequestPlayers, RequestInventory = RequestInventory,
                 IsTrackingPlayers = () => mapTracking.Value, TrackingShortcutLabel = () => Label(mapShortcut.Value), SetTrackingPlayers = SetTrackingPlayers,
                 CanFindPlayerOnMap = id => mapOverlay.CanFind(id), FindPlayerOnMap = id => { if (!mapOverlay.Find(id)) window.SetStatus(T("Координаты игрока пока недоступны.", "Player position is not available yet.")); },
+                GetGroupRadius = GetGroupRadiusView, GroupRadiusShortcutLabel = () => Label(radiusShortcut.Value),
+                UpdateGroupRadius = RequestGroupRadiusSettings, SetGroupRadiusLeader = RequestGroupRadiusLeader, SetGroupRadiusExemption = RequestGroupRadiusExemption,
                 Delete = (v, i, n) => RequestMutation(v, i, n, InventoryOperation.Delete), Take = (v, i, n) => RequestMutation(v, i, n, InventoryOperation.Take),
                 SetAdmin = RequestRole, Error = e => Logger.LogError(e), OnClosed = () => { displayed = null; viewRequest = ""; } });
             harmony = new Harmony(Id); harmony.PatchAll(typeof(Plugin).Assembly);
@@ -107,6 +110,7 @@ namespace ValheimModPack.InventoryAdmin
                 string root = Path.Combine(Path.GetDirectoryName(Paths.BepInExRootPath), "ValheimModpack", "InventoryAdmin");
                 try { permissions = new PermissionStore(root); journal = new TransactionJournal(Path.Combine(root, "transactions")); ownOwner = "local-host"; }
                 catch { if (permissions != null) permissions.Dispose(); permissions = null; journal = null; throw; }
+                InitializeGroupRadius(root);
             }
             foreach (ZNetPeer peer in current.GetPeers()) Register(peer);
         }
@@ -118,6 +122,7 @@ namespace ValheimModPack.InventoryAdmin
                 if (network == null || world == 0) return;
                 if (IsHost) UpdateHost();
                 UpdatePlayerMap();
+                UpdateGroupRadiusSafely();
                 UpdateLocalOperations(); window.Tick();
                 RefreshClaimed();
                 if (CanUse() && ShortcutDown(shortcut.Value) && (window.IsVisible || CanOpen()))
@@ -130,6 +135,11 @@ namespace ValheimModPack.InventoryAdmin
                 {
                     claimed = mapShortcut.Value.MainKey; released = -1; GameplayInputCache.ConsumeAll();
                     SetTrackingPlayers(!mapTracking.Value);
+                }
+                else if (CanUse() && (window.IsVisible || CanOpen()) && ShortcutDown(radiusShortcut.Value))
+                {
+                    claimed = radiusShortcut.Value.MainKey; released = -1; GameplayInputCache.ConsumeAll();
+                    window.ShowGroupRadius();
                 }
             }
             catch (Exception e) { Logger.LogError(e); if (window != null) window.SetStatus(e.Message); }
@@ -254,7 +264,7 @@ namespace ValheimModPack.InventoryAdmin
         private static bool Flag(BinaryReader reader)
         { byte value = reader.ReadByte(); if (value > 1) throw new InvalidDataException("Invalid boolean flag."); return value == 1; }
         private void RequestPlayers()
-        { playerRequest = Guid.NewGuid().ToString("N"); ToServer(2, w => Text(w, playerRequest)); }
+        { playerRequest = Guid.NewGuid().ToString("N"); ToServer(2, w => Text(w, playerRequest)); RequestGroupRadiusView(); }
         private void RequestInventory(long target)
         {
             displayed = null; viewRequest = Guid.NewGuid().ToString("N");
@@ -282,6 +292,7 @@ namespace ValheimModPack.InventoryAdmin
         private void ServerMessage(long actor, int kind, BinaryReader r)
         {
             if (!IsHost) throw new UnauthorizedAccessException("Server message on client.");
+            if (GroupRadiusServerMessage(actor, kind, r)) return;
             if (kind == 20)
             {
                 string token = Token(r); bool enabled = Flag(r); End(r); RequireAllowed(actor);
@@ -469,6 +480,7 @@ namespace ValheimModPack.InventoryAdmin
         }
         private void ClientMessage(int kind, BinaryReader r)
         {
+            if (GroupRadiusClientMessage(kind, r)) return;
             if (kind == 21)
             {
                 string token = Token(r); long sequence = r.ReadInt64();
@@ -622,12 +634,14 @@ namespace ValheimModPack.InventoryAdmin
             if (peer == null || peer.m_rpc == null) return;
             transport.Remove(peer.m_rpc); peers.Remove(peer.m_rpc); welcomes.Remove(peer.m_uid);
             positionSamples.Remove(peer.m_rpc); locationSubscriptions.Remove(peer.m_uid);
+            radiusSamples.Remove(peer.m_rpc); radiusRequestTimes.Remove(peer.m_uid); radiusBroadcastAt = 0;
             if (IsHost && operation != null && (operation.Source == peer.m_uid || operation.Actor == peer.m_uid))
                 FailOperation("Participant disconnected; inspect retained transaction.", operation.RemoveSent || operation.DeliverySent);
-            if (!IsHost) { authorized = false; window.Hide(); ClearLocations(); }
+            if (!IsHost) { authorized = false; window.Hide(); ClearLocations(); ResetGroupRadius(); }
         }
         private void ResetSession()
         {
+            ResetGroupRadius();
             if (window != null) window.Hide();
             ClearLocations(); locationSubscriptions.Clear(); positionSamples.Clear(); locationRefresh = locationSnapshot = locationErrorAt = 0; locationSequence = 0;
             if (operation != null && journal != null) { try { journal.RequireRecovery(operation.Record.Id, "World session ended."); } catch (Exception e) { Logger.LogError(e); } }
@@ -642,6 +656,7 @@ namespace ValheimModPack.InventoryAdmin
             {
                 EnsureSession();
                 if (args.Length < 2 || args[1] == "open") { if (CanUse()) window.Show(); else args.Context.AddString(T("Нет прав либо персонаж ещё не загружен.", "Permission denied or character not loaded.")); return; }
+                if (args[1] == "radius") { if (!CanUse()) throw new UnauthorizedAccessException("Administrator only."); window.ShowGroupRadius(); return; }
                 if (args[1] == "map")
                 {
                     if (!CanUse()) throw new UnauthorizedAccessException("Administrator only.");
@@ -715,7 +730,7 @@ namespace ValheimModPack.InventoryAdmin
         private static bool BlockNative(string button, ref bool result)
         {
             if (active == null || button == "JoyButtonB") return true;
-            if (active.window.IsVisible || active.claimed != KeyCode.None || active.CanOpen() && (ShortcutHeld(active.shortcut.Value) || ShortcutHeld(active.mapShortcut.Value)))
+            if (active.window.IsVisible || active.claimed != KeyCode.None || active.CanOpen() && (ShortcutHeld(active.shortcut.Value) || ShortcutHeld(active.mapShortcut.Value) || ShortcutHeld(active.radiusShortcut.Value)))
             { GameplayInputCache.Consume(button); result = false; return false; }
             return true;
         }

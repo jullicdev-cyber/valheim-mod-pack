@@ -6,7 +6,7 @@ $fixtureDirectory = Join-Path $packRoot ('.cache/inventory-admin-service-' + [gu
 New-Item -ItemType Directory -Force -Path $fixtureDirectory | Out-Null
 $compiler = Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
 $runner = Join-Path $fixtureDirectory 'RootServiceTests.exe'
-$sources = @('Policy.cs','PermissionStore.cs','Protocol.cs','TransactionJournal.cs','PlayerLocations.cs','WireTransport.cs','Plugin.cs','Plugin.Locations.cs','RootServiceTestsStubs.cs','RootServiceTests.cs','RootLocationTests.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
+$sources = @('Policy.cs','PermissionStore.cs','Protocol.cs','TransactionJournal.cs','PlayerLocations.cs','WireTransport.cs','GroupRadius.cs','GroupRadiusStore.cs','Plugin.cs','Plugin.Locations.cs','Plugin.GroupRadius.cs','RootServiceTestsStubs.cs','RootServiceTests.cs','RootLocationTests.cs','RootGroupRadiusTests.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
 & $compiler /nologo /codepage:65001 /target:exe "/out:$runner" @sources
 if ($LASTEXITCODE -ne 0) { throw 'Inventory administration service test build failed' }
 & $runner (Join-Path $fixtureDirectory 'state')

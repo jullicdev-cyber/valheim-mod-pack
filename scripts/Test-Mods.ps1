@@ -32,6 +32,9 @@ Run-Suite 'inventory-admin-policy' 'plugins/InventoryAdmin/Test-Policy.ps1'
 Run-Suite 'inventory-admin-service' 'plugins/InventoryAdmin/Test-Service.ps1'
 Run-Suite 'inventory-admin-locations' 'plugins/InventoryAdmin/Test-Locations.ps1'
 Run-Suite 'inventory-admin-map' 'plugins/InventoryAdmin/Test-MapOverlay.ps1'
+Run-Suite 'inventory-admin-group-radius' 'plugins/InventoryAdmin/tests/Test-GroupRadius.ps1'
+Run-Suite 'inventory-admin-group-motion' 'plugins/InventoryAdmin/Test-GroupRadiusMotion.ps1'
+Run-Suite 'inventory-admin-group-contracts' 'plugins/InventoryAdmin/Test-GroupRadiusMotionContracts.ps1' @('-GameDirectory',$GameDirectory)
 foreach($entry in @('WorldCharacters','ChestSearch','InterfaceInputFix','RenewableResourceTimers','ConfirmMapPinRemoval','NordicRadio','PortalFinder','PlayerSectorSync')) {
     Run-Suite $entry ('plugins/'+$entry+'/Test.ps1') @('-GameDirectory',$GameDirectory)
 }

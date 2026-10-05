@@ -1,5 +1,5 @@
 {
-  "packVersion": "1.19.0",
+  "packVersion": "1.20.0",
   "created": "2026-09-25",
   "targetGameVersion": "1.0.16",
   "packages": [
@@ -466,10 +466,10 @@
     },
     {
       "id": "ValheimModPack-InventoryAdmin",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "source": "local-plugins/InventoryAdmin.dll",
       "destination": "BepInEx/plugins/ValheimModPack-InventoryAdmin/InventoryAdmin.dll",
-      "sha256": "b5741fd5083b09d1f0ab2461fa67b1c301d57b8da87a78a335693436237aea8b",
+      "sha256": "dd54d5bfb3a49f7d8371381fad9ef3ffcb861c0fa338e8b1c350fc4e927342ee",
       "dependencies": [
         "denikson-BepInExPack_Valheim-5.4.2351",
         "ValheimModding-Jotunn-2.30.2",

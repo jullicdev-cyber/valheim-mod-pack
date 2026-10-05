@@ -4,8 +4,8 @@ using System.Collections.Generic;
 
 namespace UnityEngine
 {
-    public enum KeyCode { None, F8, F9, F10, LeftControl, RightControl, LeftShift, RightShift, LeftAlt, RightAlt, LeftCommand, RightCommand }
-    public struct Vector3 { public float x,y,z; public Vector3(float x,float y,float z) { this.x=x; this.y=y; this.z=z; } }
+    public enum KeyCode { None, F8, F9, F10, F11, LeftControl, RightControl, LeftShift, RightShift, LeftAlt, RightAlt, LeftCommand, RightCommand }
+    public struct Vector3 { public float x,y,z; public Vector3(float x,float y,float z) { this.x=x; this.y=y; this.z=z; } public static Vector3 zero { get { return new Vector3(); } } }
     public sealed class Transform { public Vector3 position; }
     public static class Time { public static float realtimeSinceStartup; public static int frameCount; }
     public static class Input { public static bool GetKey(KeyCode key) { return false; } public static bool GetKeyDown(KeyCode key) { return false; } }
@@ -51,7 +51,9 @@ public sealed class Player
     public readonly UnityEngine.Transform transform = new UnityEngine.Transform(); public bool Dead; public bool IsDead() { return Dead; }
     public long GetPlayerID() { return Character; } public string GetPlayerName() { return Name; }
     public bool IsTeleporting() { return false; } public bool InCutscene() { return false; }
+    public void Message(MessageHud.MessageType type, string message) { }
 }
+public sealed class MessageHud { public enum MessageType { Center } }
 public static class InventoryGui { public static bool IsVisible() { return false; } }
 public static class Menu { public static bool IsVisible() { return false; } }
 public static class Console { public static bool IsVisible() { return false; } }
@@ -201,6 +203,8 @@ namespace ValheimModPack.InventoryAdmin
         public Func<bool> CanUse, IsHost; public Func<long> LocalPeerId; public Func<string> ShortcutLabel;
         public Func<bool> IsTrackingPlayers; public Func<string> TrackingShortcutLabel; public Action<bool> SetTrackingPlayers;
         public Func<long,bool> CanFindPlayerOnMap; public Action<long> FindPlayerOnMap;
+        public Func<GroupRadiusAdminView> GetGroupRadius; public Func<string> GroupRadiusShortcutLabel;
+        public Action<long,bool,float> UpdateGroupRadius; public Action<long,long> SetGroupRadiusLeader; public Action<long,long,bool> SetGroupRadiusExemption;
         public Func<string,string,string> Translate; public Action RequestPlayers; public Action<long> RequestInventory;
         public Action<string,string,int> Delete, Take; public Action<long,bool> SetAdmin; public Action<Exception> Error; public Action OnClosed;
     }
@@ -209,6 +213,7 @@ namespace ValheimModPack.InventoryAdmin
         public bool IsVisible, Busy; public string Status = ""; public List<AdminPlayerView> Players = new List<AdminPlayerView>();
         public AdminWindow(AdminUiBindings binding) { }
         public void Show() { IsVisible = true; } public void Hide() { IsVisible = false; }
+        public void ShowGroupRadius() { IsVisible = true; }
         public void Tick() { } public void SetStatus(string text) { Status = text; } public void SetBusy(bool busy) { Busy = busy; }
         public void HandleInputReset() { }
         public void SetPlayers(List<AdminPlayerView> views) { Players = new List<AdminPlayerView>(views); } public void SetSnapshot(AdminInventoryView view) { }
@@ -226,4 +231,21 @@ namespace ValheimModPack.InventoryAdmin
         public bool Equipped; public UnityEngine.Sprite Icon;
     }
     public sealed class AdminInventoryView { public long PeerId; public string Name, SnapshotToken; public List<AdminItemView> Items = new List<AdminItemView>(); }
+    public sealed class GroupRadiusAdminView
+    {
+        public bool Enabled,ReadOnly; public float Radius; public long LeaderPeerId,Revision; public string LeaderName,Notice;
+        public HashSet<long> ExemptPeers = new HashSet<long>();
+    }
+    public sealed class GroupRadiusFrame
+    {
+        public bool Active,Exempt; public float Radius,GraceUntil; public UnityEngine.Vector3 LeaderPosition; public long Sequence; public Action<string> Notice;
+    }
+    public static class GroupRadiusMotion
+    {
+        public static bool LogicalValid = true;
+        public static void Bind(Func<GroupRadiusFrame> accessor) { }
+        public static void Tick() { } public static void ResetWorld() { }
+        public static bool TryGetLogicalPosition(Player player,out UnityEngine.Vector3 point)
+        { point = player == null ? UnityEngine.Vector3.zero : player.transform.position; return player != null && !player.IsDead() && LogicalValid; }
+    }
 }

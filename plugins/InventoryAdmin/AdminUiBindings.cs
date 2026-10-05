@@ -26,6 +26,16 @@ namespace ValheimModPack.InventoryAdmin
         public string Name, SnapshotToken;
         public readonly List<AdminItemView> Items = new List<AdminItemView>();
     }
+    // Only the private administrator snapshot reaches these controls. Peer IDs
+    // are session-local; persistent account identifiers never enter the UI.
+    public sealed class GroupRadiusAdminView
+    {
+        public bool Enabled, ReadOnly;
+        public float Radius;
+        public long LeaderPeerId, Revision;
+        public string LeaderName, Notice;
+        public HashSet<long> ExemptPeers = new HashSet<long>();
+    }
     public sealed class AdminUiBindings
     {
         public Func<bool> CanUse, IsHost;
@@ -36,6 +46,11 @@ namespace ValheimModPack.InventoryAdmin
         public Action<bool> SetTrackingPlayers;
         public Func<long, bool> CanFindPlayerOnMap;
         public Action<long> FindPlayerOnMap;
+        public Func<GroupRadiusAdminView> GetGroupRadius;
+        public Func<string> GroupRadiusShortcutLabel;
+        public Action<long, bool, float> UpdateGroupRadius;
+        public Action<long, long> SetGroupRadiusLeader;
+        public Action<long, long, bool> SetGroupRadiusExemption;
         public Func<string, string, string> Translate;
         public Action RequestPlayers;
         public Action<long> RequestInventory;

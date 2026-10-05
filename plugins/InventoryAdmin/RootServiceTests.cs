@@ -52,7 +52,7 @@ namespace ValheimModPack.InventoryAdmin
                 WC.ApprovedConnections[ZNet.instance.Peers[0].m_rpc] = ZNet.instance.Peers[0];
                 WC.ApprovedConnections[ZNet.instance.Peers[1].m_rpc] = ZNet.instance.Peers[1];
                 var plugin = new Plugin(); Call(plugin, "Awake"); Call(plugin, "EnsureSession");
-                try { Permissions(plugin); ApprovedOwnerRoster(plugin); DuplicateApprovedPeerIdRoster(plugin); Packets(plugin); ClientPacketValidation(plugin); Operations(plugin); CheckpointFailures(plugin); RecoveryCommands(plugin); SourcePayloadValidation(plugin); Transport(); Shortcuts(plugin); Locations(plugin); }
+                try { Permissions(plugin); ApprovedOwnerRoster(plugin); DuplicateApprovedPeerIdRoster(plugin); Packets(plugin); ClientPacketValidation(plugin); Operations(plugin); CheckpointFailures(plugin); RecoveryCommands(plugin); SourcePayloadValidation(plugin); Transport(); Shortcuts(plugin); Locations(plugin); GroupRadiusService(plugin); }
                 finally { Call(plugin, "OnDestroy"); }
                 System.Console.WriteLine("InventoryAdmin actual service checks passed: " + checks); return 0;
             }

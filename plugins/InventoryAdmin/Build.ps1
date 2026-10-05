@@ -10,7 +10,7 @@ $refs += @('assembly_valheim.dll','assembly_guiutils.dll','assembly_utils.dll','
 New-Item -ItemType Directory -Force (Split-Path $OutputFile -Parent) | Out-Null
 $argsList = @('/nologo','/codepage:65001','/target:library','/optimize+',('/out:' + $OutputFile))
 $argsList += $refs | ForEach-Object { '/reference:' + $_ }
-$argsList += @('Policy.cs','PermissionStore.cs','Protocol.cs','TransactionJournal.cs','NativeAdapter.cs','AdminUiBindings.cs','AdminInputLease.cs','AdminWindow.cs','GameplayInputCache.cs','PlayerLocations.cs','AdminMapOverlay.cs','WireTransport.cs','Plugin.cs','Plugin.Locations.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
+$argsList += @('Policy.cs','PermissionStore.cs','Protocol.cs','TransactionJournal.cs','NativeAdapter.cs','AdminUiBindings.cs','AdminInputLease.cs','AdminWindow.cs','GameplayInputCache.cs','PlayerLocations.cs','AdminMapOverlay.cs','WireTransport.cs','GroupRadius.cs','GroupRadiusStore.cs','GroupRadiusMotion.cs','Plugin.cs','Plugin.Locations.cs','Plugin.GroupRadius.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
 & $compiler @argsList
 if ($LASTEXITCODE -ne 0) { throw 'InventoryAdmin compilation failed.' }
 Write-Output "Built InventoryAdmin: $OutputFile"
