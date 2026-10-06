@@ -73,6 +73,7 @@ namespace ValheimModPack.PartyPrison
                         int index = z * pitch + x;
                         float worldHeight = position.y + hmap.GetHeight(x, z);
                         if (!Finite(worldHeight)) throw new InvalidOperationException("Не удалось прочитать высоту земли.");
+                        RequireBuildable(new Vector3(vertex.x, worldHeight, vertex.z));
                         float oldLevel = level == null ? 0f : level[index], oldSmooth = smooth == null ? 0f : smooth[index];
                         tile.Vertices.Add(new Vertex(x, z, vertex, worldHeight, oldLevel, oldSmooth));
                         ground.Add(worldHeight); baseline.Add(worldHeight - oldLevel - oldSmooth);
@@ -240,8 +241,10 @@ namespace ValheimModPack.PartyPrison
                     CheckCompiler(current, Heightmap, true);
                     if (NativeView(current).GetZDO().DataRevision != revision) Changed();
                 }
-                foreach (Vertex vertex in Vertices)
+                foreach (Vertex vertex in Vertices) {
+                    RequireBuildable(new Vector3(vertex.Position.x, vertex.Ground, vertex.Position.z));
                     if (Mathf.Abs(Position.y + Heightmap.GetHeight(vertex.X, vertex.Z) - vertex.Ground) > UnchangedTolerance) Changed();
+                }
             }
             private static void Changed() { throw new InvalidOperationException("Земля изменилась после проверки. Заново выберите площадку."); }
         }
@@ -322,7 +325,16 @@ namespace ValheimModPack.PartyPrison
                     }
                     if (!covered || !ZoneSystem.instance.IsZoneLoaded(new Vector3(px, center.y, pz)))
                         throw new InvalidOperationException("Вся площадка под тюрьму должна быть загружена. Подойдите ближе.");
+                    RequireBuildable(new Vector3(px, center.y, pz));
                 }
+        }
+
+        // The fixed altar margin remains in TerrainPlan. This also respects actual loaded location
+        // restrictions, including a modded radius or another protected location beside the altar.
+        private static void RequireBuildable(Vector3 point)
+        {
+            if (Location.IsInsideNoBuildLocation(point))
+                throw new InvalidOperationException("Площадка пересекает игровую область, где запрещены строительство и изменение земли. Выберите другое место.");
         }
 
         private static void CheckCompiler(TerrainComp compiler, Heightmap hmap, bool requireCurrent)

@@ -95,6 +95,28 @@ internal static class TerrainContractChecks
         TypeDefinition heightmap = Type(assembly, "Heightmap");
         TypeDefinition settings = Type(assembly, "TerrainOp/Settings");
         TypeDefinition view = Type(assembly, "ZNetView");
+        TypeDefinition location = Type(assembly, "Location");
+        Field(location, "m_noBuild", "System.Boolean");
+        Field(location, "m_noBuildRadiusOverride", "System.Single");
+        Field(location, "m_exteriorRadius", "System.Single");
+        Field(location, "m_interiorRadius", "System.Single");
+        Field(location, "m_hasInterior", "System.Boolean");
+        MethodDefinition noBuild = Method(location, "IsInsideNoBuildLocation", "System.Boolean", "UnityEngine.Vector3");
+        Check(noBuild.IsPublic && noBuild.IsStatic, "Native no-build query must remain a public static read-only location query.");
+        Check(UsesField(noBuild, "Location", "s_allLocations") && UsesField(noBuild, "Location", "m_noBuild"), "Native no-build query no longer evaluates loaded protected locations.");
+        Instruction insideCall = CallInstructions(noBuild).Single(i => ((MethodReference)i.Operand).DeclaringType.FullName == "Location" && ((MethodReference)i.Operand).Name == "IsInside");
+        Check(insideCall.Previous != null && Int(insideCall.Previous, 1) && insideCall.Previous.Previous != null && Float(insideCall.Previous.Previous, 0f),
+            "Native no-build query no longer respects the location's no-build radius override.");
+        MethodDefinition insideLocation = Method(location, "IsInside", "System.Boolean", "UnityEngine.Vector3", "System.Single", "System.Boolean");
+        Check(UsesField(insideLocation, "Location", "m_noBuildRadiusOverride") && Calls(insideLocation, "Location", "GetMaxRadius") &&
+            Calls(insideLocation, "Utils", "DistanceXZ"), "Native no-build footprint radius or horizontal-distance semantics changed.");
+        MethodDefinition locationRadius = Method(location, "GetMaxRadius", "System.Single");
+        Check(UsesField(locationRadius, "Location", "m_hasInterior") && UsesField(locationRadius, "Location", "m_exteriorRadius") &&
+            UsesField(locationRadius, "Location", "m_interiorRadius") && Calls(locationRadius, "UnityEngine.Mathf", "Max"),
+            "Native location radius no longer covers the larger exterior/interior footprint.");
+        TypeDefinition attack = Type(assembly, "Attack");
+        MethodDefinition terrainHit = Method(attack, "SpawnOnHitTerrain", "UnityEngine.GameObject", "UnityEngine.Vector3", "UnityEngine.GameObject", "Character", "System.Single", "ItemDrop/ItemData", "ItemDrop/ItemData", "System.Boolean");
+        Check(Calls(terrainHit, "Location", "IsInsideNoBuildLocation"), "Native terrain-tool placement no longer uses the location no-build query.");
         foreach (string name in new[] { "m_initialized" }) Field(compiler, name, "System.Boolean");
         foreach (string name in new[] { "m_width", "m_pitch", "m_operations", "m_lastHash" }) Field(compiler, name, "System.Int32");
         foreach (string name in new[] { "m_levelDelta", "m_smoothDelta" }) Field(compiler, name, "System.Single[]");
@@ -197,6 +219,16 @@ internal static class TerrainContractChecks
         TypeDefinition snapshot = Type(assembly, rootName + "/Snapshot");
         TypeDefinition tile = Type(assembly, rootName + "/NativeTile");
         MethodDefinition plan = Method(leveler, "Plan", rootName + "/Site", "UnityEngine.Vector3", "UnityEngine.Vector3");
+        MethodDefinition buildable = Method(leveler, "RequireBuildable", "System.Void", "UnityEngine.Vector3");
+        Instruction noBuildQuery = CallInstructions(buildable).Single(i => ((MethodReference)i.Operand).DeclaringType.FullName == "Location" && ((MethodReference)i.Operand).Name == "IsInsideNoBuildLocation");
+        Check(noBuildQuery.Next != null && (noBuildQuery.Next.OpCode.Code == Code.Brfalse || noBuildQuery.Next.OpCode.Code == Code.Brfalse_S) &&
+            buildable.Body.Instructions.Any(i => i.OpCode.Code == Code.Throw && i.Offset > noBuildQuery.Offset),
+            "Native protected-location queries must reject the candidate instead of being ignored.");
+        Instruction vertexNoBuild = CallInstructions(plan).Single(i => ((MethodReference)i.Operand).DeclaringType.FullName == rootName && ((MethodReference)i.Operand).Name == "RequireBuildable");
+        Instruction vertexRecord = CallInstructions(plan).Single(i => ((MethodReference)i.Operand).DeclaringType.FullName == rootName + "/Vertex" && ((MethodReference)i.Operand).Name == ".ctor");
+        Check(vertexNoBuild.Offset < vertexRecord.Offset, "Every selected terrain vertex must pass the actual no-build query before the candidate is prepared.");
+        MethodDefinition coverage = Method(leveler, "RequireCoverage", "System.Void", "UnityEngine.Vector3", "System.Single", "System.Collections.Generic.List`1<" + rootName + "/NativeTile>");
+        Check(Calls(coverage, rootName, "RequireBuildable"), "The padded square must respect no-build locations between heightmap vertices.");
         Instruction[] readiness = CallInstructions(plan).Where(i => ((MethodReference)i.Operand).DeclaringType.FullName == "ZNetScene" && ((MethodReference)i.Operand).Name == "IsAreaReady").ToArray();
         Instruction[] footprint = CallInstructions(plan).Where(i => ((MethodReference)i.Operand).DeclaringType.FullName == "ValheimModPack.PartyPrison.TerrainPlan" && ((MethodReference)i.Operand).Name == "RequireFootprint").ToArray();
         Instruction[] findMaps = CallInstructions(plan).Where(i => ((MethodReference)i.Operand).DeclaringType.FullName == "Heightmap" && ((MethodReference)i.Operand).Name == "FindHeightmap").ToArray();
@@ -219,6 +251,7 @@ internal static class TerrainContractChecks
         Check(Calls(applySite, transaction.FullName, "Dispose"), "A partially applied terrain transaction is not rolled back.");
         MethodDefinition unchangedMethod = Method(tile, "CheckUnchanged", "System.Void");
         Check(Calls(unchangedMethod, "Heightmap", "HaveQueuedRebuild") && Calls(unchangedMethod, "ZDO", "get_DataRevision") && Calls(unchangedMethod, "Heightmap", "GetHeight"), "Stale-plan protection must check pending geometry, network revision, and sampled heights.");
+        Check(Calls(unchangedMethod, rootName, "RequireBuildable"), "A prepared terrain plan must recheck actual no-build locations before terrain mutation.");
 
         MethodDefinition apply = Method(transaction, "Apply", "System.Void");
         Setting(apply, "m_level", true, 0f, false);

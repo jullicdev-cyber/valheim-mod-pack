@@ -151,6 +151,34 @@ internal static class ClearanceContractChecks
             "Clearing candidates must use a bounded footprint collision query.");
         Instruction query = Call(plan, "UnityEngine.Physics", "OverlapBox");
         Check(IsInt(query.Previous, 2), "Clearance inspection must include trigger-only loose loot so levelling cannot bury it.");
+        FieldDefinition viewBlockMask = clearer.Fields.SingleOrDefault(f => f.Name == "ViewBlockMask");
+        Check(viewBlockMask != null && viewBlockMask.IsStatic && viewBlockMask.IsInitOnly && viewBlockMask.FieldType.FullName == "System.Int32",
+            "Visibility-only collision filtering must use one cached layer mask.");
+        MethodDefinition initialization = Method(clearer, ".cctor");
+        Check(initialization.Body.Instructions.Any(i => i.OpCode.Code == Code.Ldstr && (string)i.Operand == "viewblock") &&
+            Calls(initialization, "UnityEngine.LayerMask", "GetMask"), "The excluded mask must come from the named viewblock layer.");
+        MethodDefinition mask = Method(clearer, "get_CollisionMask");
+        Check(mask.Body.Instructions.Any(i => i.OpCode.Code == Code.Ldsfld && i.Operand is FieldReference &&
+            ((FieldReference)i.Operand).Name == "ViewBlockMask") && mask.Body.Instructions.Any(i => i.OpCode.Code == Code.Not),
+            "Collision queries must keep every layer except visibility-only viewblock colliders.");
+        Check(query.Previous.Previous != null && query.Previous.Previous.Operand is MethodReference &&
+            ((MethodReference)query.Previous.Previous.Operand).DeclaringType.FullName == clearer.FullName &&
+            ((MethodReference)query.Previous.Previous.Operand).Name == "get_CollisionMask",
+            "Site planning must apply the visibility-only mask to its footprint query.");
+        MethodDefinition solid = Method(clearer, "SolidBounds", "UnityEngine.GameObject");
+        Instruction ignoreVisibility = Call(solid, clearer.FullName, "IsViewBlock");
+        Check(ignoreVisibility.Next != null && (ignoreVisibility.Next.OpCode.Code == Code.Brtrue || ignoreVisibility.Next.OpCode.Code == Code.Brtrue_S) &&
+            ignoreVisibility.Next.Operand is Instruction && ((Instruction)ignoreVisibility.Next.Operand).Offset > ignoreVisibility.Offset &&
+            Calls(solid, "UnityEngine.Collider", "get_bounds"), "Whole-root size must use physical collider bounds and skip the oversized visibility collider.");
+        MethodDefinition isViewBlock = Method(clearer, "IsViewBlock", "UnityEngine.Collider");
+        Check(Calls(isViewBlock, "UnityEngine.GameObject", "get_layer") &&
+            isViewBlock.Body.Instructions.Any(i => i.OpCode.Code == Code.Shl) &&
+            isViewBlock.Body.Instructions.Any(i => i.OpCode.Code == Code.And), "The visibility check must match the collider's own named layer.");
+        MethodDefinition bounded = Method(clearer, "RequireBoundedRoot", "UnityEngine.GameObject", "UnityEngine.Bounds",
+            "UnityEngine.Vector3", "UnityEngine.Quaternion", "System.Single");
+        Check(Calls(bounded, Namespace + "ClearanceFootprint", "ContainsRoot") && bounded.Body.Instructions.Any(i =>
+            i.OpCode.Code == Code.Ldc_R8 && (double)i.Operand == 100d),
+            "Whole-root clearance must use the tested expanded-footprint geometry and retain its independent height limit.");
         Instruction[] itemChecks = CallInstructions(plan).Where(i => i.Operand is GenericInstanceMethod &&
             ((GenericInstanceMethod)i.Operand).GenericArguments.Any(a => a.FullName == "ItemDrop")).ToArray();
         Instruction[] viewChecks = CallInstructions(plan).Where(i => i.Operand is GenericInstanceMethod &&
@@ -294,6 +322,13 @@ internal static class ClearanceContractChecks
         Instruction buildSite = Call(buildCore, builder.FullName, "BuildNearAltars");
         Instruction saveWorld = Call(buildCore, "ZNet", "Save");
         Check(buildSite.Offset < saveWorld.Offset, "The world-save snapshot must follow permanent clearing and its synchronous destruction flush.");
+        MethodDefinition preflight = Method(builder, "RequireClearSite", "UnityEngine.Vector3", "UnityEngine.Quaternion", "System.Single",
+            "System.Single", "System.Single", "System.Boolean");
+        Instruction collision = Call(preflight, "UnityEngine.Physics", "OverlapBox");
+        Check(collision.Previous != null && collision.Previous.Previous != null && collision.Previous.Previous.Operand is MethodReference &&
+            ((MethodReference)collision.Previous.Previous.Operand).DeclaringType.FullName == Namespace + "SiteClearer" &&
+            ((MethodReference)collision.Previous.Previous.Operand).Name == "get_CollisionMask",
+            "The final building preflight must use the same viewblock exclusion as the clearing query.");
     }
 
     public static int Main(string[] args)

@@ -62,6 +62,7 @@ namespace ValheimModPack.PartyPrison
             SiteClearer.Site bestClear = null;
             float bestScore = Single.MaxValue;
             string failure = "";
+            string clearanceFailure = null;
             // Candidate searches are read-only. Only the selected manual site is
             // staged for clearing; background generation still needs an empty site.
             for (int ring = 0; ring < 5; ++ring)
@@ -73,8 +74,10 @@ namespace ValheimModPack.PartyPrison
                     candidate.y = height;
                     Quaternion rotation = levelGround ? Quaternion.identity
                         : Quaternion.LookRotation(new Vector3(-Mathf.Sin(angle), 0f, Mathf.Cos(angle)));
+                    bool inspectedTerrain = false;
                     try {
                         TerrainLeveler.Site terrain = levelGround ? TerrainLeveler.Plan(candidate, altar) : null;
+                        inspectedTerrain = terrain != null;
                         SiteClearer.Site clear = null;
                         float floor;
                         if (terrain == null) floor = PreflightSite(candidate, rotation);
@@ -91,11 +94,14 @@ namespace ValheimModPack.PartyPrison
                             bestScore = score; best = candidate; bestRotation = rotation; bestTerrain = terrain; bestClear = clear;
                         }
                     }
-                    catch (InvalidOperationException error) { failure = error.Message; }
+                    catch (InvalidOperationException error) {
+                        failure = error.Message;
+                        if (inspectedTerrain && clearanceFailure == null) clearanceFailure = error.Message;
+                    }
                 }
             if (bestScore == Single.MaxValue)
                 throw new InvalidOperationException(levelGround
-                    ? "Рядом с алтарями нет подходящей сухой загруженной площадки под тюрьму. Подойдите ближе к камням; камни, деревья, дикие мобы и постройки на выбранном месте будут убраны автоматически. " + failure
+                    ? "Подходящая площадка у алтарей не найдена. " + (clearanceFailure ?? failure)
                     : "Рядом с алтарями нет свободного ровного места для фоновой постройки. Команда /prison build сама расчистит и выровняет площадку. " + failure);
             using (SiteClearer.Transaction clear = bestClear == null ? null : bestClear.Apply())
             using (TerrainLeveler.Transaction terrain = bestTerrain == null ? null : bestTerrain.Apply()) {
@@ -518,7 +524,7 @@ namespace ValheimModPack.PartyPrison
         private static void RequireClearSite(Vector3 origin, Quaternion rotation, float halfWidth, float low, float high, bool allowHost = true)
         {
             Vector3 center = new Vector3(origin.x, (low + high) * 0.5f, origin.z);
-            foreach (Collider collider in Physics.OverlapBox(center, new Vector3(halfWidth, (high - low) * 0.5f, halfWidth), rotation, ~0, QueryTriggerInteraction.Ignore)) {
+            foreach (Collider collider in Physics.OverlapBox(center, new Vector3(halfWidth, (high - low) * 0.5f, halfWidth), rotation, SiteClearer.CollisionMask, QueryTriggerInteraction.Ignore)) {
                 if (collider == null || collider.GetComponentInParent<Heightmap>() != null) continue;
                 Player nearby = collider.GetComponentInParent<Player>();
                 if (allowHost && nearby != null && nearby == Player.m_localPlayer) continue;

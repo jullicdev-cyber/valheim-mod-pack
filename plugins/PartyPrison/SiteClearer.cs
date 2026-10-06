@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Reflection;
 using System.Threading;
 using UnityEngine;
@@ -11,7 +12,10 @@ namespace ValheimModPack.PartyPrison
     {
         public const int MaximumObjects = 512;
         private const int MaximumColliders = 8192;
-        private const float MaximumEdgeOverhang = 4f;
+        private static readonly int ViewBlockMask = LayerMask.GetMask("viewblock");
+        public static int CollisionMask { get { return ~ViewBlockMask; } }
+        private static bool IsViewBlock(Collider collider)
+        { return (ViewBlockMask & (1 << collider.gameObject.layer)) != 0; }
         private static int unityThread;
         private static readonly MethodInfo FlushDestroyed = typeof(ZDOMan).GetMethod("SendDestroyed", BindingFlags.Instance | BindingFlags.NonPublic,
             null, Type.EmptyTypes, null);
@@ -41,7 +45,7 @@ namespace ValheimModPack.PartyPrison
             RequireOutsideAltar(footprint, altar);
             // Include pickup triggers so loose belongings cannot be buried by the new floor.
             // Other trigger volumes (for example AI detection ranges) are not solid obstacles.
-            Collider[] overlap = Physics.OverlapBox(boxCenter, boxHalf, yaw, ~0, QueryTriggerInteraction.Collide);
+            Collider[] overlap = Physics.OverlapBox(boxCenter, boxHalf, yaw, CollisionMask, QueryTriggerInteraction.Collide);
             if (overlap.Length > MaximumColliders)
                 throw new InvalidOperationException("На площадке слишком много объектов для безопасной очистки.");
             Dictionary<GameObject, Entry> selected = new Dictionary<GameObject, Entry>();
@@ -65,7 +69,7 @@ namespace ValheimModPack.PartyPrison
                 Classify(root, view, clearPlayerStructures);
                 Bounds bounds = SolidBounds(root);
                 RequireOutsideAltar(bounds, altar);
-                RequireBoundedRoot(bounds, origin, yaw, extent);
+                RequireBoundedRoot(root, bounds, origin, yaw, extent);
                 selected.Add(root, new Entry(root, view, bounds));
                 if (selected.Count > MaximumObjects)
                     throw new InvalidOperationException("Очистка площадки затрагивает более 512 объектов. Выберите менее застроенное место.");
@@ -373,7 +377,7 @@ namespace ValheimModPack.PartyPrison
         {
             bool found = false; Bounds bounds = new Bounds();
             foreach (Collider collider in root.GetComponentsInChildren<Collider>(true)) {
-                if (collider == null || collider.isTrigger || !collider.enabled || !collider.gameObject.activeInHierarchy) continue;
+                if (collider == null || collider.isTrigger || IsViewBlock(collider) || !collider.enabled || !collider.gameObject.activeInHierarchy) continue;
                 Bounds value = collider.bounds;
                 if (!Finite(value.center) || !Finite(value.size)) throw new InvalidOperationException("Не удалось проверить границы объекта площадки.");
                 if (value.size.sqrMagnitude == 0f) continue;
@@ -383,16 +387,26 @@ namespace ValheimModPack.PartyPrison
             return bounds;
         }
 
-        private static void RequireBoundedRoot(Bounds bounds, Vector3 origin, Quaternion rotation, float extent)
+        private static void RequireBoundedRoot(GameObject root, Bounds bounds, Vector3 origin, Quaternion rotation, float extent)
         {
-            if (bounds.size.x > extent * 2f || bounds.size.z > extent * 2f || bounds.size.y > 100f)
-                throw new InvalidOperationException("На площадке находится слишком большой объект. Нельзя удалить его целиком для строительства тюрьмы.");
-            Quaternion inverse = Quaternion.Inverse(rotation);
-            foreach (Vector3 corner in HorizontalCorners(bounds)) {
-                Vector3 local = inverse * (corner - origin);
-                if (Mathf.Abs(local.x) > extent + MaximumEdgeOverhang || Mathf.Abs(local.z) > extent + MaximumEdgeOverhang)
-                    throw new InvalidOperationException("Объект слишком далеко выходит за границы площадки. Выберите другое место.");
-            }
+            if (bounds.size.y > ClearanceFootprint.MaximumHeight)
+                throw new InvalidOperationException("Слишком высокий объект для расчистки: " + DescribeObject(root, bounds) + ". Предел высоты — 100 м.");
+            if (!ClearanceFootprint.ContainsRoot(bounds.center.x, bounds.center.z, bounds.size.x, bounds.size.z,
+                origin.x, origin.z, rotation.eulerAngles.y, extent))
+                throw new InvalidOperationException("Объект выходит за границы расчистки: " + DescribeObject(root, bounds) + ". Допустимый запас по краям площадки — 4 м.");
+        }
+
+        private static string DescribeObject(GameObject root, Bounds bounds)
+        {
+            string name = root.name.Replace("(Clone)", "");
+            ZNetView view = root.GetComponent<ZNetView>();
+            GameObject prefab = view == null || !view.IsValid() ? null : ZNetScene.instance.GetPrefab(view.GetZDO().GetPrefab());
+            if (prefab != null) name = prefab.name;
+            string kind = root.GetComponent<TreeBase>() != null || root.GetComponent<TreeLog>() != null ? "дерево "
+                : root.GetComponent<MineRock>() != null || root.GetComponent<MineRock5>() != null ? "камень "
+                : root.GetComponent<Piece>() != null ? "постройка " : "";
+            return String.Format(CultureInfo.InvariantCulture, "{0}{1} ({2:0.#} × {3:0.#} × {4:0.#} м; X={5:0}, Z={6:0})",
+                kind, name, bounds.size.x, bounds.size.y, bounds.size.z, root.transform.position.x, root.transform.position.z);
         }
 
         private static void RequireOutsideAltar(Bounds bounds, Vector3 altar)
@@ -436,12 +450,6 @@ namespace ValheimModPack.PartyPrison
                     else bounds.Encapsulate(point);
                 }
             return bounds;
-        }
-        private static IEnumerable<Vector3> HorizontalCorners(Bounds bounds)
-        {
-            for (int x = -1; x <= 1; x += 2)
-                for (int z = -1; z <= 1; z += 2)
-                    yield return bounds.center + new Vector3(bounds.extents.x * x, 0f, bounds.extents.z * z);
         }
         private static bool Finite(float value) { return !Single.IsNaN(value) && !Single.IsInfinity(value); }
         private static bool Finite(Vector3 value) { return Finite(value.x) && Finite(value.y) && Finite(value.z); }
