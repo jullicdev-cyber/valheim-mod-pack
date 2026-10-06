@@ -1,5 +1,5 @@
 {
-  "packVersion": "1.25.0",
+  "packVersion": "1.26.0",
   "created": "2026-09-25",
   "targetGameVersion": "1.0.17",
   "packages": [
@@ -422,12 +422,13 @@
     },
     {
       "id": "ValheimModPack-WorldCharacters",
-      "version": "1.0.4",
+      "version": "1.1.0",
       "source": "local-plugins/WorldCharacters.dll",
       "destination": "BepInEx/plugins/ValheimModPack-WorldCharacters/WorldCharacters.dll",
-      "sha256": "99d3f1e87e3c77ed0c2aa611616cf2dc9a6e6f4280f3f1b5f0d840e9185e4239",
+      "sha256": "a3ffb308828ce0206b86e2441e454b8297ae47b2d562ab6bad9a1e82eec06b48",
       "dependencies": [
-        "denikson-BepInExPack_Valheim-5.4.2351"
+        "denikson-BepInExPack_Valheim-5.4.2351",
+        "ValheimModding-Jotunn-2.30.2"
       ]
     },
     {

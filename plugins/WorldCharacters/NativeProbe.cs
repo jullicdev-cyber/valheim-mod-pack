@@ -33,11 +33,19 @@ namespace ValheimModPack.WorldCharactersProbe
         private IEnumerator Run()
         {
             while (!ObjectDB.instance || !ObjectDB.instance.GetItemPrefab("Wood")) yield return null;
+            if (Environment.GetEnvironmentVariable("VMP_WORLDCHARACTERS_GRAPHICS") == "1")
+                while (GUIManager.CustomGUIFront == null || GUIManager.Instance.AveriaSerif == null) yield return null;
             yield return null;
             try
             {
                 Check(Path.GetFullPath(Paths.BepInExRootPath).StartsWith(Path.GetFullPath(Root), StringComparison.OrdinalIgnoreCase), "isolated BepInEx");
                 Check(Player.m_localPlayer == null, "no live character involved");
+                foreach (string expected in File.ReadAllLines(Path.Combine(Root,"expected-plugins.txt")))
+                {
+                    string[] parts = expected.Split('\t');
+                    Check(parts.Length == 2 && Chainloader.PluginInfos.ContainsKey(parts[0])
+                        && Chainloader.PluginInfos[parts[0]].Metadata.Version.ToString() == parts[1], "exact copied pack plugin loaded: " + expected);
+                }
                 foreach (var entry in new[] { Tuple.Create(typeof(ZNet),"OnNewConnection"), Tuple.Create(typeof(ZNet),"RPC_PeerInfo"),
                     Tuple.Create(typeof(ZNet),"SendPeerInfo"), Tuple.Create(typeof(Game),"RequestRespawn"), Tuple.Create(typeof(PlayerProfile),"LoadPlayerData"),
                     Tuple.Create(typeof(PlayerProfile),"SavePlayerToDisk"), Tuple.Create(typeof(Player),"OnSpawned"), Tuple.Create(typeof(Player),"Load"),
@@ -48,12 +56,17 @@ namespace ValheimModPack.WorldCharactersProbe
                     Check(patches != null && patches.Owners.Contains(Plugin.Id), "native Harmony hook " + entry.Item1.Name + "." + entry.Item2);
                 }
                 var assembly = typeof(Plugin).Assembly;
+                Check(assembly.GetName().Name == "WorldCharacters", "stable CLR assembly identity for dependent mods");
+                foreach (var dependent in AppDomain.CurrentDomain.GetAssemblies())
+                    foreach (var reference in dependent.GetReferencedAssemblies().Where(r => r.Name == "WorldCharacters"))
+                        Check(ReferenceEquals(Assembly.Load(reference),assembly), "dependent CLR reference resolves to the same plugin: " + dependent.GetName().Name);
                 var gameState = assembly.GetType("ValheimModPack.WorldCharacters.GameState", true);
                 string fingerprint = (string)gameState.GetMethod("BuildFingerprint").Invoke(null,null);
                 Check(fingerprint.Length == 64, "full pack fingerprint computed");
                 var source = new Inventory("WC source", null, 8, 10);
                 source.GetAllItems().Add(Item("Wood",40,0,0));
                 source.GetAllItems().Add(Item("HelmetLeather",1,0,6));
+                source.GetAllItems()[1].m_equipped = true;
                 source.GetAllItems()[1].m_customData["eaqs_slot"] = "head";
                 source.GetAllItems()[1].m_customData["eaqs_player"] = "44";
                 source.GetAllItems()[1].m_customData["wc_epic_fixture"] = "enchanted payload \u2603";
@@ -67,6 +80,11 @@ namespace ValheimModPack.WorldCharactersProbe
                 string backpackKey = bag.m_customData.Keys.Single(k => k.Contains("AdventureBackpacks.Components.BackpackComponent"));
                 string backpackValue = bag.m_customData[backpackKey]; source.GetAllItems().Add(bag);
                 var saved = new ZPackage(); source.Save(saved);
+                using (var reader = new BinaryReader(new MemoryStream(saved.GetArray())))
+                {
+                    var parsed = NativeInventory.ReadInventory(reader);
+                    Check(parsed[1].Equipped && !parsed[0].Equipped, "actual native equipped flag is projected independently of slot metadata");
+                }
                 var restored = new Inventory("WC restored",null,8,10); restored.Load(new ZPackage(saved.GetArray()));
                 var roundTrip = new ZPackage(); restored.Save(roundTrip);
                 File.WriteAllBytes(Path.Combine(Root,"inventory-before.bin"),saved.GetArray());
@@ -97,9 +115,75 @@ namespace ValheimModPack.WorldCharactersProbe
                 Check(state.WorldData.Length >= 59 && state.Player.SequenceEqual(payload), "native existing-profile migration preserves bytes");
                 gameState.GetMethod("Apply").Invoke(null,new object[]{profile,state});
                 Check(((byte[])AccessTools.Field(typeof(PlayerProfile),"m_playerData").GetValue(profile)).SequenceEqual(payload), "native profile restore preserves player payload");
-                Finish("PASS: " + checks + " native assertions. Full pack loaded; Harmony hooks, inventory/custom metadata and profile migration verified. Multiplayer sessions are not covered by this probe.",0);
+                string inputResult = WorldCharactersAdministrationInputNativeChecks.Run();
+                Check(inputResult.StartsWith("PASS"), "native administration input assertions");
+                string uiResult = "Graphical administration checks not requested.";
+                if (Environment.GetEnvironmentVariable("VMP_WORLDCHARACTERS_GRAPHICS") == "1")
+                {
+                    uiResult = AdministrationUiNativeChecks.Run();
+                    Check(uiResult.Contains("native UI PASS"), "native administration window assertions executed without skip");
+                }
+                string result = "PASS: " + checks + " native assertions. Full pack loaded; Harmony hooks, inventory/custom metadata and profile migration verified.\n"
+                    + inputResult + "\n" + uiResult + "\nMultiplayer sessions are not covered by this isolated menu probe.";
+                if (Environment.GetEnvironmentVariable("VMP_WORLDCHARACTERS_GRAPHICS") == "1") StartCoroutine(PreviewAndFinish(result));
+                else Finish(result,0);
             }
             catch(Exception e) { Finish("FAIL after " + checks + " native checks: " + e,2); }
+        }
+        private IEnumerator PreviewAndFinish(string result)
+        {
+            AdministrationWindow preview = null; Exception failure = null;
+            GameObject canvasObject = null, cameraObject = null;
+            RenderTexture target = null;
+            Camera camera = null;
+            try
+            {
+                preview = AdministrationUiNativeChecks.Preview();
+                // A hidden window has no reliable screen backbuffer. Render only
+                // the synthetic preview to an owned canvas/texture instead.
+                cameraObject = new GameObject("WC screenshot camera",typeof(Camera));
+                camera = cameraObject.GetComponent<Camera>(); camera.enabled = false;
+                camera.orthographic = true; camera.orthographicSize = 5;
+                camera.transform.position = new Vector3(0,0,-10);
+                camera.clearFlags = CameraClearFlags.SolidColor; camera.backgroundColor = new Color(.12f,.14f,.16f,1);
+                camera.cullingMask = 1 << GUIManager.UILayer;
+                target = new RenderTexture(1280,720,24); target.Create(); camera.targetTexture = target;
+                canvasObject = new GameObject("WC screenshot canvas",typeof(RectTransform),typeof(Canvas));
+                canvasObject.layer = GUIManager.UILayer;
+                Canvas canvas = canvasObject.GetComponent<Canvas>(); canvas.renderMode = RenderMode.ScreenSpaceCamera;
+                canvas.worldCamera = camera; canvas.planeDistance = 5;
+                GameObject overlay = (GameObject)AccessTools.Field(typeof(AdministrationWindow),"overlay").GetValue(preview);
+                overlay.transform.SetParent(canvasObject.transform,false);
+                Canvas.ForceUpdateCanvases();
+                AccessTools.Method(typeof(AdministrationWindow),"Scale").Invoke(preview,null);
+            }
+            catch (Exception error) { failure = error; }
+            if (failure != null)
+            {
+                if (preview != null) preview.Hide(); if (canvasObject != null) UnityEngine.Object.Destroy(canvasObject);
+                if (cameraObject != null) UnityEngine.Object.Destroy(cameraObject); if (target != null) { target.Release(); UnityEngine.Object.Destroy(target); }
+                Finish("FAIL UI preview: " + failure,2); yield break;
+            }
+            yield return new WaitForEndOfFrame();
+            Texture2D capture = null; RenderTexture previous = RenderTexture.active;
+            try
+            {
+                Canvas.ForceUpdateCanvases(); camera.Render(); RenderTexture.active = target;
+                capture = new Texture2D(target.width,target.height,TextureFormat.RGB24,false);
+                capture.ReadPixels(new Rect(0,0,target.width,target.height),0,0); capture.Apply();
+                Color32[] pixels = capture.GetPixels32(); Color32 first = pixels[0]; int different = 0;
+                foreach (Color32 pixel in pixels) if (Math.Abs(pixel.r-first.r)+Math.Abs(pixel.g-first.g)+Math.Abs(pixel.b-first.b)>20) different++;
+                Check(different > 10000,"preview contains rendered widgets instead of an empty hidden-window backbuffer");
+                File.WriteAllBytes(Path.Combine(Root,"administration-preview.png"),capture.EncodeToPNG());
+                Finish(result + "\nPASS: synthetic preview rendered to an owned texture without a visible game window.",0);
+            }
+            catch (Exception error) { Finish("FAIL UI screenshot: " + error,2); }
+            finally
+            {
+                RenderTexture.active = previous; if (capture != null) UnityEngine.Object.Destroy(capture); preview.Hide();
+                UnityEngine.Object.Destroy(canvasObject); camera.targetTexture = null; UnityEngine.Object.Destroy(cameraObject);
+                target.Release(); UnityEngine.Object.Destroy(target);
+            }
         }
         private static ItemDrop.ItemData Item(string prefab,int count,int x,int y)
         {

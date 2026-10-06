@@ -4,16 +4,23 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 Add-Type -Path (Join-Path $root 'Game/BepInEx/core/Mono.Cecil.dll')
 $game = [Mono.Cecil.AssemblyDefinition]::ReadAssembly((Join-Path $GameDirectory 'valheim_Data/Managed/assembly_valheim.dll'))
+$jotunn = [Mono.Cecil.AssemblyDefinition]::ReadAssembly((Join-Path $root 'Game/BepInEx/plugins/Jotunn.dll'))
+$gui = [Mono.Cecil.AssemblyDefinition]::ReadAssembly((Join-Path $GameDirectory 'valheim_Data/Managed/assembly_guiutils.dll'))
+$utils = [Mono.Cecil.AssemblyDefinition]::ReadAssembly((Join-Path $GameDirectory 'valheim_Data/Managed/assembly_utils.dll'))
 if (-not $PluginAssembly) { $PluginAssembly = Join-Path $root 'local-plugins/WorldCharacters.dll' }
 $plugin = [Mono.Cecil.AssemblyDefinition]::ReadAssembly($PluginAssembly)
 $count = 0
 try {
+    if ($plugin.Name.Name -ne 'WorldCharacters') { throw 'WorldCharacters CLR assembly identity changed; dependent mods cannot bind safely.' }
+    $count++
     foreach ($type in $plugin.MainModule.GetTypes()) {
         $attribute = $type.CustomAttributes | Where-Object { $_.AttributeType.FullName -eq 'HarmonyLib.HarmonyPatch' }
         if (-not $attribute) { continue }
         $targetTypeName = $attribute.ConstructorArguments[0].Value.FullName
         $methodName = [string]$attribute.ConstructorArguments[1].Value
-        $targetType = $game.MainModule.GetTypes() | Where-Object FullName -eq $targetTypeName
+        $targetTypes = @(@($game.MainModule.GetTypes()) + @($jotunn.MainModule.GetTypes()) + @($gui.MainModule.GetTypes()) + @($utils.MainModule.GetTypes()) | Where-Object FullName -eq $targetTypeName)
+        if ($targetTypes.Count -ne 1) { throw "Missing or ambiguous native type: $targetTypeName" }
+        $targetType = $targetTypes[0]
         $targets = @($targetType.Methods | Where-Object Name -eq $methodName)
         if ($targets.Count -ne 1) { throw "Missing or ambiguous native target: $targetTypeName.$methodName" }
         $target = $targets[0]
@@ -74,4 +81,4 @@ try {
     if ($flagWrite.Count -ne 1 -or $flagWrite[0].Offset -ge $playerCall[0].Offset) { throw 'Native shutdown flag must precede the final character save' }
     $count += 3
     Write-Output "PASS: $count native contracts (patch signatures and supported serialization versions). No game process started."
-} finally { $plugin.Dispose(); $game.Dispose() }
+} finally { $plugin.Dispose(); $game.Dispose(); $jotunn.Dispose(); $gui.Dispose(); $utils.Dispose() }

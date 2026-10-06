@@ -2,6 +2,8 @@
 param([Parameter(Mandatory=$true)][string]$GameDirectory, [string]$PlayerDataFixture)
 $ErrorActionPreference = 'Stop'
 & (Join-Path $PSScriptRoot 'Test-AdministrativeCheckpoint.ps1')
+& (Join-Path $PSScriptRoot 'Test-Administration.ps1')
+& (Join-Path $PSScriptRoot 'Test-AdministrationInput.ps1')
 $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $folder = Join-Path $root ('.cache/worldcharacters-tests-' + [guid]::NewGuid().ToString('N').Substring(0,8))
 New-Item -ItemType Directory -Force -Path $folder | Out-Null

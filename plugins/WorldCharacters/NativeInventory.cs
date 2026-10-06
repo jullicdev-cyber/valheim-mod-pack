@@ -8,6 +8,7 @@ namespace ValheimModPack.WorldCharacters
     public sealed class StoredItem
     {
         public int Prefab, Count, Quality, Variant, X, Y;
+        public bool Equipped;
         public readonly SortedDictionary<string, string> Custom = new SortedDictionary<string, string>(StringComparer.Ordinal);
         public string Identity()
         {
@@ -37,7 +38,7 @@ namespace ValheimModPack.WorldCharacters
             using (var r = new BinaryReader(stream, new UTF8Encoding(false, true)))
             {
                 // Deliberately fail closed on future formats instead of guessing offsets.
-                if (r.ReadInt32() != 33) throw new InvalidDataException("Unsupported Player.Save version (expected 33 / Valheim 1.0.16).");
+                if (r.ReadInt32() != 33) throw new InvalidDataException("Unsupported Player.Save version (expected 33 / Valheim 1.0.17).");
                 for (int i = 0; i < 4; ++i) Finite(r.ReadSingle());
                 NativeString(r, 4096); Finite(r.ReadSingle());
                 return ReadInventory(r);
@@ -55,6 +56,7 @@ namespace ValheimModPack.WorldCharacters
                 r.ReadInt32(); // durability in hundredths
                 var item = new StoredItem { X = r.ReadByte(), Y = r.ReadByte() };
                 r.ReadByte(); int flags = r.ReadByte();
+                item.Equipped = (flags & 2) != 0;
                 item.Quality = (flags & 4) != 0 ? r.ReadUInt16() : 1;
                 item.Count = (flags & 8) != 0 ? r.ReadUInt16() : 1;
                 item.Variant = (flags & 16) != 0 ? r.ReadInt32() : 0;

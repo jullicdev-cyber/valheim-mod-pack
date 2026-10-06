@@ -12,12 +12,12 @@
     "sha256": "6aa985fa58371c03b01fc68c112005fe7d0b0150eadb4675a245a11622a2a772"
   },
   {
-    "path": "BepInEx/config/Azumatt.Recycle_N_Reclaim_ExcludeLists.yml",
-    "sha256": "781f7a0ca0e358b3b0f0d8c05c8b116b4a5d2e1f66309bdf3c4758aa0e06585d"
-  },
-  {
     "path": "BepInEx/config/Azumatt.Recycle_N_Reclaim.cfg",
     "sha256": "1a9bc67878931c998feb37b4592e82eacad85c8808f93fc45d9a64269eb57afa"
+  },
+  {
+    "path": "BepInEx/config/Azumatt.Recycle_N_Reclaim_ExcludeLists.yml",
+    "sha256": "781f7a0ca0e358b3b0f0d8c05c8b116b4a5d2e1f66309bdf3c4758aa0e06585d"
   },
   {
     "path": "BepInEx/config/BepInEx.cfg",
@@ -89,7 +89,7 @@
   },
   {
     "path": "BepInEx/config/valheimmodpack.worldcharacters.cfg",
-    "sha256": "440fea2a2bcc616038c6ec1e9e7281d09a771a6c3d9cc9421c0f5a62df5391bc"
+    "sha256": "34f2f2ccf8ea6b9e73fa15c5d0419beea3d1ebaa01672aed0f9b3500800a063c"
   },
   {
     "path": "BepInEx/core/0Harmony.dll",
@@ -333,7 +333,7 @@
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-WorldCharacters/WorldCharacters.dll",
-    "sha256": "99d3f1e87e3c77ed0c2aa611616cf2dc9a6e6f4280f3f1b5f0d840e9185e4239"
+    "sha256": "a3ffb308828ce0206b86e2441e454b8297ae47b2d562ab6bad9a1e82eec06b48"
   },
   {
     "path": "BepInEx/plugins/ValheimPlus.dll",
@@ -352,12 +352,12 @@
     "sha256": "82db3dde2c87f01310cd4ec59d2b7bac0e8e87dbc5d60bc091c75cb276860c07"
   },
   {
-    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Chinese_Trad.json",
-    "sha256": "31dc97fa33cee77fd5fd4f127d7ffe261e9fff29c0aa7ec5e8e0499263f0654d"
-  },
-  {
     "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Chinese.json",
     "sha256": "cb4e0d585fd5f5113685e3b3fb2a335d778cab515b03712745bccd576147e0fb"
+  },
+  {
+    "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Chinese_Trad.json",
+    "sha256": "31dc97fa33cee77fd5fd4f127d7ffe261e9fff29c0aa7ec5e8e0499263f0654d"
   },
   {
     "path": "BepInEx/plugins/Vapok-AdventureBackpacks/Translations/AdventureBackpacks.Croatian.json",

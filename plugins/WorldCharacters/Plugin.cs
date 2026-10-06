@@ -5,15 +5,17 @@ using System.Collections.Generic;
 using BepInEx;
 using BepInEx.Configuration;
 using HarmonyLib;
+using Jotunn.Managers;
 using UnityEngine;
 
 namespace ValheimModPack.WorldCharacters
 {
     [BepInPlugin(Id, "World Characters", Version)]
+    [BepInDependency("com.jotunn.jotunn", "2.30.2")]
     [BepInIncompatibility("org.bepinex.plugins.servercharacters")]
     public sealed partial class Plugin : BaseUnityPlugin
     {
-        public const string Id = "valheimmodpack.worldcharacters", Version = "1.0.4";
+        public const string Id = "valheimmodpack.worldcharacters", Version = "1.1.0";
         private const string RpcName = "VMP_WorldCharacters_v1";
         private const int SnapshotQueueCapacity = 64;
         internal static Plugin Instance;
@@ -68,6 +70,7 @@ namespace ValheimModPack.WorldCharacters
             string dataRoot = Path.Combine(Path.GetDirectoryName(Paths.BepInExRootPath), "ValheimModpack", "WorldCharacters");
             store = new StateStore(dataRoot);
             writer = new SnapshotWriter(SnapshotQueueCapacity);
+            InitializeAdministration();
             harmony = new Harmony(Id); harmony.PatchAll(typeof(Plugin).Assembly);
             new Terminal.ConsoleCommand("wc", "World Characters: status, timings, pending, inspect/approve/fresh/reject <id>", (Terminal.ConsoleEvent)Command);
             Logger.LogInfo("World Characters ready. Server data: " + dataRoot);
@@ -103,6 +106,7 @@ namespace ValheimModPack.WorldCharacters
         private void Update()
         {
             DrainWrites();
+            UpdateAdministration();
             if (exitOnUpdate)
             {
                 exitOnUpdate = false;
@@ -245,7 +249,7 @@ namespace ValheimModPack.WorldCharacters
                 if (state == null)
                 {
                     string id = store.Propose(candidate);
-                    Reject(link, "Первый вход требует одобрения хоста. Запрос: " + id + ". Хост: wc inspect / wc approve или wc fresh.");
+                    Reject(link, "Первый вход требует одобрения хоста. Запрос: " + id + ". Хост может проверить и одобрить заявку в окне World Characters или через wc inspect / wc approve.");
                     return false;
                 }
                 string key = StateCodec.Key(world, owner, candidate.Character);
@@ -531,6 +535,7 @@ namespace ValheimModPack.WorldCharacters
         }
         private void ResetSession()
         {
+            ResetAdministration();
             FlushWrites(); ++saveGeneration;
             protection.Clear();
             links.Clear(); leases.Clear(); disconnect.Clear(); localHost = null; server = null; offered = null; protectedProfile = null;
@@ -579,6 +584,7 @@ namespace ValheimModPack.WorldCharacters
         }
         private void OnDestroy()
         {
+            DisposeAdministration();
             if (writer != null) { FlushWrites(); writer.Dispose(); }
             if (harmony != null) harmony.UnpatchSelf(); if (store != null) store.Dispose(); if (Instance == this) Instance = null;
         }
@@ -693,7 +699,7 @@ namespace ValheimModPack.WorldCharacters
             { if (!ReferenceEquals(__instance, Instance.protectedProfile)) return true; __result = true; return false; }
         }
         [HarmonyPatch(typeof(Player), "TakeInput")]
-        private static class InputPatch { private static bool Prefix(ref bool __result) { if (!Instance.BlockInput) return true; __result = false; return false; } }
+        private static class InputPatch { [HarmonyPriority(Priority.First)] private static bool Prefix(Player __instance, ref bool __result) { if (Instance == null || !Instance.BlockInput && (!ReferenceEquals(__instance, Player.m_localPlayer) || !Instance.AdminBlocksGameplay())) return true; __result = false; return false; } }
         [HarmonyPatch(typeof(Game), "Logout")]
         private static class LogoutPatch { private static bool Prefix(bool save, bool changeToStartScene) { return Instance.BeforeLogout(save, changeToStartScene); } }
         [HarmonyPatch(typeof(Game), "OnDestroy")]

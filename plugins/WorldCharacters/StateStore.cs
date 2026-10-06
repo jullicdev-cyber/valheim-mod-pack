@@ -103,6 +103,36 @@ namespace ValheimModPack.WorldCharacters
                 File.Move(path, path + ".rejected-" + Guid.NewGuid().ToString("N"));
             }
         }
+        // The GUI reviews a particular immutable proposal, rather than just its
+        // identity (a rejected proposal may be submitted again with the same ID).
+        // Re-read and admit the decision under the store mutex before committing.
+        // An admitted atomic commit is allowed to finish for its original world;
+        // the GUI discards its result if that session has since been closed.
+        public void ApplyAdministrationDecision(long world, string id, string fingerprint,
+            bool fresh, bool reject, Func<bool> authorized)
+        {
+            if (world == 0 || String.IsNullOrEmpty(fingerprint) || (fresh && reject) || authorized == null)
+                throw new ArgumentException("Invalid administration decision.");
+            lock (sync)
+            {
+                CharacterState candidate = Pending(id);
+                if (candidate.World != world || StateCodec.Key(candidate.World, candidate.Owner, candidate.Character) != id)
+                    throw new InvalidDataException("Request belongs to another world or has an invalid identity.");
+                if (StateCodec.Hash(StateCodec.Encode(candidate)) != fingerprint)
+                    throw new InvalidOperationException("The request changed after inspection; inspect it again.");
+                if (HasStoredState(candidate.World, candidate.Owner, candidate.Character))
+                    throw new InvalidOperationException("Character already exists; approval cannot overwrite progress.");
+                if (!authorized()) throw new InvalidOperationException("The host session changed; open the window again.");
+                if (reject) RejectProposal(id);
+                else
+                {
+                    // Commit exactly the reviewed bytes rather than re-reading
+                    // the proposal after its fingerprint has been checked.
+                    if (fresh) { candidate.Player = new byte[0]; candidate.WorldData = new byte[0]; }
+                    candidate.Revision = 1; Save(candidate, 0);
+                }
+            }
+        }
         private void KeepHistory(CharacterState state)
         {
             string key = StateCodec.Key(state.World, state.Owner, state.Character); DateTime last;
