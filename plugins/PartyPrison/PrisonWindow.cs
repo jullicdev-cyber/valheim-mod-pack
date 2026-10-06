@@ -244,8 +244,8 @@ namespace ValheimModPack.PartyPrison
                 selection.text = selected == null ? T("Выберите игрока слева", "Select a player on the left") : Safe(selected.Name, 72);
                 build.GetComponentInChildren<Text>().text = buildArmed ? T("Подтвердить постройку", "Confirm construction") : T("Построить у алтарей боссов", "Build near boss altars");
                 buildHint.text = buildArmed
-                    ? T("Тюрьма будет построена возле алтарей с трофеями боссов. Хост автоматически выберет свободную ровную площадку. Esc — отмена.",
-                        "The prison will be built near the boss trophy altars. The host will automatically find a clear, level site. Esc cancels.")
+                    ? T("Тюрьма будет построена возле алтарей с трофеями боссов. Свободная площадка будет выровнена автоматически. Esc — отмена.",
+                        "The prison will be built near the boss trophy altars. A clear site will be levelled automatically. Esc cancels.")
                     : T("Постройка привязана к алтарям с трофеями боссов. Ваше текущее положение не влияет на её место.",
                         "Construction is placed near the boss trophy altars. Your current position does not choose the site.");
                 RepaintActions();

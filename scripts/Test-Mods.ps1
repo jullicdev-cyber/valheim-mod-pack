@@ -34,6 +34,8 @@ Run-Suite 'party-prison-protocol' 'plugins/PartyPrison/Test-Protocol.ps1'
 Run-Suite 'party-prison-custody' 'plugins/PartyPrison/Test-Custody.ps1'
 Run-Suite 'party-prison-withdrawal' 'plugins/PartyPrison/Test-Withdrawal.ps1'
 Run-Suite 'party-prison-performance' 'plugins/PartyPrison/Test-Performance.ps1' @('-GameDirectory',$GameDirectory)
+Run-Suite 'party-prison-terrain-policy' 'plugins/PartyPrison/Test-TerrainPlan.ps1'
+Run-Suite 'party-prison-terrain-contracts' 'plugins/PartyPrison/Test-TerrainContracts.ps1' @('-GameDirectory',$GameDirectory)
 Run-Suite 'inventory-admin-service' 'plugins/InventoryAdmin/Test-Service.ps1'
 Run-Suite 'inventory-admin-locations' 'plugins/InventoryAdmin/Test-Locations.ps1'
 Run-Suite 'inventory-admin-map' 'plugins/InventoryAdmin/Test-MapOverlay.ps1'

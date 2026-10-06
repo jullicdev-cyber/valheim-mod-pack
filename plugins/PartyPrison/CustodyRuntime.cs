@@ -237,7 +237,7 @@ namespace ValheimModPack.PartyPrison
             if (!ZoneSystem.instance.FindClosestLocation("StartTemple", Player.m_localPlayer.transform.position, out temple)) return;
             Vector3 delta = temple.m_position - Player.m_localPlayer.transform.position; delta.y = 0;
             if (delta.sqrMagnitude > 140 * 140) return;
-            try { BuildPrison(); } catch (Exception e) { Report(e.Message); }
+            try { BuildPrisonCore(false); } catch (Exception e) { Report(e.Message); }
         }
     }
 }

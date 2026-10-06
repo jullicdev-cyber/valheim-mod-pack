@@ -20,7 +20,7 @@ namespace ValheimModPack.PartyPrison
     [NetworkCompatibility(CompatibilityLevel.EveryoneMustHaveMod, VersionStrictness.Patch)]
     public sealed partial class Plugin : BaseUnityPlugin
     {
-        public const string Id = "valheimmodpack.partyprison", Version = "1.1.1";
+        public const string Id = "valheimmodpack.partyprison", Version = "1.1.2";
         internal const string LoanKey = "VMP_PP_Loan", InmateKey = "VMP_PP_Inmate";
         private const string RpcName = PrisonWire.RpcName;
         internal static Plugin Active;
@@ -357,16 +357,20 @@ namespace ValheimModPack.PartyPrison
         private void Release(string account)
         { RequireHost(); store.RequestRelease(true, account); notice = T("Освобождение назначено. Отключённый игрок будет освобождён при входе.", "Release requested. An offline player will be released on reconnect."); nextHost = Time.realtimeSinceStartup; }
         private void BuildPrison()
+        { BuildPrisonCore(true); }
+
+        private void BuildPrisonCore(bool levelGround)
         {
             RequireHost(); if (region != null && ArenaBuilder.LayoutVersion(region) >= ArenaBuilder.CurrentLayoutVersion) throw new InvalidOperationException(T("Тюрьма этого мира уже создана.", "This world's prison is already configured."));
             if (custody.HasOutstanding) throw new InvalidOperationException("Collect all stored belongings before rebuilding.");
             if (store.All().Length != 0) throw new InvalidOperationException("Release all prisoners first.");
-            PrisonRegion old = region; PrisonRegion created = ArenaBuilder.BuildNearAltars();
-            try { store.SetRegion(true, created); }
-            catch { ArenaBuilder.TryRollback(created); throw; }
+            PrisonRegion old = region;
+            ArenaBuilder.BuildNearAltars(levelGround, delegate(PrisonRegion created) { store.SetRegion(true, created); });
             region = store.Region; nextHost = Time.realtimeSinceStartup;
             if (old != null) ArenaBuilder.RemoveStructure(old); ArenaBuilder.SetExitLocked(region, false); network.Save(true, false, false);
-            notice = T("Тюрьма создана возле алтарей: камера, арена и четыре железных сундука.", "Prison built near the altars: cell, arena and four iron chests.");
+            notice = levelGround
+                ? T("Земля выровнена. Тюрьма создана возле алтарей: камера, арена и четыре железных сундука.", "Ground levelled. Prison built near the altars: cell, arena and four iron chests.")
+                : T("Тюрьма создана возле алтарей: камера, арена и четыре железных сундука.", "Prison built near the altars: cell, arena and four iron chests.");
         }
         private void Move(bool arena)
         {

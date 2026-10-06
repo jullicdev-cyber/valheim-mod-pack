@@ -5,7 +5,7 @@ using UnityEngine;
 
 namespace ValheimModPack.PartyPrison
 {
-    /// <summary>Host-built native pieces. No terrain, existing structures or prefabs are modified.</summary>
+    /// <summary>Host-built native pieces; manual construction can prepare a bounded, empty terrain site.</summary>
     public static class ArenaBuilder
     {
         public const string ProtectedKey = "VMP_PP_Protected";
@@ -38,6 +38,10 @@ namespace ValheimModPack.PartyPrison
 
         /// <summary>Choose a clear, loaded site beside the world's boss-trophy altar.</summary>
         public static PrisonRegion BuildNearAltars()
+        { return BuildNearAltars(false, null); }
+
+        /// <summary>Keep terrain preparation and the durable region write in one rollback scope.</summary>
+        public static PrisonRegion BuildNearAltars(bool levelGround, Action<PrisonRegion> saveRegion)
         {
             RequireHost();
             if (ZoneSystem.instance == null || Player.m_localPlayer == null)
@@ -51,6 +55,7 @@ namespace ValheimModPack.PartyPrison
                 throw new InvalidOperationException("Для первой генерации подойдите к жертвенным камням с головами боссов. Тюрьма появится рядом с ними.");
             Vector3 best = Vector3.zero;
             Quaternion bestRotation = Quaternion.identity;
+            TerrainLeveler.Site bestTerrain = null;
             float bestScore = Single.MaxValue;
             string failure = "";
             // Search only loaded terrain, so native buildings, rocks, trees and the
@@ -62,17 +67,37 @@ namespace ValheimModPack.PartyPrison
                     float height;
                     if (!ZoneSystem.instance.GetGroundHeight(candidate, out height)) continue;
                     candidate.y = height;
-                    Quaternion rotation = Quaternion.LookRotation(new Vector3(-Mathf.Sin(angle), 0f, Mathf.Cos(angle)));
+                    Quaternion rotation = levelGround ? Quaternion.identity
+                        : Quaternion.LookRotation(new Vector3(-Mathf.Sin(angle), 0f, Mathf.Cos(angle)));
                     try {
-                        float floor = PreflightSite(candidate, rotation);
-                        float score = ring * 20f + floor - height;
-                        if (score < bestScore) { bestScore = score; best = candidate; bestRotation = rotation; }
+                        TerrainLeveler.Site terrain = levelGround ? TerrainLeveler.Plan(candidate, altar) : null;
+                        float floor;
+                        if (terrain == null) floor = PreflightSite(candidate, rotation);
+                        else {
+                            // Include both the existing terrain and the whole future room.
+                            // Do not bury objects when raising the floor or uncover them when lowering it.
+                            float low = terrain.TargetHeight - (float)TerrainPlan.MaximumGroundChange - 1f;
+                            float high = terrain.TargetHeight + (float)TerrainPlan.MaximumGroundChange + RoomHeight + 1f;
+                            RequireClearSite(candidate, rotation, (float)(TerrainPlan.HalfWidth + TerrainPlan.FootprintPadding), low, high, false);
+                            floor = terrain.FloorHeight;
+                        }
+                        float score = ring * 20f + Mathf.Abs(floor - height);
+                        if (score < bestScore) {
+                            bestScore = score; best = candidate; bestRotation = rotation; bestTerrain = terrain;
+                        }
                     }
                     catch (InvalidOperationException error) { failure = error.Message; }
                 }
             if (bestScore == Single.MaxValue)
-                throw new InvalidOperationException("Рядом с алтарями нет свободной сухой площадки 27 × 27 м. Подойдите к камням и освободите такую площадку в пределах 40–88 м. " + failure);
-            return Build(best, bestRotation);
+                throw new InvalidOperationException("Рядом с алтарями нет подходящего свободного сухого места под тюрьму. Подойдите к камням и освободите площадку в пределах 40–88 м. " + failure);
+            using (TerrainLeveler.Transaction terrain = bestTerrain == null ? null : bestTerrain.Apply()) {
+                if (bestTerrain != null) best.y = bestTerrain.TargetHeight;
+                PrisonRegion created = Build(best, bestRotation);
+                try { if (saveRegion != null) saveRegion(created); }
+                catch { TryRollback(created); throw; }
+                if (terrain != null) terrain.Commit();
+                return created;
+            }
         }
 
         public static PrisonRegion Build(Vector3 origin, Quaternion facing)
@@ -464,15 +489,20 @@ namespace ValheimModPack.PartyPrison
                     low = Mathf.Min(low, height); high = Mathf.Max(high, height);
                 }
             if (high - low > 2f || Mathf.Abs(origin.y - high) > 4f)
-                throw new InvalidOperationException("Выберите ровную площадку примерно 27 × 27 м. Земля не выравнивается автоматически.");
-            Vector3 center = new Vector3(origin.x, high + RoomHeight * 0.5f, origin.z);
-            foreach (Collider collider in Physics.OverlapBox(center, new Vector3(13.5f, 5f, 13.5f), rotation, ~0, QueryTriggerInteraction.Ignore)) {
+                throw new InvalidOperationException("Для фоновой генерации нужна ровная площадка 27 × 27 м. Команда /prison build сама подготовит землю.");
+            RequireClearSite(origin, rotation, 13.5f, high - 1f, high + RoomHeight + 1f);
+            return high + 0.15f;
+        }
+
+        private static void RequireClearSite(Vector3 origin, Quaternion rotation, float halfWidth, float low, float high, bool allowHost = true)
+        {
+            Vector3 center = new Vector3(origin.x, (low + high) * 0.5f, origin.z);
+            foreach (Collider collider in Physics.OverlapBox(center, new Vector3(halfWidth, (high - low) * 0.5f, halfWidth), rotation, ~0, QueryTriggerInteraction.Ignore)) {
                 if (collider == null || collider.GetComponentInParent<Heightmap>() != null) continue;
                 Player nearby = collider.GetComponentInParent<Player>();
-                if (nearby != null && nearby == Player.m_localPlayer) continue;
+                if (allowHost && nearby != null && nearby == Player.m_localPlayer) continue;
                 throw new InvalidOperationException("Площадка занята строением, камнем, деревом или существом. Очистите место или выберите другое.");
             }
-            return high + 0.15f;
         }
 
         private static Bounds SolidBounds(GameObject prefab)
