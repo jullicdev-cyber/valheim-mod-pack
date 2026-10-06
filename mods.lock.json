@@ -1,7 +1,7 @@
 {
-  "packVersion": "1.20.0",
+  "packVersion": "1.22.1",
   "created": "2026-09-25",
-  "targetGameVersion": "1.0.16",
+  "targetGameVersion": "1.0.17",
   "packages": [
     {
       "id": "denikson-BepInExPack_Valheim",
@@ -470,6 +470,18 @@
       "source": "local-plugins/InventoryAdmin.dll",
       "destination": "BepInEx/plugins/ValheimModPack-InventoryAdmin/InventoryAdmin.dll",
       "sha256": "dd54d5bfb3a49f7d8371381fad9ef3ffcb861c0fa338e8b1c350fc4e927342ee",
+      "dependencies": [
+        "denikson-BepInExPack_Valheim-5.4.2351",
+        "ValheimModding-Jotunn-2.30.2",
+        "ValheimModPack-WorldCharacters-1.0.4"
+      ]
+    },
+    {
+      "id": "ValheimModPack-PartyPrison",
+      "version": "1.1.1",
+      "source": "local-plugins/PartyPrison.dll",
+      "destination": "BepInEx/plugins/ValheimModPack-PartyPrison/PartyPrison.dll",
+      "sha256": "fe1c6ad96d1bb2337f6a3159a26e95d82ac49cd128614997b3940b27d9ba345a",
       "dependencies": [
         "denikson-BepInExPack_Valheim-5.4.2351",
         "ValheimModding-Jotunn-2.30.2",

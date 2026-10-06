@@ -76,6 +76,10 @@
     "sha256": "e0bc91c1d5b7c63551a5426a08c612695e5695d6026965f1135a8da05df1c6f5"
   },
   {
+    "path": "BepInEx/config/valheimmodpack.partyprison.cfg",
+    "sha256": "14411e345b57753c94a2e6916cd68f6679e28777a3888eba0870a34544f2a45c"
+  },
+  {
     "path": "BepInEx/config/valheimmodpack.portalfinder.cfg",
     "sha256": "de5168db3b9f9e22f196908804efc64147da742d673ea2ca032a9294b401e0a9"
   },
@@ -310,6 +314,10 @@
   {
     "path": "BepInEx/plugins/ValheimModPack-NordicRadio/NordicRadio.dll",
     "sha256": "afd9815ac180d74e91414953731c0729bc66bf083d6bdc1768910454d768272c"
+  },
+  {
+    "path": "BepInEx/plugins/ValheimModPack-PartyPrison/PartyPrison.dll",
+    "sha256": "fe1c6ad96d1bb2337f6a3159a26e95d82ac49cd128614997b3940b27d9ba345a"
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-PlayerSectorSync/PlayerSectorSync.dll",
