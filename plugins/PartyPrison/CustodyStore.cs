@@ -16,18 +16,18 @@ namespace ValheimModPack.PartyPrison
         public CustodyStage Stage;
         public byte[] OriginalPayload = new byte[0];
         public string[] ChestIds = new string[0];
-        public bool NeedsRecovery, PublicAccess;
+        public bool NeedsRecovery, PublicAccess, Closed;
         public CustodyRecord Copy()
         {
             return new CustodyRecord { AccountId = AccountId, SentenceId = SentenceId, PayloadHash = PayloadHash,
                 RecoveryReason = RecoveryReason, World = World, ClearSequence = ClearSequence, Stage = Stage,
-                OriginalPayload = (byte[])OriginalPayload.Clone(), ChestIds = (string[])ChestIds.Clone(), NeedsRecovery = NeedsRecovery, PublicAccess = PublicAccess };
+                OriginalPayload = (byte[])OriginalPayload.Clone(), ChestIds = (string[])ChestIds.Clone(), NeedsRecovery = NeedsRecovery, PublicAccess = PublicAccess, Closed = Closed };
         }
         public CustodyRecord StateCopy()
         {
             return new CustodyRecord { AccountId = AccountId, SentenceId = SentenceId, PayloadHash = PayloadHash,
                 RecoveryReason = RecoveryReason, World = World, ClearSequence = ClearSequence, Stage = Stage,
-                ChestIds = (string[])ChestIds.Clone(), NeedsRecovery = NeedsRecovery, PublicAccess = PublicAccess };
+                ChestIds = (string[])ChestIds.Clone(), NeedsRecovery = NeedsRecovery, PublicAccess = PublicAccess, Closed = Closed };
         }
     }
 
@@ -81,7 +81,7 @@ namespace ValheimModPack.PartyPrison
         {
             CheckOpen(); SentencePolicy.RequireAccountId(account);
             foreach (CustodyRecord record in records.Values)
-                if (record.AccountId == account && (record.Stage != CustodyStage.Collected || record.NeedsRecovery)) return record.Copy();
+                if (!record.Closed && record.AccountId == account && (record.Stage != CustodyStage.Collected || record.NeedsRecovery)) return record.Copy();
             return null;
         }
         public CustodyRecord FindState(string account, string token)
@@ -93,7 +93,7 @@ namespace ValheimModPack.PartyPrison
         {
             CheckOpen(); SentencePolicy.RequireAccountId(account);
             foreach (CustodyRecord record in records.Values)
-                if (record.AccountId == account && (record.Stage != CustodyStage.Collected || record.NeedsRecovery)) return record.StateCopy();
+                if (!record.Closed && record.AccountId == account && (record.Stage != CustodyStage.Collected || record.NeedsRecovery)) return record.StateCopy();
             return null;
         }
         public CustodyRecord[] All()
@@ -114,7 +114,7 @@ namespace ValheimModPack.PartyPrison
         { return Find(account) == null; }
         public bool HasOutstanding
         {
-            get { CheckOpen(); foreach (CustodyRecord r in records.Values) if (r.Stage != CustodyStage.Collected || r.NeedsRecovery) return true; return false; }
+            get { CheckOpen(); foreach (CustodyRecord r in records.Values) if (!r.Closed && (r.Stage != CustodyStage.Collected || r.NeedsRecovery)) return true; return false; }
         }
 
         public CustodyRecord Prepare(string account, string token, byte[] originalPayload)
@@ -125,6 +125,7 @@ namespace ValheimModPack.PartyPrison
             {
                 if (old.AccountId != account || old.PayloadHash != hash)
                     throw new InvalidDataException("Custody token cannot be rebound or its original items changed.");
+                if (old.Closed) throw new InvalidOperationException("An archived custody token cannot be prepared again.");
                 return old.Copy();
             }
             // There are exactly four physical chests, so another unresolved
@@ -189,6 +190,21 @@ namespace ValheimModPack.PartyPrison
             value.NeedsRecovery = true; value.RecoveryReason = reason; Persist(value); records[token] = value; return value.Copy();
         }
 
+        // An emergency release archives custody without claiming that items
+        // were cleared, deposited, or collected. Original bytes and the last
+        // certain stage remain available for explicit recovery, never replayed.
+        // Call only after an authenticated, durable recipient release ACK.
+        public CustodyRecord CloseEmergency(string account, string token, string recoveryReason)
+        {
+            CustodyRecord value = Find(account, token);
+            if (value == null) throw new InvalidDataException("Unknown custody account or token.");
+            SentencePolicy.RequireText(recoveryReason, 512, "custody recovery reason");
+            if (value.Closed) return value.Copy();
+            value.Closed = true;
+            if (recoveryReason.Length != 0) { value.NeedsRecovery = true; value.RecoveryReason = recoveryReason; }
+            Persist(value); records[token] = value; return value.Copy();
+        }
+
         private CustodyRecord Advance(CustodyRecord value, CustodyStage next)
         {
             if (value.NeedsRecovery) throw new InvalidOperationException("Custody needs host recovery: " + value.RecoveryReason);
@@ -198,6 +214,7 @@ namespace ValheimModPack.PartyPrison
         {
             CustodyRecord value = Find(account, token);
             if (value == null) throw new InvalidDataException("Unknown custody account or token.");
+            if (value.Closed) throw new InvalidOperationException("Archived custody cannot confiscate or replay personal belongings.");
             if (value.NeedsRecovery) throw new InvalidOperationException("Custody needs host recovery: " + value.RecoveryReason);
             return value;
         }
@@ -236,11 +253,12 @@ namespace ValheimModPack.PartyPrison
             byte[] body;
             using (var stream = new MemoryStream()) using (var w = new BinaryWriter(stream, new UTF8Encoding(false, true)))
             {
-                w.Write(Magic); w.Write(2); w.Write(value.World); Text(w, value.AccountId); Text(w, value.SentenceId);
+                w.Write(Magic); w.Write(3); w.Write(value.World); Text(w, value.AccountId); Text(w, value.SentenceId);
                 w.Write((int)value.Stage); w.Write(value.ClearSequence); w.Write(value.NeedsRecovery); Text(w, value.RecoveryReason);
                 Text(w, value.PayloadHash); w.Write(value.OriginalPayload.Length); w.Write(value.OriginalPayload);
                 w.Write(value.ChestIds.Length); foreach (string id in value.ChestIds) Text(w, id);
                 w.Write(value.PublicAccess);
+                w.Write(value.Closed);
                 w.Flush(); body = stream.ToArray();
             }
             using (var stream = new MemoryStream()) { byte[] hash = Hash(body); stream.Write(hash, 0, hash.Length); stream.Write(body, 0, body.Length); return stream.ToArray(); }
@@ -253,7 +271,7 @@ namespace ValheimModPack.PartyPrison
             using (var stream = new MemoryStream(body, false)) using (var r = new BinaryReader(stream, new UTF8Encoding(false, true)))
             {
                 if (r.ReadInt32() != Magic) throw new InvalidDataException("Unsupported custody journal format.");
-                int version = r.ReadInt32(); if (version < 1 || version > 2) throw new InvalidDataException("Unsupported custody journal format.");
+                int version = r.ReadInt32(); if (version < 1 || version > 3) throw new InvalidDataException("Unsupported custody journal format.");
                 var value = new CustodyRecord { World = r.ReadInt64(), AccountId = Text(r, 64), SentenceId = Text(r, 32),
                     Stage = (CustodyStage)r.ReadInt32(), ClearSequence = r.ReadInt64() };
                 byte flag = r.ReadByte(); if (flag > 1) throw new InvalidDataException("Invalid custody recovery flag.");
@@ -263,6 +281,7 @@ namespace ValheimModPack.PartyPrison
                 if (count != 0 && count != 4) throw new InvalidDataException("Custody needs exactly four chests.");
                 value.ChestIds = new string[count]; for (int i = 0; i < count; ++i) value.ChestIds[i] = Text(r, 128);
                 if (version >= 2) { byte access = r.ReadByte(); if (access > 1) throw new InvalidDataException("Invalid custody public access flag."); value.PublicAccess = access == 1; }
+                if (version >= 3) { byte closed = r.ReadByte(); if (closed > 1) throw new InvalidDataException("Invalid custody archive flag."); value.Closed = closed == 1; }
                 if (stream.Position != stream.Length) throw new InvalidDataException("Trailing custody journal data.");
                 Validate(value); return value;
             }

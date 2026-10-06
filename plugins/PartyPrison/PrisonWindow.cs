@@ -21,9 +21,11 @@ namespace ValheimModPack.PartyPrison
         public Func<List<PrisonPlayerRow>> Players;
         public Func<SentenceState> LocalSentence;
         public Action<string, double, string> Impose;
-        public Action<string> Release;
+        public Action<string> Release, ForceRelease;
         public Action PrepareBuild, Build, Kit;
         public Action<int> Wave;
+        public Action<int, int> Choice;
+        public Func<int> CombatFamily, CombatDifficulty;
         public Action<bool> Move;
         public Func<string> Notice, CustodyStatus;
         public Func<string, string, string> Translate;
@@ -38,13 +40,14 @@ namespace ValheimModPack.PartyPrison
         private readonly PrisonUiBindings bindings;
         private readonly Button[] rows = new Button[PageSize];
         private readonly Button[] tiers = new Button[3];
+        private readonly Button[] families = new Button[6];
         private readonly List<PrisonPlayerRow> players = new List<PrisonPlayerRow>();
         private GameObject overlay, panel;
         private Player owner;
         private ZNet network;
         private Text title, subtitle, selection, pagination, status, buildHint, sentence, reasonText, custodyText;
         private InputField minutes, reason;
-        private Button previous, next, impose, release, build, kit, cell, arena;
+        private Button previous, next, impose, release, forceRelease, build, kit, cell, arena;
         private string selectedAccount, localNotice = "";
         private bool inputOwned, hostPanel, buildArmed;
         private int page, generation;
@@ -131,9 +134,10 @@ namespace ValheimModPack.PartyPrison
             {
                 overlay = panel = null; owner = null; network = null;
                 title = subtitle = selection = pagination = status = buildHint = sentence = reasonText = custodyText = null;
-                minutes = reason = null; previous = next = impose = release = build = kit = cell = arena = null;
+                minutes = reason = null; previous = next = impose = release = forceRelease = build = kit = cell = arena = null;
                 for (int i = 0; i < rows.Length; ++i) rows[i] = null;
                 for (int i = 0; i < tiers.Length; ++i) tiers[i] = null;
+                for (int i = 0; i < families.Length; ++i) families[i] = null;
                 players.Clear(); selectedAccount = null; page = 0; buildArmed = false; localNotice = "";
                 if (inputOwned) { inputOwned = false; GUIManager.BlockInput(false); }
             }
@@ -146,12 +150,12 @@ namespace ValheimModPack.PartyPrison
             overlay.layer = GUIManager.UILayer; overlay.transform.SetParent(GUIManager.CustomGUIFront.transform, false);
             var rect = overlay.GetComponent<RectTransform>(); rect.anchorMin = Vector2.zero; rect.anchorMax = Vector2.one;
             rect.offsetMin = rect.offsetMax = Vector2.zero; overlay.GetComponent<Image>().color = new Color(0, 0, 0, .6f);
-            panel = GUIManager.Instance.CreateWoodpanel(overlay.transform, center, center, Vector2.zero, hostPanel ? 1080 : 820, hostPanel ? 790 : 780, false);
+            panel = GUIManager.Instance.CreateWoodpanel(overlay.transform, center, center, Vector2.zero, hostPanel ? 1080 : 820, hostPanel ? 790 : 920, false);
             panel.name = hostPanel ? "PartyPrison.HostPanel" : "PartyPrison.PrisonerPanel";
             var group = panel.AddComponent<CanvasGroup>(); group.interactable = true; group.blocksRaycasts = true;
-            title = Label(T("Тюрьма", "Prison"), 0, hostPanel ? 337 : 329, hostPanel ? 910 : 660, 44, 29, true);
-            ButtonAt("X", hostPanel ? 487 : 359, hostPanel ? 339 : 330, 40, 36, Hide);
-            subtitle = Label("", 0, hostPanel ? 291 : 279, hostPanel ? 985 : 730, 38, 17, false);
+            title = Label(T("Тюрьма", "Prison"), 0, hostPanel ? 337 : 398, hostPanel ? 910 : 660, 44, 29, true);
+            ButtonAt("X", hostPanel ? 487 : 359, hostPanel ? 339 : 399, 40, 36, Hide);
+            subtitle = Label("", 0, hostPanel ? 291 : 350, hostPanel ? 985 : 730, 38, 17, false);
             if (hostPanel) BuildHost(); else BuildPrisoner();
         }
 
@@ -177,10 +181,11 @@ namespace ValheimModPack.PartyPrison
             if (reasonPlaceholder != null) reasonPlaceholder.text = T("Нарушение правил пати", "Party rule violation");
             impose = ButtonAt(T("Посадить", "Imprison"), 134, 14, 212, 44, Impose);
             release = ButtonAt(T("Освободить", "Release"), 376, 14, 212, 44, Release);
-            Label(T("Сложность следующих волн", "Difficulty of future waves"), 255, -48, 440, 32, 21, true);
-            WaveButtons(255, -92, 140, 44, 150);
+            forceRelease = ButtonAt(T("Принудительно освободить", "Force release"), 255, -39, 440, 40, ForceRelease);
+            Label(T("Сложность следующих волн", "Difficulty of future waves"), 255, -87, 440, 30, 20, true);
+            WaveButtons(255, -127, 140, 40, 150);
             Label(T("Волны появляются сами, когда заключённый на арене. Добычу с мобов он сохраняет.",
-                "Waves spawn automatically while the prisoner is in the arena. The prisoner keeps enemy loot."), 255, -151, 440, 50, 16, false);
+                "Waves spawn automatically while the prisoner is in the arena. The prisoner keeps enemy loot."), 255, -183, 440, 49, 16, false);
             build = ButtonAt(T("Построить тюрьму возле меня", "Build prison near me"), 0, -235, 580, 45, BuildPrison);
             buildHint = Label("", 0, -283, 984, 48, 16, false);
             status = Label("", 0, -345, 984, 56, 17, false);
@@ -190,17 +195,22 @@ namespace ValheimModPack.PartyPrison
 
         private void BuildPrisoner()
         {
-            sentence = Label("", 0, 225, 710, 57, 29, true);
-            reasonText = Label("", 0, 167, 710, 47, 18, false);
-            Label(T("Можно сидеть на лавочке или пройти через дверь на арену.\nМобы появляются сами; добычу можно подбирать.",
-                "Sit on the bench or walk through the door into the arena.\nEnemies spawn automatically; you may collect their loot."), 0, 100, 710, 65, 18, false);
-            kit = ButtonAt(T("Открыть сундук со снаряжением", "Open equipment chest"), 0, 31, 638, 45, Kit);
-            cell = ButtonAt(T("Вернуться в камеру", "Return to cell"), -168, -31, 300, 45, () => Move(false));
-            arena = ButtonAt(T("Перейти на арену", "Go to arena"), 168, -31, 300, 45, () => Move(true));
-            Label(T("Сложность следующих волн", "Difficulty of future waves"), 0, -86, 710, 32, 21, true);
-            WaveButtons(0, -131, 216, 43, 233);
-            custodyText = Label("", 0, -210, 710, 100, 17, false);
-            status = Label("", 0, -320, 710, 65, 16, false);
+            sentence = Label("", 0, 298, 710, 57, 29, true);
+            reasonText = Label("", 0, 244, 710, 43, 18, false);
+            Label(T("Отдыхайте на лавочке или кровати, либо идите на арену.\nМобов и сложность выбирайте из камеры; сундук должен быть закрыт.",
+                "Rest on the bench or bed, or enter the arena.\nChoose enemies and difficulty from the cell; close the chest first."), 0, 186, 710, 62, 18, false);
+            kit = ButtonAt(T("Открыть сундук со снаряжением", "Open equipment chest"), 0, 120, 638, 42, Kit);
+            cell = ButtonAt(T("Вернуться в камеру", "Return to cell"), -168, 64, 300, 42, () => Move(false));
+            arena = ButtonAt(T("Перейти на арену", "Go to arena"), 168, 64, 300, 42, () => Move(true));
+            Label(T("Противники", "Enemies"), 0, 14, 710, 30, 21, true);
+            for (int i = 0; i < families.Length; ++i) {
+                int family = i;
+                families[i] = ButtonAt(T(CombatCatalog.Name(i, true), CombatCatalog.Name(i, false)), (i % 3 - 1) * 233, -29 - (i / 3) * 49, 216, 40, () => SelectFamily(family));
+            }
+            Label(T("Сложность следующих волн", "Difficulty of future waves"), 0, -124, 710, 30, 21, true);
+            WaveButtons(0, -169, 216, 40, 233);
+            custodyText = Label("", 0, -269, 710, 124, 17, false);
+            status = Label("", 0, -393, 710, 65, 16, false);
         }
 
         private void WaveButtons(float centerX, float y, float width, float height, float spacing)
@@ -257,14 +267,15 @@ namespace ValheimModPack.PartyPrison
                 string custody = bindings.CustodyStatus == null ? "" : bindings.CustodyStatus();
                 sentence.text = state == null ? String.IsNullOrEmpty(custody)
                     ? T("Ожидаю состояние приговора…", "Waiting for sentence status…") : T("Хранение ваших вещей", "Your belongings in custody")
+                    : state.EmergencyRelease ? T("Принудительное освобождение", "Emergency release")
                     : state.PendingRelease ? T("Срок завершён", "Sentence complete")
                     : !ready ? T("Подготовка заключения…", "Preparing imprisonment…")
                     : T("Осталось: ", "Remaining: ") + Duration(state.RemainingSeconds);
                 reasonText.text = state == null ? "" : T("Причина: ", "Reason: ") + Safe(state.Reason, 180);
                 custodyText.text = String.IsNullOrEmpty(custody)
                     ? state != null && state.PendingRelease
-                        ? T("После открытия решётки нажмите E на сундуке, чтобы забрать вещи через обычный инвентарь сундука.\nДобыча и взятое снаряжение остаются у вас.",
-                            "Once the gate opens, press E on a chest to retrieve your belongings through its normal inventory.\nYou keep loot and equipment.")
+                        ? T("После открытия решётки нажмите E на сундуке, чтобы забрать вещи.\nДобыча сохраняется; тюремная броня и оружие удаляются.",
+                            "Once the gate opens, press E on a chest to retrieve your belongings.\nLoot is kept; prison armor and weapons are removed.")
                         : !ready
                             ? T("Ваши вещи сохраняются в четырёх железных сундуках. Дождитесь окончания подготовки перед боем.",
                                 "Your belongings are being secured in four iron chests. Wait for preparation to finish before fighting.")
@@ -274,8 +285,16 @@ namespace ValheimModPack.PartyPrison
                 if (kit != null) kit.interactable = ready && bindings.Kit != null;
                 if (cell != null) cell.interactable = ready && bindings.Move != null;
                 if (arena != null) arena.interactable = ready && bindings.Move != null;
-                foreach (Button tier in tiers) if (tier != null) tier.interactable = ready && bindings.Wave != null;
+                foreach (Button tier in tiers) if (tier != null) tier.interactable = ready && (bindings.Wave != null || bindings.Choice != null);
+                int selectedFamily = bindings.CombatFamily == null ? 0 : bindings.CombatFamily();
+                for (int i = 0; i < families.Length; ++i) if (families[i] != null) {
+                    families[i].interactable = ready && bindings.Choice != null;
+                    families[i].GetComponentInChildren<Text>().text = (i == selectedFamily ? "› " : "") + T(CombatCatalog.Name(i, true), CombatCatalog.Name(i, false));
+                }
             }
+            int selectedTier = bindings.CombatDifficulty == null ? 0 : bindings.CombatDifficulty();
+            string[] tierRu = { "Слабые", "Средние", "Сильные" }, tierEn = { "Weak", "Medium", "Strong" };
+            for (int i = 0; i < tiers.Length; ++i) if (tiers[i] != null) tiers[i].GetComponentInChildren<Text>().text = (i == selectedTier ? "› " : "") + T(tierRu[i], tierEn[i]);
             string serviceNotice = bindings.Notice == null ? "" : bindings.Notice();
             status.text = Safe(String.IsNullOrEmpty(localNotice) ? serviceNotice : localNotice, 380);
         }
@@ -287,6 +306,7 @@ namespace ValheimModPack.PartyPrison
             bool validDuration = TryMinutes(out duration);
             impose.interactable = selected != null && selected.Online && validDuration && bindings.Impose != null;
             release.interactable = selected != null && selected.Sentenced && bindings.Release != null;
+            if (forceRelease != null) forceRelease.interactable = selected != null && selected.Sentenced && bindings.ForceRelease != null;
             build.interactable = bindings.Build != null;
         }
 
@@ -331,6 +351,19 @@ namespace ValheimModPack.PartyPrison
             buildArmed = false; localNotice = ""; bindings.Release(selected.AccountId); Repaint();
         }
 
+        private void ForceRelease()
+        {
+            PrisonPlayerRow selected = Selected();
+            if (!hostPanel || selected == null || !selected.Sentenced || bindings.ForceRelease == null) return;
+            buildArmed = false; localNotice = ""; bindings.ForceRelease(selected.AccountId); Repaint();
+        }
+
+        private void SelectFamily(int family)
+        {
+            if (bindings.Choice == null || !CanFight(bindings.LocalSentence == null ? null : bindings.LocalSentence())) return;
+            localNotice = ""; bindings.Choice(family, bindings.CombatDifficulty == null ? 0 : bindings.CombatDifficulty()); Repaint();
+        }
+
         private void BuildPrison()
         {
             if (!hostPanel || bindings.Build == null) return;
@@ -355,9 +388,11 @@ namespace ValheimModPack.PartyPrison
 
         private void Wave(int tier)
         {
-            if (bindings.Wave == null) return;
+            if (bindings.Wave == null && bindings.Choice == null) return;
             if (!hostPanel && !CanFight(bindings.LocalSentence == null ? null : bindings.LocalSentence())) return;
-            buildArmed = false; localNotice = ""; bindings.Wave(tier); Repaint();
+            buildArmed = false; localNotice = "";
+            if (bindings.Choice != null) bindings.Choice(bindings.CombatFamily == null ? 0 : bindings.CombatFamily(), tier); else bindings.Wave(tier);
+            Repaint();
         }
 
         private void Invoke(int created, Action action)
@@ -401,7 +436,7 @@ namespace ValheimModPack.PartyPrison
         {
             if (overlay == null || panel == null) return;
             var rect = overlay.GetComponent<RectTransform>();
-            float scale = Mathf.Min(1, Mathf.Min(rect.rect.width / (hostPanel ? 1110 : 850), rect.rect.height / (hostPanel ? 820 : 810)));
+            float scale = Mathf.Min(1, Mathf.Min(rect.rect.width / (hostPanel ? 1110 : 850), rect.rect.height / (hostPanel ? 820 : 950)));
             if (scale > .01f) panel.transform.localScale = Vector3.one * scale;
         }
 

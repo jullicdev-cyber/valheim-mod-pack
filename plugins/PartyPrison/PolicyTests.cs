@@ -45,6 +45,7 @@ namespace ValheimModPack.PartyPrison
                 OnlineTime(Path.Combine(args[0], "online"));
                 HostAuthority(Path.Combine(args[0], "authority"));
                 ReleaseRecovery(Path.Combine(args[0], "release"));
+                EmergencyRelease(Path.Combine(args[0], "emergency"));
                 WorldIsolation(Path.Combine(args[0], "worlds"));
                 Corruption(Path.Combine(args[0], "corruption"));
                 WriteFailures(Path.Combine(args[0], "write"));
@@ -229,7 +230,7 @@ namespace ValheimModPack.PartyPrison
             Reject(delegate { using (var invalid = new SentenceStore(root, 44)) { } }, "checksum mismatch");
             Check(Same(File.ReadAllBytes(file), damaged), "checksum failure never overwrites damaged file");
             byte[] body = Prefix(valid, valid.Length - 32);
-            Corrupt(root, file, body, 4, BitConverter.GetBytes(2), "future document version");
+            Corrupt(root, file, body, 4, BitConverter.GetBytes(3), "future document version");
             Corrupt(root, file, body, 8, BitConverter.GetBytes((long)999), "copied state from other world");
             Corrupt(root, file, body, 16, new byte[] { 2 }, "noncanonical region boolean");
             Corrupt(root, file, body, 41, BitConverter.GetBytes(Double.NaN), "nonfinite serialized radius");
@@ -249,6 +250,41 @@ namespace ValheimModPack.PartyPrison
             byte[] malicious = Seal(body); File.WriteAllBytes(file, malicious);
             Reject(delegate { using (var invalid = new SentenceStore(root, 44)) { } }, description);
             Check(Same(File.ReadAllBytes(file), malicious), description + " file preserved");
+        }
+
+        private static void EmergencyRelease(string root)
+        {
+            string token;
+            using (var store = new SentenceStore(root, 72))
+            {
+                store.SetRegion(true, Region()); SentenceState admitted = Sentence(store, Alice, 60); token = admitted.SentenceId;
+                Reject(delegate { store.RequestEmergencyRelease(false, Alice); }, "nonhost emergency release");
+                Check(!store.Find(Alice).EmergencyRelease && !store.Find(Alice).PendingRelease, "unauthorized emergency does not change confinement");
+                SentenceState released = store.RequestEmergencyRelease(true, Alice);
+                Check(released.PendingRelease && released.EmergencyRelease && released.RemainingSeconds == 0 && released.Revision == 2, "emergency release works before an inventory offer exists");
+                Check(store.RequestEmergencyRelease(true, Alice).Revision == 2, "repeated emergency button is idempotent");
+                Check(store.TickOnline(new[] { Alice }, 1).Length == 0, "emergency releases do not resume their timers");
+                Check(!store.AcknowledgeRelease(Alice, Guid.NewGuid().ToString("N")), "stale release receipt cannot erase emergency sentence");
+            }
+            using (var store = new SentenceStore(root, 72))
+            {
+                Check(store.Find(Alice).EmergencyRelease && store.Find(Alice).SentenceId == token, "offline emergency cleanup decision survives restart");
+                Check(store.AcknowledgeRelease(Alice, token) && store.Find(Alice) == null, "authenticated durable release receipt closes emergency sentence");
+                SentenceState second = Sentence(store, Alice, 90);
+                Check(!second.EmergencyRelease && second.SentenceId != token, "next sentence starts with independent release flags");
+                store.RequestRelease(true, Alice);
+                Check(store.RequestEmergencyRelease(true, Alice).EmergencyRelease, "a stuck pending regular release can be promoted to emergency");
+            }
+            string legacy = Path.Combine(root, "legacy"); string legacyPath;
+            using (var store = new SentenceStore(legacy, 73))
+            { store.SetRegion(true, Region()); Sentence(store, Alice, 30); legacyPath = store.StatePath; }
+            byte[] current = File.ReadAllBytes(legacyPath), body = Prefix(current, current.Length - 33);
+            Buffer.BlockCopy(BitConverter.GetBytes(1), 0, body, 4, 4); File.WriteAllBytes(legacyPath, Seal(body));
+            using (var store = new SentenceStore(legacy, 73))
+            {
+                Check(!store.Find(Alice).EmergencyRelease && store.Find(Alice).RemainingSeconds == 30, "version 1 sentence loads without an invented emergency flag");
+                Check(store.RequestEmergencyRelease(true, Alice).EmergencyRelease, "legacy stuck sentence upgrades with durable emergency release");
+            }
         }
 
         private static void WriteFailures(string root)

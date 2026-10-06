@@ -32,11 +32,20 @@ $testedPrisonHash = (Get-FileHash -LiteralPath $prisonTarget -Algorithm SHA256).
 $probeSource = Join-Path $fixtureRoot 'NativeChecks.cs'
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'NativeChecks.cs') -Destination $probeSource
 $probeSourceHash = (Get-FileHash -LiteralPath $probeSource -Algorithm SHA256).Hash
+$probeHelpers = @('CombatNativeChecks.cs','LayoutNativeChecks.cs','RecoveryNativeChecks.cs') | ForEach-Object {
+    $frozen = Join-Path $fixtureRoot $_
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot $_) -Destination $frozen
+    $frozen
+}
 [IO.File]::WriteAllLines((Join-Path $fixtureRoot 'probe-inputs.txt'), @(
     'PartyPrison SHA256: ' + $testedPrisonHash
     'NativeChecks.cs SHA256: ' + $probeSourceHash
     'Scope: menu startup, native patches, safe native Chat/Console command routing, detached inventories, synthetic UI and prefab definitions'
 ), [Text.UTF8Encoding]::new($false))
+foreach ($helper in $probeHelpers) {
+    [IO.File]::AppendAllText((Join-Path $fixtureRoot 'probe-inputs.txt'),
+        ([IO.Path]::GetFileName($helper) + ' SHA256: ' + (Get-FileHash -LiteralPath $helper -Algorithm SHA256).Hash + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+}
 @'
 [Logging.Console]
 Enabled = false
@@ -69,7 +78,7 @@ foreach ($dll in Get-ChildItem -LiteralPath $fixturePlugins -Filter '*.dll' -Fil
 [IO.File]::WriteAllLines((Join-Path $fixtureRoot 'expected-plugins.txt'), $expectedPlugins, [Text.UTF8Encoding]::new($false))
 
 $managed = Join-Path $GameDirectory 'valheim_Data/Managed'
-$references = @('Game/BepInEx/core/BepInEx.dll','Game/BepInEx/core/0Harmony.dll','Game/BepInEx/plugins/Jotunn.dll') | ForEach-Object { Join-Path $root $_ }
+$references = @('Game/BepInEx/core/BepInEx.dll','Game/BepInEx/core/0Harmony.dll','Game/BepInEx/plugins/Jotunn.dll','local-plugins/WorldCharacters.dll') | ForEach-Object { Join-Path $root $_ }
 $references += $PluginAssembly
 $references += @('assembly_valheim.dll','assembly_guiutils.dll','assembly_utils.dll','SoftReferenceableAssets.dll','Splatform.dll','UnityEngine.dll','UnityEngine.CoreModule.dll','UnityEngine.UI.dll','UnityEngine.UIModule.dll','UnityEngine.TextRenderingModule.dll','UnityEngine.InputLegacyModule.dll','UnityEngine.PhysicsModule.dll','netstandard.dll') | ForEach-Object { Join-Path $managed $_ }
 foreach ($reference in $references) { if (-not (Test-Path -LiteralPath $reference -PathType Leaf)) { throw "Native reference missing: $reference" } }
@@ -77,6 +86,7 @@ $compiler = Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
 $compileArgs = @('/nologo','/codepage:65001','/target:library',('/out:' + (Join-Path $fixturePlugins 'PartyPrisonNativeProbe.dll')))
 $compileArgs += $references | ForEach-Object { '/reference:' + $_ }
 $compileArgs += $probeSource
+$compileArgs += $probeHelpers
 & $compiler @compileArgs
 if ($LASTEXITCODE -ne 0) { throw 'Party Prison native probe compilation failed.' }
 if ($BuildOnly) { Write-Output "Native probe compiled with the complete pack, not launched: $fixtureRoot"; return }

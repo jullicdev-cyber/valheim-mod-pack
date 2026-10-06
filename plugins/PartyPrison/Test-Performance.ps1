@@ -77,6 +77,7 @@ function Clock-Gate($method, [string]$field, [single]$interval, [string]$work) {
     })) ('The cooldown needs a path which skips work: ' + $method.Name)
 }
 try {
+    Check ($plugin.Name.Name -eq 'PartyPrison') 'The production CLR assembly identity must remain PartyPrison for updates and dependent probes.'
     $types = @(All-Types $plugin.MainModule.Types)
     $methods = @{}
     foreach ($type in $types) { foreach ($method in $type.Methods) { $methods[$method.FullName] = $method } }
@@ -157,6 +158,43 @@ try {
     # Immediate release cleanup is allowed; the ordinary idle-player fallback is gated in Update.
     Clock-Gate (Method $pluginType 'Update' 0) 'nextLoanRemoval' 1 'Plugin::RemoveLoans'
     Clock-Gate (Method $pluginType 'FinishRelease' 0) 'nextReleaseAck' 2 'Plugin::ToHost'
+
+    $combatWriter = Method $pluginType 'WriteCombatState' 1
+    foreach ($method in @(Graph $combatWriter)) {
+        Check (-not [bool](Calls $method 'Plugin::RefreshHostCombatState|ArenaBuilder::Get(CombatChoice|KitZdo)|ArenaBuilder::Tagged|ZDOMan::FindSectorObjects')) (
+            'Per-peer state serialization must use the cached combat snapshot without a region query: ' + $method.FullName)
+    }
+    $hostTick = Method $pluginType 'HostTick' 0
+    $refresh = @(Calls $hostTick 'Plugin::RefreshHostCombatState')
+    $custodyTick = @(Calls $hostTick 'Plugin::HostCustodyTick')
+    $peerState = @(Calls $hostTick 'Plugin::Send')
+    Check ($refresh.Count -eq 1 -and $custodyTick.Count -eq 1 -and $peerState.Count -gt 0 -and
+        $custodyTick[0].Offset -lt $refresh[0].Offset -and $refresh[0].Offset -lt $peerState[0].Offset) (
+        'The host must refresh combat once after custody changes and before all peer snapshots.')
+    $maintenance = Method $pluginType 'MaintainCombatGear' 0
+    Clock-Gate $maintenance 'nextGearMaintenance' 0.5 'ArenaBuilder::RemoveObsoleteGearWhenSettled'
+    Clock-Gate $maintenance 'nextStoredGearMaintenance' 1 'ArenaBuilder::ExpireStoredPrisonGear'
+    Check (@(Calls $maintenance 'Plugin::RefreshHostCombatState').Count -eq 1) (
+        'Local gear polling must not add another combat region query outside the once-per-second host-storage gate.')
+    No-WorldScan $maintenance
+    $kitLookup = Method $arenaType 'GetKitZdo' 1
+    Check ([bool](Calls $kitLookup 'ArenaBuilder::StoredGearChests') -and -not [bool](Calls $kitLookup 'ArenaBuilder::TaggedRegionObjects')) (
+        'Equipment identity and stored-gear expiry must reuse the same regional chest cache.')
+    No-WorldScan $kitLookup
+    $chestCache = Method $arenaType 'StoredGearChests' 1
+    $regionalQuery = @(Calls $chestCache 'ArenaBuilder::TaggedRegionObjects')
+    Check ($regionalQuery.Count -eq 1) 'The five-chest cache must use exactly one bounded region query.'
+    Check ([bool]($chestCache.Body.Instructions | Where-Object {
+        $_.OpCode.Name -eq 'ldsfld' -and $_.Operand.Name -eq 'nextStoredGearQuery' -and $_.Offset -lt $regionalQuery[0].Offset
+    })) 'The cached native chest lookup must consult its clock before querying the region.'
+    Check ([bool]($chestCache.Body.Instructions | Where-Object {
+        $_.OpCode.FlowControl -eq [Mono.Cecil.Cil.FlowControl]::Cond_Branch -and $_.Offset -lt $regionalQuery[0].Offset
+    })) 'The native chest cache must have a fast return before regional enumeration.'
+    Check ([bool]($chestCache.Body.Instructions | Where-Object { $_.OpCode.Name -eq 'ldc.r4' -and [single]$_.Operand -eq 1 })) (
+        'The shared equipment cache must retain its one-second lookup budget.')
+    Check ([bool](Calls (Method $arenaType 'InvalidateLayoutCache' 0) 'ArenaBuilder::InvalidateStoredGearCache')) (
+        'A build or layout upgrade must invalidate the shared chest cache immediately.')
+    No-WorldScan $chestCache
 
     $progress = Method $pluginType 'ProgressCustody' 0
     Check ([bool]($progress.Body.Instructions | Where-Object { $_.Operand -is [Mono.Cecil.FieldReference] -and $_.Operand.Name -eq 'cachedOffer' })) 'Admission retries must reuse the initial inventory offer instead of repeatedly serializing backpacks.'

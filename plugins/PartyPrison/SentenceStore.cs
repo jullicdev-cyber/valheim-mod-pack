@@ -154,6 +154,26 @@ namespace ValheimModPack.PartyPrison
             }
         }
 
+        // Keep the release in the durable sentence until the recipient saves
+        // its cleanup. This works before confiscation as well as after it, and
+        // reconnecting clients receive the same explicit cancellation decision.
+        public SentenceState RequestEmergencyRelease(bool authenticatedCallerIsHost, string authenticatedAccountId)
+        {
+            RequireHost(authenticatedCallerIsHost);
+            SentencePolicy.RequireAccountId(authenticatedAccountId);
+            lock (sync)
+            {
+                CheckOpen(); SentenceState old;
+                if (!sentences.TryGetValue(authenticatedAccountId, out old)) return null;
+                if (old.EmergencyRelease) return old.Copy();
+                var next = CopySentences(); var value = next[authenticatedAccountId];
+                value.RemainingSeconds = 0; value.PendingRelease = value.EmergencyRelease = true;
+                value.Revision = checked(value.Revision + 1);
+                Persist(region, next); sentences = next;
+                return value.Copy();
+            }
+        }
+
         // Call only after the host authenticates the ACK sender and verifies that
         // the client actually applied this release. Old tokens cannot erase a new sentence.
         public bool AcknowledgeRelease(string authenticatedAccountId, string sentenceId)
@@ -188,8 +208,10 @@ namespace ValheimModPack.PartyPrison
             using (var stream = new MemoryStream(body, false))
             using (var reader = new BinaryReader(stream, new UTF8Encoding(false, true)))
             {
-                if (reader.ReadInt32() != Magic || reader.ReadInt32() != 1)
+                if (reader.ReadInt32() != Magic)
                     throw new InvalidDataException("Unsupported prison state format; file preserved.");
+                int version = reader.ReadInt32();
+                if (version < 1 || version > 2) throw new InvalidDataException("Unsupported prison state format; file preserved.");
                 if (reader.ReadInt64() != world) throw new InvalidDataException("Prison state belongs to another world.");
                 byte present = reader.ReadByte();
                 if (present > 1) throw new InvalidDataException("Invalid prison region flag.");
@@ -212,6 +234,12 @@ namespace ValheimModPack.PartyPrison
                     byte pending = reader.ReadByte();
                     if (pending > 1) throw new InvalidDataException("Invalid pending release flag.");
                     value.PendingRelease = pending == 1;
+                    if (version >= 2)
+                    {
+                        byte emergency = reader.ReadByte();
+                        if (emergency > 1) throw new InvalidDataException("Invalid emergency release flag.");
+                        value.EmergencyRelease = emergency == 1;
+                    }
                     SentencePolicy.RequireSentence(value);
                     if (sentences.ContainsKey(value.AccountId) || !tokens.Add(value.SentenceId))
                         throw new InvalidDataException("Duplicate prison account or sentence token.");
@@ -228,7 +256,7 @@ namespace ValheimModPack.PartyPrison
             using (var stream = new MemoryStream())
             using (var writer = new BinaryWriter(stream, new UTF8Encoding(false, true)))
             {
-                writer.Write(Magic); writer.Write(1); writer.Write(world);
+                writer.Write(Magic); writer.Write(2); writer.Write(world);
                 writer.Write((byte)(newRegion == null ? 0 : 1));
                 if (newRegion != null)
                 {
@@ -245,6 +273,7 @@ namespace ValheimModPack.PartyPrison
                     WriteText(writer, value.PlayerName); WriteText(writer, value.Reason);
                     writer.Write(value.Revision); writer.Write(value.RemainingSeconds); WritePoint(writer, value.ReturnPosition);
                     writer.Write((byte)(value.PendingRelease ? 1 : 0));
+                    writer.Write((byte)(value.EmergencyRelease ? 1 : 0));
                 }
                 writer.Flush(); bytes = Seal(stream.ToArray());
             }

@@ -7,6 +7,21 @@ using UnityEngine;
 
 namespace ValheimModPack.PartyPrison
 {
+    [HarmonyPatch(typeof(Sign), "UpdateViewPermission")]
+    internal static class PrisonSignPermissionPatch
+    { private static void Prefix(Sign __instance) { ArenaBuilder.RepairSignViewPermission(__instance); } }
+
+    [HarmonyPatch(typeof(Bed), "Interact")]
+    internal static class PrisonBedRestPatch
+    {
+        private static bool Prefix(Bed __instance, Humanoid __0, ref bool __result)
+        {
+            if (!ArenaBuilder.IsPrisonBed(__instance.gameObject) || !PrisonGuard.Local(__0) || !Plugin.Active.Confined) return true;
+            if (Plugin.Active.PreparingCustody) { __result = false; return false; }
+            __result = ArenaBuilder.RestOnBed(__instance, Player.m_localPlayer); return false;
+        }
+    }
+
     internal static class PrisonGuard
     {
         internal static bool Local(Humanoid actor)

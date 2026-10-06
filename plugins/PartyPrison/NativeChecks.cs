@@ -76,6 +76,7 @@ namespace ValheimModPack.PartyPrison.NativeVerification
             Check(Player.m_localPlayer == null && Game.instance == null, "no live player, game or user world");
             Check(Chainloader.PluginInfos.ContainsKey(Plugin.Id), "Party Prison plugin is registered");
             Check(Chainloader.PluginInfos[Plugin.Id].Instance != null && Chainloader.PluginInfos[Plugin.Id].Instance.enabled, "Party Prison native plugin is enabled");
+            Check(typeof(Plugin).Assembly.GetName().Name == "PartyPrison", "production CLR assembly identity stays PartyPrison across candidate filenames and updates");
             string expectedPath = Path.Combine(Root, "expected-plugins.txt");
             Check(File.Exists(expectedPath), "full-pack expected plugin inventory exists");
             int expected = 0;
@@ -117,10 +118,13 @@ namespace ValheimModPack.PartyPrison.NativeVerification
             Patch(typeof(Container), "AddDefaultItems", Type.EmptyTypes);
             Patch(typeof(Container), "Load", Type.EmptyTypes);
             Patch(typeof(Container), "GetInventory", Type.EmptyTypes);
+            Patch(typeof(Sign), "UpdateViewPermission", Type.EmptyTypes);
+            Patch(typeof(Bed), "Interact", new[] { typeof(Humanoid), typeof(bool), typeof(bool) });
             Patch(typeof(ItemDrop), "AutoStackItems", Type.EmptyTypes);
             Patch(typeof(TerrainComp), "ApplyToHeightmap", new[] { typeof(Texture2D), typeof(List<float>), typeof(float[]), typeof(float[]), typeof(Heightmap) });
             report.AppendLine("PASS: Required confinement, death, protection and input-reset Harmony patches bind; native creature loot generation remains available.");
             CheckCommandRouting(); CheckGroupRadiusCompatibility(); CheckUi(); CheckInventoryIsolation(); CheckCustodyInventory(); CheckAdmissionEquivalence(); CheckExactWithdrawalInsertion(); CheckCustodyMask(); CheckCustodyRegistry(); CheckCustodyTransitions(); CheckForcedTerrainHeights(); CheckForceClearance(); CheckLootPickupGuard(); CheckGeometry(); CheckLayoutPlan(); CheckPrefabs();
+            CombatNativeChecks.Run(Check); LayoutNativeChecks.Run(Check); RecoveryNativeChecks.Run(Check);
             Check(Player.m_localPlayer == null && Game.instance == null, "probe leaves no game or local player registration");
         }
 
@@ -362,7 +366,7 @@ namespace ValheimModPack.PartyPrison.NativeVerification
 
         private void CheckUi()
         {
-            int baseline = InputCount(), imposed = 0, releases = 0, kits = 0, chosenTier = -1;
+            int baseline = InputCount(), imposed = 0, releases = 0, forced = 0, kits = 0, chosenTier = -1, chosenFamily = 0;
             bool canFight = true;
             string custody = "";
             string released = null, imposedAccount = null, imposedReason = null;
@@ -389,7 +393,9 @@ namespace ValheimModPack.PartyPrison.NativeVerification
                 PrepareBuild = () => Call(actualPlugin, "PrepareBuild"), Build = () => Call(actualPlugin, "BuildConfirmedPrison"),
                 Kit = () => ++kits, CustodyStatus = () => custody,
                 Impose = (account, minutes, reason) => { ++imposed; imposedAccount = account; imposedMinutes = minutes; imposedReason = reason; },
-                Release = account => { ++releases; released = account; }, Wave = tier => chosenTier = tier, Move = arena => { }
+                Release = account => { ++releases; released = account; }, ForceRelease = account => { ++forced; released = account; },
+                Wave = tier => chosenTier = tier, Choice = (family, tier) => { chosenFamily = family; chosenTier = tier; },
+                CombatFamily = () => chosenFamily, CombatDifficulty = () => Math.Max(0, chosenTier), Move = arena => { }
             };
             PrisonWindow window = new PrisonWindow(bindings);
             try
@@ -419,6 +425,8 @@ namespace ValheimModPack.PartyPrison.NativeVerification
                 Call(window, "Select", 1);
                 Check(!((Button)Field(window, "impose")).interactable && ((Button)Field(window, "release")).interactable, "offline sentence enables release and disables new imprisonment");
                 Call(window, "Release"); Check(releases == 1 && released == "probe-account-1", "offline release targets selected account");
+                Check(((Button)Field(window, "forceRelease")).interactable, "offline sentence enables the emergency release button");
+                Call(window, "ForceRelease"); Check(forced == 1 && released == "probe-account-1", "emergency release targets only the selected offline account");
                 Check(((Button)Field(window, "build")).GetComponentInChildren<Text>().text.Contains("возле меня")
                     && ((Text)Field(window, "buildHint")).text.Contains("32 м") && !((Text)Field(window, "buildHint")).text.Contains("алтар"),
                     "host construction controls explain a fixed look-relative site rather than altar search");
@@ -462,11 +470,14 @@ namespace ValheimModPack.PartyPrison.NativeVerification
                     Check(((Button)Field(window, "kit")).interactable && ((Button)Field(window, "arena")).interactable, "prepared prisoner may request equipment and enter the arena");
                     Call(window, "Kit"); Check(kits == 1, "basic equipment offer calls its server binding once");
                     Call(window, "Wave", 2); Check(chosenTier == 2, "difficulty selection submits the chosen future wave tier");
+                    Check(((Button[])Field(window, "families")).Length == 6 && ((Button[])Field(window, "families")).All(button => button != null && button.interactable), "ready prisoner can choose all six native enemy families");
+                    Call(window, "SelectFamily", 4); Check(chosenFamily == 4 && chosenTier == 2, "choosing drakes preserves the selected difficulty in the authenticated choice binding");
                     canFight = false; custody = "Вещи сохраняются, подождите."; Call(window, "Repaint");
                     Check(((Text)Field(window, "sentence")).text.Contains("Подготовка") && ((Text)Field(window, "custodyText")).text == custody,
                         "preparation displays its authoritative custody status rather than a running prison countdown");
                     Check(!((Button)Field(window, "kit")).interactable && !((Button)Field(window, "arena")).interactable
                         && ((Button[])Field(window, "tiers")).All(button => !button.interactable), "preparation disables equipment, arena transfer and difficulty controls");
+                    Check(((Button[])Field(window, "families")).All(button => !button.interactable), "preparation also disables enemy family changes");
                     Call(window, "Kit"); Check(kits == 1, "equipment request cannot run during custody preparation");
                     canFight = true; custody = ""; Call(window, "Repaint");
                     foreach (Text text in ((GameObject)Field(window, "panel")).GetComponentsInChildren<Text>(true)) Check(!text.supportRichText, "prisoner caption is plain text: " + text.name);
@@ -474,6 +485,9 @@ namespace ValheimModPack.PartyPrison.NativeVerification
                     Check(((Text)Field(window, "sentence")).text.Contains("завершён") && ((Text)Field(window, "custodyText")).text.Contains("на сундуке"), "pending release explains gate opening and physical chest retrieval without using a client clock");
                     Check(!((Button)Field(window, "kit")).interactable && !((Button)Field(window, "arena")).interactable,
                         "pending release keeps retrieval guidance visible while disabling new arena activity");
+                    Check(((Text)Field(window, "custodyText")).text.Contains("удаляются"), "release guidance distinguishes preserved loot from expiring prison armor and weapons");
+                    state.EmergencyRelease = true; Call(window, "Repaint");
+                    Check(((Text)Field(window, "sentence")).text.Contains("Принудительное"), "emergency release has an explicit prisoner status");
                     state = null; custody = "Нажмите E на сундуке для возврата вещей."; Call(window, "Repaint");
                     Check(((Text)Field(window, "sentence")).text.Contains("Хранение") && ((Text)Field(window, "custodyText")).text == custody,
                         "released belongings retain their physical chest retrieval instructions after the active sentence clears");

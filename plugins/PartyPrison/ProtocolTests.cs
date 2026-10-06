@@ -53,7 +53,7 @@ namespace ValheimModPack.PartyPrison
         {
             try
             {
-                Headers(); RoundTrip(); TextBounds(); BlobBounds(); Positions(); Regions(); Sentences(); CompleteMessages();
+                Headers(); RoundTrip(); TextBounds(); BlobBounds(); Positions(); Regions(); Sentences(); CompleteMessages(); ActivityMessages();
                 Console.WriteLine("PartyPrison protocol codec checks passed: " + assertions);
                 return 0;
             }
@@ -63,7 +63,7 @@ namespace ValheimModPack.PartyPrison
         private static void Headers()
         {
             const long world = -98765432123456789L;
-            for (int kind = PrisonProtocol.State; kind <= PrisonProtocol.WorldClearance; ++kind)
+            for (int kind = PrisonProtocol.State; kind <= PrisonProtocol.AdmissionFailed; ++kind)
             {
                 int expected = kind;
                 byte[] bytes = Write(delegate(BinaryWriter writer) { PrisonProtocol.WriteHeader(writer, world, expected); });
@@ -72,8 +72,8 @@ namespace ValheimModPack.PartyPrison
             }
             byte[] valid = Write(delegate(BinaryWriter writer) { PrisonProtocol.WriteHeader(writer, world, PrisonProtocol.State); });
             Truncate(valid, delegate(BinaryReader reader) { PrisonProtocol.ReadHeader(reader, world); }, "envelope header");
-            Check(BitConverter.ToInt32(valid, 0) == 2, "custody protocol uses version two");
-            foreach (int version in new[] { 0, -1, 1, 3, Int32.MaxValue })
+            Check(BitConverter.ToInt32(valid, 0) == 3, "combat and emergency recovery protocol uses version three");
+            foreach (int version in new[] { 0, -1, 1, 2, 4, Int32.MaxValue })
             {
                 byte[] wrong = (byte[])valid.Clone(); Buffer.BlockCopy(BitConverter.GetBytes(version), 0, wrong, 0, 4);
                 Reject(delegate { Read(wrong, delegate(BinaryReader reader) { PrisonProtocol.ReadHeader(reader, world); }); }, "unknown protocol version");
@@ -84,7 +84,7 @@ namespace ValheimModPack.PartyPrison
                 Reject(delegate { Read(wrong, delegate(BinaryReader reader) { PrisonProtocol.ReadHeader(reader, world); }); }, "different or uninitialized packet world");
             }
             Reject(delegate { Read(valid, delegate(BinaryReader reader) { PrisonProtocol.ReadHeader(reader, 0); }); }, "uninitialized expected world");
-            foreach (int kind in new[] { -1, 0, 12, Int32.MaxValue })
+            foreach (int kind in new[] { -1, 0, 15, Int32.MaxValue })
             {
                 byte[] wrong = (byte[])valid.Clone(); Buffer.BlockCopy(BitConverter.GetBytes(kind), 0, wrong, 12, 4);
                 Reject(delegate { Read(wrong, delegate(BinaryReader reader) { PrisonProtocol.ReadHeader(reader, world); }); }, "unknown incoming message kind");
@@ -124,6 +124,9 @@ namespace ValheimModPack.PartyPrison
             SentenceState pending = Sentence(); pending.RemainingSeconds = 0; pending.PendingRelease = true;
             Read(Write(delegate(BinaryWriter writer) { PrisonProtocol.Sentence(writer, pending); }), delegate(BinaryReader reader)
             { var decoded = PrisonProtocol.Sentence(reader); Check(decoded.PendingRelease && decoded.RemainingSeconds == 0 && decoded.SentenceId == pending.SentenceId, "pending release token is retained"); });
+            pending.EmergencyRelease = true;
+            Read(Write(delegate(BinaryWriter writer) { PrisonProtocol.Sentence(writer, pending); }), delegate(BinaryReader reader)
+            { var decoded = PrisonProtocol.Sentence(reader); Check(decoded.PendingRelease && decoded.EmergencyRelease && decoded.RemainingSeconds == 0 && decoded.SentenceId == pending.SentenceId, "emergency release bypass flag retains its sentence identity"); });
             Read(Write(delegate(BinaryWriter writer) { PrisonProtocol.Region(writer, null); PrisonProtocol.Sentence(writer, null); }), delegate(BinaryReader reader)
             { Check(PrisonProtocol.Region(reader) == null && PrisonProtocol.Sentence(reader) == null, "free player / unconfigured region null flags round-trip"); });
             Read(Write(delegate(BinaryWriter writer) { PrisonProtocol.Text(writer, null); PrisonProtocol.Text(writer, ""); }), delegate(BinaryReader reader)
@@ -266,6 +269,7 @@ namespace ValheimModPack.PartyPrison
             }
             var zeroActive = Sentence(); zeroActive.RemainingSeconds = 0; RejectSentence(zeroActive, "zero active time without release intent");
             var timedRelease = Sentence(); timedRelease.PendingRelease = true; RejectSentence(timedRelease, "pending release with positive time");
+            var activeEmergency = Sentence(); activeEmergency.EmergencyRelease = true; RejectSentence(activeEmergency, "emergency bypass without pending release");
             foreach (long revision in new[] { 0L, -1L, Int64.MinValue })
             {
                 var wrong = Sentence(); wrong.Revision = revision; RejectSentence(wrong, "invalid revision");
@@ -274,8 +278,10 @@ namespace ValheimModPack.PartyPrison
             var longReason = Sentence(); longReason.Reason = new string('x', 301); RejectSentence(longReason, "oversized punishment reason");
             var controls = Sentence(); controls.Reason = "reason\r\nspoof"; RejectSentence(controls, "sentence text control characters");
             var invalidReturn = Sentence(); invalidReturn.ReturnPosition.Z = Double.NegativeInfinity; RejectSentence(invalidReturn, "nonfinite return destination");
-            byte[] noncanonicalPending = (byte[])encoded.Clone(); noncanonicalPending[noncanonicalPending.Length - 9] = 2;
+            byte[] noncanonicalPending = (byte[])encoded.Clone(); noncanonicalPending[noncanonicalPending.Length - 10] = 2;
             Reject(delegate { Read(noncanonicalPending, delegate(BinaryReader reader) { PrisonProtocol.Sentence(reader); }); }, "noncanonical pending-release wire boolean");
+            byte[] noncanonicalEmergency = (byte[])encoded.Clone(); noncanonicalEmergency[noncanonicalEmergency.Length - 1] = 2;
+            Reject(delegate { Read(noncanonicalEmergency, delegate(BinaryReader reader) { PrisonProtocol.Sentence(reader); }); }, "noncanonical emergency-release wire boolean");
             Reject(delegate { Read(Append(encoded, 0), delegate(BinaryReader reader) { PrisonProtocol.Sentence(reader); }); }, "sentence trailing bytes");
         }
 
@@ -292,47 +298,96 @@ namespace ValheimModPack.PartyPrison
             // a valid region followed by a malformed sentence and trailing garbage.
             byte[] valid = Write(delegate(BinaryWriter writer) {
                 writer.Write(99L); PrisonProtocol.Region(writer, Region()); PrisonProtocol.Sentence(writer, Sentence());
-                writer.Write(2); writer.Write(1); PrisonProtocol.Text(writer, Account); PrisonProtocol.Text(writer, Sentence().SentenceId);
+                writer.Write(4); writer.Write(1); PrisonProtocol.Text(writer, Account); PrisonProtocol.Text(writer, Sentence().SentenceId);
                 PrisonProtocol.Text(writer, new string('a', 64)); PrisonProtocol.Text(writer, "Ожидайте сохранения вещей");
+                writer.Write(5); writer.Write(2); PrisonProtocol.Text(writer, Sentence().SentenceId); writer.Write(3);
             });
             Truncate(valid, ReadStateFields, "complete state body");
             Reject(delegate { Read(Append(valid, 0), ReadStateFields); }, "complete state body with trailing garbage");
             var malformed = Sentence(); malformed.PendingRelease = true;
             byte[] body = Write(delegate(BinaryWriter writer) {
                 writer.Write(100L); PrisonProtocol.Region(writer, Region()); PrisonProtocol.Sentence(writer, malformed);
-                writer.Write(2); writer.Write(1); PrisonProtocol.Text(writer, Account); PrisonProtocol.Text(writer, Sentence().SentenceId);
+                writer.Write(4); writer.Write(1); PrisonProtocol.Text(writer, Account); PrisonProtocol.Text(writer, Sentence().SentenceId);
                 PrisonProtocol.Text(writer, new string('a', 64)); PrisonProtocol.Text(writer, "Ожидайте сохранения вещей");
+                writer.Write(5); writer.Write(2); PrisonProtocol.Text(writer, Sentence().SentenceId); writer.Write(3);
             });
             Reject(delegate { Read(body, ReadStateFields); }, "valid region followed by inconsistent sentence");
             Read(valid, delegate(BinaryReader reader)
             { Check(reader.ReadInt64() == 99 && PrisonProtocol.Region(reader).Radius == 18.125 && PrisonProtocol.Sentence(reader).AccountId == Account
-                    && reader.ReadInt32() == 2 && reader.ReadInt32() == 1 && PrisonProtocol.Text(reader) == Account && PrisonProtocol.Text(reader) == Sentence().SentenceId
-                    && PrisonProtocol.Text(reader) == new string('a', 64) && PrisonProtocol.Text(reader) == "Ожидайте сохранения вещей",
-                "whole valid state body stages the sentence, layout version, custody stage, account, token, inventory hash and recovery status together"); });
+                    && reader.ReadInt32() == 4 && reader.ReadInt32() == 1 && PrisonProtocol.Text(reader) == Account && PrisonProtocol.Text(reader) == Sentence().SentenceId
+                    && PrisonProtocol.Text(reader) == new string('a', 64) && PrisonProtocol.Text(reader) == "Ожидайте сохранения вещей"
+                    && reader.ReadInt32() == 5 && reader.ReadInt32() == 2 && PrisonProtocol.Text(reader) == Sentence().SentenceId && reader.ReadInt32() == 3,
+                "whole valid state stages custody, cell loadout, difficulty and generated gear revision together"); });
             Read(Write(delegate(BinaryWriter writer) {
                 writer.Write(101L); PrisonProtocol.Region(writer, null); PrisonProtocol.Sentence(writer, null);
                 writer.Write(0); writer.Write(-1); PrisonProtocol.Text(writer, ""); PrisonProtocol.Text(writer, ""); PrisonProtocol.Text(writer, ""); PrisonProtocol.Text(writer, "");
+                writer.Write(0); writer.Write(0); PrisonProtocol.Text(writer, ""); writer.Write(0);
             }), delegate(BinaryReader reader) {
                 Check(reader.ReadInt64() == 101 && PrisonProtocol.Region(reader) == null && PrisonProtocol.Sentence(reader) == null
                     && reader.ReadInt32() == 0 && reader.ReadInt32() == -1 && PrisonProtocol.Text(reader) == "" && PrisonProtocol.Text(reader) == ""
-                    && PrisonProtocol.Text(reader) == "" && PrisonProtocol.Text(reader) == "",
+                    && PrisonProtocol.Text(reader) == "" && PrisonProtocol.Text(reader) == ""
+                    && reader.ReadInt32() == 0 && reader.ReadInt32() == 0 && PrisonProtocol.Text(reader) == "" && reader.ReadInt32() == 0,
                     "absent sentence carries explicit absent custody stage and empty recovery fields");
             });
             Read(Write(delegate(BinaryWriter writer) {
                 writer.Write(102L); PrisonProtocol.Region(writer, Region()); PrisonProtocol.Sentence(writer, null);
-                writer.Write(2); writer.Write(4); PrisonProtocol.Text(writer, Account); PrisonProtocol.Text(writer, Sentence().SentenceId);
+                writer.Write(4); writer.Write(4); PrisonProtocol.Text(writer, Account); PrisonProtocol.Text(writer, Sentence().SentenceId);
                 PrisonProtocol.Text(writer, new string('a', 64)); PrisonProtocol.Text(writer, "");
+                writer.Write(5); writer.Write(2); PrisonProtocol.Text(writer, ""); writer.Write(0);
             }), delegate(BinaryReader reader) {
                 Check(reader.ReadInt64() == 102 && PrisonProtocol.Region(reader) != null && PrisonProtocol.Sentence(reader) == null
-                    && reader.ReadInt32() == 2 && reader.ReadInt32() == 4 && PrisonProtocol.Text(reader) == Account
+                    && reader.ReadInt32() == 4 && reader.ReadInt32() == 4 && PrisonProtocol.Text(reader) == Account
                     && PrisonProtocol.Text(reader) == Sentence().SentenceId && PrisonProtocol.Text(reader) == new string('a', 64)
-                    && PrisonProtocol.Text(reader) == "", "released custody identity remains available for chest retrieval after the active sentence clears");
+                    && PrisonProtocol.Text(reader) == "" && reader.ReadInt32() == 5 && reader.ReadInt32() == 2 && PrisonProtocol.Text(reader) == "" && reader.ReadInt32() == 0,
+                    "released custody identity survives while public gear expiry is explicitly signalled");
             });
         }
 
         private static void ReadStateFields(BinaryReader reader)
         { reader.ReadInt64(); PrisonProtocol.Region(reader); PrisonProtocol.Sentence(reader); reader.ReadInt32(); reader.ReadInt32();
-            PrisonProtocol.Text(reader); PrisonProtocol.Text(reader); PrisonProtocol.Text(reader); PrisonProtocol.Text(reader); }
+            PrisonProtocol.Text(reader); PrisonProtocol.Text(reader); PrisonProtocol.Text(reader); PrisonProtocol.Text(reader);
+            reader.ReadInt32(); reader.ReadInt32(); PrisonProtocol.Text(reader); reader.ReadInt32(); }
+
+        private static void ActivityMessages()
+        {
+            const long world = 99;
+            string token = Sentence().SentenceId;
+            for (int family = 0; family < 6; ++family)
+                for (int difficulty = 0; difficulty < 3; ++difficulty) {
+                    int selectedFamily = family, selectedDifficulty = difficulty;
+                    byte[] choice = Write(delegate(BinaryWriter writer) {
+                        PrisonProtocol.WriteHeader(writer, world, PrisonProtocol.CombatChoice);
+                        PrisonProtocol.Text(writer, token); writer.Write(selectedFamily); writer.Write(selectedDifficulty);
+                    });
+                    Read(choice, delegate(BinaryReader reader) {
+                        Check(PrisonProtocol.ReadHeader(reader, world) == PrisonProtocol.CombatChoice && PrisonProtocol.Text(reader) == token
+                            && reader.ReadInt32() == selectedFamily && reader.ReadInt32() == selectedDifficulty, "all eighteen cell combat choices fit canonical wire shape");
+                    });
+                    Truncate(choice, delegate(BinaryReader reader) { PrisonProtocol.ReadHeader(reader, world); PrisonProtocol.Text(reader); reader.ReadInt32(); reader.ReadInt32(); }, "combat choice");
+                    Reject(delegate { Read(Append(choice, 0), delegate(BinaryReader reader) { PrisonProtocol.ReadHeader(reader, world); PrisonProtocol.Text(reader); reader.ReadInt32(); reader.ReadInt32(); }); }, "combat choice trailing bytes");
+                }
+            byte[] defeat = Write(delegate(BinaryWriter writer) {
+                PrisonProtocol.WriteHeader(writer, world, PrisonProtocol.Defeat); PrisonProtocol.Text(writer, token);
+            });
+            Read(defeat, delegate(BinaryReader reader) { Check(PrisonProtocol.ReadHeader(reader, world) == PrisonProtocol.Defeat && PrisonProtocol.Text(reader) == token, "defeat message identifies the current sentence"); });
+            Truncate(defeat, delegate(BinaryReader reader) { PrisonProtocol.ReadHeader(reader, world); PrisonProtocol.Text(reader); }, "defeat notification");
+            byte[] failed = Write(delegate(BinaryWriter writer) {
+                PrisonProtocol.WriteHeader(writer, world, PrisonProtocol.AdmissionFailed); PrisonProtocol.Text(writer, token); PrisonProtocol.Text(writer, "Не завершена передача вещей");
+            });
+            Read(failed, delegate(BinaryReader reader) { Check(PrisonProtocol.ReadHeader(reader, world) == PrisonProtocol.AdmissionFailed
+                && PrisonProtocol.Text(reader) == token && PrisonProtocol.Text(reader) == "Не завершена передача вещей", "bounded admission watchdog reports failure for its current token"); });
+            Truncate(failed, delegate(BinaryReader reader) { PrisonProtocol.ReadHeader(reader, world); PrisonProtocol.Text(reader); PrisonProtocol.Text(reader); }, "admission failure");
+            foreach (bool receipt in new[] { false, true }) {
+                byte[] ack = Write(delegate(BinaryWriter writer) {
+                    PrisonProtocol.WriteHeader(writer, world, PrisonProtocol.ReleaseAck); PrisonProtocol.Text(writer, token); writer.Write(4294967301L); writer.Write(receipt);
+                });
+                Read(ack, delegate(BinaryReader reader) { Check(PrisonProtocol.ReadHeader(reader, world) == PrisonProtocol.ReleaseAck && PrisonProtocol.Text(reader) == token
+                    && reader.ReadInt64() == 4294967301L && PrisonProtocol.Flag(reader) == receipt, "release acknowledgement retains durable sequence and custody receipt evidence"); });
+                Truncate(ack, delegate(BinaryReader reader) { PrisonProtocol.ReadHeader(reader, world); PrisonProtocol.Text(reader); reader.ReadInt64(); PrisonProtocol.Flag(reader); }, "release receipt acknowledgement");
+                ack[ack.Length - 1] = 2;
+                Reject(delegate { Read(ack, delegate(BinaryReader reader) { PrisonProtocol.ReadHeader(reader, world); PrisonProtocol.Text(reader); reader.ReadInt64(); PrisonProtocol.Flag(reader); }); }, "noncanonical release receipt evidence");
+            }
+        }
 
         private static void Truncate(byte[] valid, Action<BinaryReader> decode, string description)
         {

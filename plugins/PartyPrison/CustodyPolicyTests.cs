@@ -28,6 +28,7 @@ namespace ValheimModPack.PartyPrison
                 Basic(Path.Combine(root, "basic")); Recovery(Path.Combine(root, "recovery"));
                 Tampering(Path.Combine(root, "tamper")); Corruption(Path.Combine(root, "corrupt"));
                 PublicHandoff(Path.Combine(root, "public")); LegacyFormat(Path.Combine(root, "legacy"));
+                EmergencyArchive(Path.Combine(root, "emergency"));
                 Check(true, "all fixtures finished");
                 System.Console.WriteLine("PASS: custody journal " + checks + " checks; originals durable, immutable, stage-safe, corruption preserved."); return 0;
             }
@@ -164,7 +165,7 @@ namespace ValheimModPack.PartyPrison
             using (var store = new CustodyStore(root, world))
             { store.Prepare(A, token, new byte[] { 5 }); store.MarkCleared(A, token, 1); store.MarkDeposited(A, token, Chests); }
             string path = Journal(root, world, token); byte[] current = File.ReadAllBytes(path);
-            byte[] body = new byte[current.Length - 33]; Buffer.BlockCopy(current, 32, body, 0, body.Length);
+            byte[] body = new byte[current.Length - 34]; Buffer.BlockCopy(current, 32, body, 0, body.Length);
             Buffer.BlockCopy(BitConverter.GetBytes(1), 0, body, 4, 4);
             byte[] legacy = new byte[body.Length + 32]; using (var sha = SHA256.Create()) Buffer.BlockCopy(sha.ComputeHash(body), 0, legacy, 0, 32);
             Buffer.BlockCopy(body, 0, legacy, 32, body.Length); File.WriteAllBytes(path, legacy);
@@ -175,6 +176,39 @@ namespace ValheimModPack.PartyPrison
             }
             using (var store = new CustodyStore(root, world))
                 Check(store.FindState(A).PublicAccess && store.Find(A, token).OriginalPayload[0] == 5, "legacy journal upgrades once without changing original bytes");
+        }
+        private static void EmergencyArchive(string root)
+        {
+            for (int stage = 1; stage <= 5; ++stage)
+            {
+                string path = Path.Combine(root, "stage-" + stage); string token = Token(), next = Token();
+                byte[] original = { 5, 6, 7 };
+                using (var store = new CustodyStore(path, 49))
+                {
+                    store.Prepare(A, token, original);
+                    if (stage >= 2) store.MarkCleared(A, token, 50);
+                    if (stage >= 3) { store.MarkDeposited(A, token, Chests); store.MarkPublicAccess(A, token); }
+                    if (stage >= 4) store.Release(A, token);
+                    if (stage >= 5) store.MarkCollected(A, token);
+                    store.RequireRecovery(A, token, "Broken or missing prison pieces");
+                    CustodyRecord archived = store.CloseEmergency(A, token, "");
+                    Check(archived.Closed && archived.Stage == (CustodyStage)stage && archived.NeedsRecovery, "emergency archives the last certain stage " + stage);
+                    Check(archived.OriginalPayload.SequenceEqual(original) && archived.ClearSequence == (stage >= 2 ? 50 : 0), "archive retains originals and never fabricates a confiscation ACK " + stage);
+                    Check(archived.PublicAccess == (stage >= 3), "archive retains the native handoff decision " + stage);
+                    Check(!store.HasOutstanding && store.Find(A) == null && store.FindState(A) == null && store.CanAdmit(A), "archived recovery cannot keep the player locked or block admission " + stage);
+                    Check(store.CloseEmergency(A, token, "Repeated cancellation").RecoveryReason == "Broken or missing prison pieces", "emergency archive replay is idempotent " + stage);
+                    Refuses<InvalidOperationException>(() => store.Prepare(A, token, original), "archived token cannot start confiscation again " + stage);
+                    Refuses<InvalidOperationException>(() => store.Release(A, token), "archived backup cannot authorize native replay " + stage);
+                    store.Prepare(A, next, new byte[] { 9 });
+                    Check(store.FindState(A).SentenceId == next && store.FindState(A, token).Closed, "next admission is independent from archived escrow " + stage);
+                }
+                using (var store = new CustodyStore(path, 49))
+                {
+                    CustodyRecord archived = store.Find(A, token);
+                    Check(archived.Closed && archived.NeedsRecovery && archived.OriginalPayload.SequenceEqual(original), "archive and immutable personal backup survive restart " + stage);
+                    Check(store.FindState(A).SentenceId == next && store.AllStates().All(r => r.OriginalPayload.Length == 0), "restart selects the active sentence without copying archived payloads " + stage);
+                }
+            }
         }
         private static void Tampering(string root)
         {

@@ -36,13 +36,13 @@ namespace ValheimModPack.PartyPrison
         public long Revision;
         public double RemainingSeconds;
         public PrisonPoint ReturnPosition;
-        public bool PendingRelease;
+        public bool PendingRelease, EmergencyRelease;
 
         public SentenceState Copy()
         {
             return new SentenceState { AccountId = AccountId, SentenceId = SentenceId, PlayerName = PlayerName,
                 Reason = Reason, Revision = Revision, RemainingSeconds = RemainingSeconds,
-                ReturnPosition = ReturnPosition, PendingRelease = PendingRelease };
+                ReturnPosition = ReturnPosition, PendingRelease = PendingRelease, EmergencyRelease = EmergencyRelease };
         }
     }
 
@@ -128,7 +128,7 @@ namespace ValheimModPack.PartyPrison
                 || token == Guid.Empty || sentence.SentenceId != token.ToString("N") || sentence.Revision < 1
                 || !IsFinite(sentence.RemainingSeconds) || sentence.RemainingSeconds < 0
                 || sentence.RemainingSeconds > MaximumDurationSeconds || !IsFinitePoint(sentence.ReturnPosition)
-                || sentence.PendingRelease != (sentence.RemainingSeconds == 0))
+                || sentence.PendingRelease != (sentence.RemainingSeconds == 0) || sentence.EmergencyRelease && !sentence.PendingRelease)
                 throw new InvalidDataException("Invalid sentence state.");
             RequireText(sentence.PlayerName, MaximumNameCharacters, "player name");
             RequireText(sentence.Reason, MaximumReasonCharacters, "sentence reason");

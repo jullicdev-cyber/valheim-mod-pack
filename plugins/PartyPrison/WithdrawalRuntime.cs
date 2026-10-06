@@ -42,7 +42,7 @@ namespace ValheimModPack.PartyPrison
             string account = WC.GetAdministrativeOwner(peer);
             if (index < 0 || index > 3 || token.Length != 32) throw new InvalidDataException("Invalid custody withdrawal identity.");
             CustodyRecord custodyRecord = custody.Find(account, token);
-            if (custodyRecord == null || custodyRecord.NeedsRecovery || custodyRecord.Stage != CustodyStage.Released) return true;
+            if (custodyRecord == null || custodyRecord.Closed || custodyRecord.NeedsRecovery || custodyRecord.Stage != CustodyStage.Released) return true;
             WithdrawalRecord record = withdrawal.Find(token, index);
             if (record == null || record.NeedsRecovery) return true;
             if (kind == PrisonProtocol.WithdrawalAck)
@@ -110,7 +110,7 @@ namespace ValheimModPack.PartyPrison
             foreach (CustodyRecord custodyRecord in pendingLegacyWithdrawals.ToArray())
             {
                 CustodyRecord state = custody.FindState(custodyRecord.AccountId, custodyRecord.SentenceId);
-                if (state == null || state.Stage != CustodyStage.Released || state.NeedsRecovery)
+                if (state == null || state.Closed || state.Stage != CustodyStage.Released || state.NeedsRecovery)
                 { pendingLegacyWithdrawals.Remove(custodyRecord); continue; }
                 WithdrawalRecord[] balances = withdrawal.All(custodyRecord.SentenceId);
                 if (!balances.Any(b => b.PendingId.Length != 0))

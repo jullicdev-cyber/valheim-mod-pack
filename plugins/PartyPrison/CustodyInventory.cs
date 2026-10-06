@@ -135,11 +135,94 @@ namespace ValheimModPack.PartyPrison
         private static bool IsLoan(ItemDrop.ItemData item)
         { string value; return item != null && item.m_customData != null && item.m_customData.TryGetValue(ArenaBuilder.LoanKey, out value) && value == "1"; }
 
+        private sealed class BackpackGearEntry
+        {
+            internal Inventory Inventory;
+            internal object Component;
+            internal MethodInfo Serialize;
+        }
+        // Use the same installed backpack API as custody capture. Plan the
+        // complete bounded tree before removing anything, then serialize from
+        // leaves to roots so nested removals become durable bag custom data.
+        public static int ExpireBackpackGear(Player player, long world, string activeToken, int activeRevision)
+        { return player == null ? 0 : ExpireBackpackGear(player.GetInventory(), world, activeToken, activeRevision); }
+        public static int ExpireBackpackGear(Inventory root, long world, string activeToken, int activeRevision)
+        {
+            List<BackpackGearEntry> plan = BackpackGearPlan(root);
+            int removed = 0;
+            for (int i = plan.Count - 1; i >= 0; --i)
+                removed += ArenaBuilder.RemoveObsoleteInventoryGear(plan[i].Inventory, world, activeToken, activeRevision);
+            if (removed != 0)
+                for (int i = plan.Count - 1; i >= 0; --i) plan[i].Serialize.Invoke(plan[i].Component, null);
+            return removed;
+        }
+        public static bool HasObsoleteBackpackGear(Inventory root, long world, string activeToken, int activeRevision)
+        {
+            foreach (BackpackGearEntry entry in BackpackGearPlan(root))
+                foreach (ItemDrop.ItemData item in entry.Inventory.GetAllItems())
+                    if (ArenaBuilder.IsObsoleteGear(item, world, activeToken, activeRevision)) return true;
+            return false;
+        }
+        private static List<BackpackGearEntry> BackpackGearPlan(Inventory root)
+        {
+            var plan = new List<BackpackGearEntry>();
+            if (root == null) return plan;
+            Type api = AccessTools.TypeByName("AdventureBackpacks.API.ABAPI");
+            if (api == null) return plan;
+            MethodInfo get = AccessTools.Method(api, "TryGetBackpackInventory");
+            if (get == null) throw new MissingMethodException("AdventureBackpacks", "TryGetBackpackInventory");
+            var visited = new HashSet<Inventory>(); visited.Add(root);
+            int itemCount = 0; PlanBackpackGear(root, get, 0, visited, plan, ref itemCount);
+            return plan;
+        }
+        private static void PlanBackpackGear(Inventory root, MethodInfo get, int depth, HashSet<Inventory> visited, List<BackpackGearEntry> plan, ref int itemCount)
+        {
+            ItemDrop.ItemData[] items = root.GetAllItems().ToArray();
+            itemCount += items.Length;
+            if (itemCount > 8192) throw new InvalidDataException("Backpack equipment cleanup exceeds its item limit; inventories retained.");
+            foreach (ItemDrop.ItemData item in items)
+            {
+                if (item == null) continue;
+                object[] args = { item, null };
+                if (!(bool)get.Invoke(null, args)) continue;
+                Inventory contents = args[1] as Inventory;
+                if (contents == null) throw new InvalidDataException("Backpack inventory is unavailable; contents retained.");
+                if (!visited.Add(contents)) continue;
+                if (depth >= 4 || plan.Count >= 128) throw new InvalidDataException("Backpack equipment cleanup exceeds its nesting or bag limit; inventories retained.");
+                Type extensions = AccessTools.TypeByName("Vapok.Common.Managers.ItemExtensions");
+                Type componentType = AccessTools.TypeByName("AdventureBackpacks.Components.BackpackComponent");
+                MethodInfo data = extensions == null ? null : AccessTools.Method(extensions, "Data", new[] { typeof(ItemDrop.ItemData) });
+                if (componentType == null || data == null) throw new NotSupportedException("Backpack persistence API is unavailable; contents retained.");
+                object holder = data.Invoke(null, new object[] { item });
+                MethodInfo generic = holder.GetType().GetMethods().FirstOrDefault(m => m.Name == "GetOrCreate" && m.IsGenericMethodDefinition && m.GetParameters().Length == 1);
+                if (generic == null) throw new MissingMethodException("Backpack", "GetOrCreate");
+                object component = generic.MakeGenericMethod(componentType).Invoke(holder, new object[] { "" });
+                MethodInfo serialize = component.GetType().GetMethod("Serialize", Type.EmptyTypes);
+                if (serialize == null) throw new MissingMethodException("Backpack", "Serialize");
+                plan.Add(new BackpackGearEntry { Inventory = contents, Component = component, Serialize = serialize });
+                PlanBackpackGear(contents, get, depth + 1, visited, plan, ref itemCount);
+            }
+        }
+
         public static bool HasClearReceipt(Player player, long world, string token, string hash)
         {
             if (player == null || world == 0 || String.IsNullOrEmpty(hash)) return false;
             CustodyStore.Token(token); string actual; Dictionary<string, string> custom = Custom(player);
             return custom.TryGetValue(ReceiptKey, out actual) && actual == Receipt(world, token, hash);
+        }
+        public static bool HasClearReceipt(Player player, long world, string token)
+        { string hash; return TryGetClearReceiptHash(player, world, token, out hash); }
+        public static bool TryGetClearReceiptHash(Player player, long world, string token, out string hash)
+        {
+            hash = "";
+            if (player == null || world == 0) return false;
+            CustodyStore.Token(token); string actual;
+            if (!Custom(player).TryGetValue(ReceiptKey, out actual)) return false;
+            string prefix = world.ToString("x16", CultureInfo.InvariantCulture) + ":" + token + ":";
+            if (actual == null || actual.Length != prefix.Length + 64 || !actual.StartsWith(prefix, StringComparison.Ordinal)) return false;
+            string candidate = actual.Substring(prefix.Length);
+            foreach (char c in candidate) if (!(c >= '0' && c <= '9') && !(c >= 'a' && c <= 'f')) return false;
+            hash = candidate; return true;
         }
         public static void ClearReceipt(Player player, long world, string token)
         {
@@ -282,7 +365,7 @@ namespace ValheimModPack.PartyPrison
         public static void Deposit(ZDO[] chests, CustodyRecord record, int width, int height)
         {
             RequireHost(); RequireFour(chests);
-            if (record == null || record.NeedsRecovery || record.PublicAccess || record.Stage != CustodyStage.Cleared)
+            if (record == null || record.Closed || record.NeedsRecovery || record.PublicAccess || record.Stage != CustodyStage.Cleared)
                 throw new InvalidOperationException("Custody deposit requires durable, unreleased confiscation.");
             byte[][] payloads = PrepareChestPayloads(record.OriginalPayload, width, height);
             for (int i = 0; i < 4; ++i)

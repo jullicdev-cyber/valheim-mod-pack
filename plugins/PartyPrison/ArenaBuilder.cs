@@ -6,7 +6,7 @@ using UnityEngine;
 namespace ValheimModPack.PartyPrison
 {
     /// <summary>Host-built native pieces; manual construction prepares one bounded site.</summary>
-    public static class ArenaBuilder
+    public static partial class ArenaBuilder
     {
         public const string ProtectedKey = "VMP_PP_Protected";
         public const string MobKey = "VMP_PP_Mob";
@@ -23,10 +23,12 @@ namespace ValheimModPack.PartyPrison
         public const string SignKey = "VMP_PP_Sign";
         public const string LampKey = "VMP_PP_Lamp";
         public const string WindowKey = "VMP_PP_Window";
+        public const string BedKey = "VMP_PP_Bed";
+        public const string CellWallKey = "VMP_PP_CellWall";
         public const string CellSignText = "преступление против вальхейма";
         public const string CustodyPrefab = "piece_chest";
         public const string LayoutVersionKey = "VMP_PP_LayoutVersion";
-        public const int CurrentLayoutVersion = 3;
+        public const int CurrentLayoutVersion = 4;
         private const int MaximumPieces = 640;
         private const int MaximumMobs = 8;
         private const float RoomHalfWidth = 12f;
@@ -40,7 +42,7 @@ namespace ValheimModPack.PartyPrison
         private static WaveRequest pendingWave;
         private static readonly string[] MobNames = {
             "Neck", "Greydwarf", "Greydwarf_Elite", "Greydwarf_Shaman",
-            "Skeleton", "Draugr", "Draugr_Elite", "Goblin"
+            "Skeleton", "Draugr", "Draugr_Elite", "Goblin", "Greyling", "Hatchling", "Wolf"
         };
         private static readonly string[] ArmoryNames = {
             "ArmorLeatherChest", "ArmorLeatherLegs", "HelmetLeather", "SwordBronze",
@@ -195,7 +197,7 @@ namespace ValheimModPack.PartyPrison
             // Pitch and roll are never applied to building pieces.
             Quaternion rotation = Quaternion.Euler(0f, facing.eulerAngles.y, 0f);
             Dictionary<string, GameObject> prefabs = new Dictionary<string, GameObject>();
-            string[] pieceNames = { "stone_floor_2x2", "stone_wall_4x2", "stone_wall_2x1", "iron_wall_2x2", "iron_grate", "piece_bench01", CustodyPrefab, "piece_dvergr_lantern", "crystal_wall_1x1", "sign" };
+            string[] pieceNames = { "stone_floor_2x2", "stone_wall_4x2", "stone_wall_2x1", "iron_wall_2x2", "iron_grate", "piece_bench01", CustodyPrefab, "piece_dvergr_lantern", "crystal_wall_1x1", "sign", "bed" };
             foreach (string name in pieceNames) {
                 GameObject prefab = RequirePrefab(name);
                 if (prefab.GetComponent<Piece>() == null || prefab.GetComponent<WearNTear>() == null)
@@ -227,10 +229,10 @@ namespace ValheimModPack.PartyPrison
                     float along = -10f + segment * 4f;
                     float y = tier * 2f - bounds["stone_wall_4x2"].min.y;
                     plan.Add(new Placement("stone_wall_4x2", new Vector3(along, y, -RoomHalfWidth), 0f));
-                    if (!IsWindowSegment(tier, segment))
+                    if (segment >= 2 && !IsWindowSegment(tier, segment))
                         plan.Add(new Placement("stone_wall_4x2", new Vector3(along, y, RoomHalfWidth), 0f));
                     // The public custody lobby has a permanent two-metre doorway.
-                    if (tier >= 2 || (segment != 0 && segment != 1))
+                    if (segment < 2 && tier >= 2)
                         plan.Add(new Placement("stone_wall_4x2", new Vector3(-RoomHalfWidth, y, along), 90f));
                     if (!IsWindowSegment(tier, segment))
                         plan.Add(new Placement("stone_wall_4x2", new Vector3(RoomHalfWidth, y, along), 90f));
@@ -244,13 +246,6 @@ namespace ValheimModPack.PartyPrison
                 float y = tier * 2f - bounds["stone_wall_4x2"].min.y;
                 foreach (float x in new float[] { -2f, 2f, 6f, 10f })
                     plan.Add(new Placement("stone_wall_4x2", new Vector3(x, y, -4f), 0f));
-                if (tier >= 2) {
-                    plan.Add(new Placement("stone_wall_4x2", new Vector3(-10f, y, -4f), 0f));
-                    plan.Add(new Placement("stone_wall_4x2", new Vector3(-6f, y, -4f), 0f));
-                }
-                else for (int half = 0; half < 2; ++half)
-                    foreach (float x in new float[] { -11f, -10f, -6f, -5f })
-                        plan.Add(new Placement("stone_wall_2x1", new Vector3(x, tier * 2f + half - bounds["stone_wall_2x1"].min.y, -4f), 0f));
             }
             // An internal grille lets the prisoner physically walk from the bench
             // cell to the adjoining arena. A second grille opens only on release.
@@ -261,18 +256,13 @@ namespace ValheimModPack.PartyPrison
                 plan.Add(new Placement("iron_wall_2x2", new Vector3(-4f, tier * 2f - bounds["iron_wall_2x2"].min.y, 0f), 90f));
             plan.Add(new Placement("iron_grate", new Vector3(-8f, -bounds["iron_grate"].min.y, -4f), 0f, ExitKey, -1));
             plan.Add(new Placement("iron_grate", new Vector3(-4f, -bounds["iron_grate"].min.y, 0f), 90f, InnerGateKey, -1));
-            // Close any space above the native two-metre gate leaf up to the
-            // four-metre headers; do not rely on its animation collider height.
-            float gateHeight = bounds["iron_grate"].size.y;
-            for (float height = gateHeight; height < 4f; height += 1f) {
-                plan.Add(new Placement("stone_wall_2x1", new Vector3(-8f, height - bounds["stone_wall_2x1"].min.y, -4f), 0f));
-                plan.Add(new Placement("stone_wall_2x1", new Vector3(-4f, height - bounds["stone_wall_2x1"].min.y, 0f), 90f));
-            }
+            // The metal wall plan fills the headers above both native gate leaves.
             plan.Add(new Placement("piece_bench01", new Vector3(-10f, -bounds["piece_bench01"].min.y, 7f), 90f));
             for (int chest = 0; chest < 4; ++chest)
                 plan.Add(new Placement(CustodyPrefab, new Vector3(-6f + chest * 4f, -bounds[CustodyPrefab].min.y, -10f), 0f, CustodyKey, chest));
             AppendWindows(plan, bounds["crystal_wall_1x1"]);
-            AppendCellFurniture(plan, bounds[CustodyPrefab]);
+            AppendCellFurniture(plan, bounds[CustodyPrefab], bounds["bed"]);
+            AppendCellGrilles(plan, bounds["iron_wall_2x2"], bounds["iron_grate"]);
             AppendLamps(plan);
             if (plan.Count > MaximumPieces) throw new InvalidOperationException("Превышен лимит деталей тюрьмы.");
             List<GameObject> created = new List<GameObject>();
@@ -313,10 +303,11 @@ namespace ValheimModPack.PartyPrison
                 }
         }
 
-        private static void AppendCellFurniture(List<Placement> plan, Bounds chest)
+        private static void AppendCellFurniture(List<Placement> plan, Bounds chest, Bounds bed)
         {
             plan.Add(new Placement(CustodyPrefab, new Vector3(-10f, -chest.min.y, 3f), 90f, KitKey, -1));
             plan.Add(new Placement("sign", new Vector3(-8f, 2.3f, 11.6f), 180f, SignKey, -1));
+            plan.Add(new Placement("bed", new Vector3(-10f, -bed.min.y, 10f), 90f, BedKey, -1));
         }
 
         private static void AppendLamps(List<Placement> plan)
@@ -344,7 +335,10 @@ namespace ValheimModPack.PartyPrison
                 if (placement.Marker == SignKey) {
                     if (piece.GetComponent<Sign>() == null) throw new InvalidOperationException("Не создана табличка в камере.");
                     zdo.Set(ZDOVars.s_text, CellSignText);
-                    zdo.Set(ZDOVars.s_author, "host");
+                    // Empty means a public system sign. The native "host" sentinel
+                    // leaves Sign.m_author null and its permission code dereferences it.
+                    zdo.Set(ZDOVars.s_author, "");
+                    zdo.Set(ZDOVars.s_authorDisplayName, "");
                 }
                 Piece nativePiece = piece.GetComponent<Piece>();
                 if (nativePiece != null) nativePiece.m_canBeRemoved = false;
@@ -357,67 +351,9 @@ namespace ValheimModPack.PartyPrison
 
         /// <summary>Upgrade the loaded enclosure without replacing any property chest.</summary>
         public static bool UpgradeLayout(PrisonRegion region)
-        {
-            RequireHost();
-            if (region == null || ZoneSystem.instance == null || !ZNetScene.instance.IsAreaReady(Vector(region.Center))) return false;
-            List<ZDO> protectedPieces = TaggedRegionObjects(ProtectedKey, region);
-            if (protectedPieces.Count == 0) return false;
-            int version = Int32.MaxValue;
-            foreach (ZDO piece in protectedPieces) if (InsideStructure(region, piece.GetPosition()))
-                version = Math.Min(version, piece.GetInt(LayoutVersionKey, 0));
-            if (version < 2 || version >= CurrentLayoutVersion) return false;
-            // Validate the complete loaded footprint before changing any pieces.
-            foreach (ZDO piece in protectedPieces) {
-                if (!InsideStructure(region, piece.GetPosition())) continue;
-                ZNetView view = ZNetScene.instance.FindInstance(piece);
-                if (view == null || !view.IsValid()) return false;
-            }
-            GameObject glass = RequirePrefab("crystal_wall_1x1"), sign = RequirePrefab("sign"), chest = RequirePrefab(CustodyPrefab), lamp = RequirePrefab("piece_dvergr_lantern");
-            if (glass.GetComponent<Piece>() == null || sign.GetComponent<Sign>() == null || chest.GetComponent<Container>() == null)
-                throw new InvalidOperationException("Не найдены окна, табличка или сундук для обновления тюрьмы.");
-            Vector3 basePoint = Vector(region.Center) - Vector3.up * 4f;
-            Vector3 right = CellRight(region), forward = Vector3.Cross(right, Vector3.up);
-            Quaternion rotation = Quaternion.LookRotation(forward);
-            List<Placement> additions = new List<Placement>();
-            AppendWindows(additions, SolidBounds(glass)); AppendCellFurniture(additions, SolidBounds(chest)); AppendLamps(additions);
-            var prefabs = new Dictionary<string, GameObject> {
-                { "crystal_wall_1x1", glass }, { "sign", sign }, { CustodyPrefab, chest }, { "piece_dvergr_lantern", lamp }
-            };
-            TerrainLeveler.ClearGrass(region);
-            var newlyCreated = new List<GameObject>();
-            try {
-                // Marker+position makes a retry after terrain loading idempotent.
-                foreach (Placement placement in additions) {
-                    Vector3 position = basePoint + rotation * placement.Offset;
-                    bool exists = false;
-                    foreach (ZDO old in protectedPieces)
-                        if (old.GetBool(placement.Marker, false) && (old.GetPosition() - position).sqrMagnitude < .01f) { exists = true; break; }
-                    if (!exists) newlyCreated.Add(CreatePiece(prefabs[placement.Prefab], placement, basePoint, rotation));
-                }
-            }
-            catch {
-                for (int i = newlyCreated.Count - 1; i >= 0; --i) DestroyCreated(newlyCreated[i]);
-                throw;
-            }
-            int wallPrefab = "stone_wall_4x2".GetStableHashCode(), lampPrefab = "piece_dvergr_lantern".GetStableHashCode();
-            float bottomWallY = -SolidBounds(RequirePrefab("stone_wall_4x2")).min.y;
-            foreach (ZDO piece in protectedPieces) {
-                if (!InsideStructure(region, piece.GetPosition())) continue;
-                Vector3 delta = piece.GetPosition() - basePoint;
-                float x = Vector3.Dot(delta, right), z = Vector3.Dot(delta, forward);
-                bool lowerViewingWall = piece.GetPrefab() == wallPrefab && Mathf.Abs(delta.y - bottomWallY) < .1f
-                    && ((Mathf.Abs(z - RoomHalfWidth) < .1f && (Mathf.Abs(x - 2f) < .1f || Mathf.Abs(x - 6f) < .1f))
-                        || (Mathf.Abs(x - RoomHalfWidth) < .1f && (Mathf.Abs(z - 2f) < .1f || Mathf.Abs(z - 6f) < .1f)));
-                if (lowerViewingWall || piece.GetPrefab() == lampPrefab && !piece.GetBool(LampKey, false)) DestroyWorldObject(piece);
-                else { piece.SetOwner(ZNet.GetUID()); piece.Set(LayoutVersionKey, CurrentLayoutVersion); }
-            }
-            foreach (ZDO item in TaggedRegionObjects(ArmoryKey, region))
-                if (InsideStructure(region, item.GetPosition())) DestroyWorldObject(item);
-            InvalidateLayoutCache();
-            return true;
-        }
+        { return UpgradeLoadedLayout(region); }
 
-        private static void InvalidateLayoutCache() { cachedLayoutManager = null; nextLayoutCheck = 0f; }
+        private static void InvalidateLayoutCache() { cachedLayoutManager = null; nextLayoutCheck = 0f; InvalidateStoredGearCache(); }
 
         public static int LayoutVersion(PrisonRegion region)
         {
@@ -541,8 +477,9 @@ namespace ValheimModPack.PartyPrison
 
         public static ZDO GetKitZdo(PrisonRegion region)
         {
-            foreach (ZDO zdo in TaggedRegionObjects(KitKey, region))
-                if (InsideStructure(region, zdo.GetPosition())) return zdo;
+            if (region == null) return null;
+            foreach (ZDO zdo in StoredGearChests(region))
+                if (zdo.GetBool(KitKey, false) && InsideStructure(region, zdo.GetPosition()) && ZDOMan.instance.GetZDO(zdo.m_uid) == zdo) return zdo;
             return null;
         }
 
@@ -560,39 +497,9 @@ namespace ValheimModPack.PartyPrison
             if (String.IsNullOrEmpty(token)) throw new ArgumentException("Не указан срок для выдачи снаряжения.");
             ZDO zdo = GetKitZdo(region);
             if (zdo == null) throw new InvalidOperationException("Сундук снаряжения ещё не загружен; подойдите к тюрьме.");
-            if (zdo.GetString(KitTokenKey, "") == token) return 0;
-            Container chest = GetKitContainer(region);
-            if (chest == null || chest.IsInUse()) throw new InvalidOperationException("Закройте сундук снаряжения для пополнения перед посадкой.");
-            if (ContainerLoad == null) throw new MissingMethodException("Container", "Load");
-            chest.GetComponent<ZNetView>().ClaimOwnership();
-            ContainerLoad.Invoke(chest, null);
-            Inventory inventory = chest.GetInventory();
-            if (inventory == null) throw new InvalidOperationException("Не открыт инвентарь сундука снаряжения.");
-            var stock = new List<GameObject>();
-            foreach (string name in ArmoryNames) stock.Add(RequireItemPrefab(name));
-            int added = 0;
-            foreach (GameObject prefab in stock) {
-                ItemDrop template = prefab.GetComponent<ItemDrop>();
-                bool present = false;
-                foreach (ItemDrop.ItemData item in inventory.GetAllItems())
-                    if (item != null && item.m_shared.m_name == template.m_itemData.m_shared.m_name) { present = true; break; }
-                if (!present && inventory.CanAddItem(prefab, prefab.name == "ArrowWood" ? 100 : 1)) {
-                    ItemDrop.ItemData item = template.m_itemData.Clone();
-                    item.m_dropPrefab = prefab; item.m_stack = prefab.name == "ArrowWood" ? 100 : 1;
-                    // Native arrows can merge with visitors' deposits. Keep
-                    // stackable supplies ordinary and never remove a mixed stack.
-                    if (item.m_shared.m_maxStackSize == 1) {
-                        if (item.m_customData == null) item.m_customData = new Dictionary<string, string>();
-                        item.m_customData[KitStockKey] = token;
-                    }
-                    if (inventory.AddItem(item)) ++added;
-                }
-            }
-            // Native Inventory.AddItem calls Container.OnContainerChanged/Save.
-            // No LoanKey is applied: every visitor can use these standard items.
-            zdo.Set(KitTokenKey, token);
-            ZDOMan.instance.ForceSendZDO(zdo.m_uid);
-            return added;
+            if (zdo.GetString(KitTokenKey, "") == token && zdo.GetInt(KitRevisionKey, 0) > 0) return 0;
+            ConfigureSentenceKit(region, token, 0, 0);
+            return CombatCatalog.Get(0, 0).GearPrefabs.Length;
         }
 
         /// <summary>Empty only the generated stock; ordinary deposits stay in the public chest.</summary>
@@ -609,9 +516,9 @@ namespace ValheimModPack.PartyPrison
             Inventory inventory = chest.GetInventory();
             var remove = new List<ItemDrop.ItemData>();
             foreach (ItemDrop.ItemData item in inventory.GetAllItems())
-                if (item != null && item.m_shared.m_maxStackSize == 1 && item.m_customData != null && item.m_customData.ContainsKey(KitStockKey)) remove.Add(item);
+                if (IsGeneratedGear(item)) remove.Add(item);
             foreach (ItemDrop.ItemData item in remove) inventory.RemoveItem(item);
-            zdo.Set(KitTokenKey, ""); ZDOMan.instance.ForceSendZDO(zdo.m_uid);
+            zdo.Set(KitTokenKey, ""); zdo.Set(KitRevisionKey, 0); ZDOMan.instance.ForceSendZDO(zdo.m_uid);
             return true;
         }
 
@@ -619,6 +526,7 @@ namespace ValheimModPack.PartyPrison
         {
             RequireHost();
             if (region == null) throw new InvalidOperationException("Сначала создайте тюрьму.");
+            if (!CanSpawnWave(region)) throw new InvalidOperationException("Арена готовится к следующему бою; подождите несколько секунд.");
             string canonical = null;
             foreach (string allowed in MobNames)
                 if (String.Equals(allowed, prefabName, StringComparison.OrdinalIgnoreCase)) { canonical = allowed; break; }
@@ -652,6 +560,9 @@ namespace ValheimModPack.PartyPrison
             Vector3 right = CellRight(region), forward = Vector3.Cross(right, Vector3.up);
             float angle = wave.Spawned * Mathf.PI * 2f / wave.Count;
             Vector3 position = Vector(region.ArenaSpawn) + (right * Mathf.Cos(angle) + forward * Mathf.Sin(angle)) * 4f;
+            // Drakes start below the solid ceiling, with enough height for their
+            // native flying AI to track the prisoner through the viewing grilles.
+            if (wave.Prefab.name == "Hatchling") position.y += 2f;
             GameObject mob = null;
             try {
                 mob = UnityEngine.Object.Instantiate(wave.Prefab, position, Quaternion.LookRotation(-right));
@@ -666,7 +577,7 @@ namespace ValheimModPack.PartyPrison
         public static void CancelPendingWave() { pendingWave = null; }
 
         public static void ResetRuntime()
-        { pendingWave = null; nextMobEnforcement = 0f; cachedLayoutRegion = null; InvalidateLayoutCache(); }
+        { pendingWave = null; ResetCombatRuntime(); nextMobEnforcement = 0f; cachedLayoutRegion = null; InvalidateLayoutCache(); }
 
         public static int LiveMobCount(PrisonRegion region)
         {
@@ -707,6 +618,15 @@ namespace ValheimModPack.PartyPrison
                 ZNetView view = character.GetComponent<ZNetView>();
                 if (view == null || !view.IsOwner() || ContainsRoom(region, character.transform.position)) continue;
                 Vector3 position = Vector(region.ArenaSpawn);
+                if (view.GetZDO().GetPrefab() == "Hatchling".GetStableHashCode()) {
+                    Vector3 current = character.transform.position, delta = current - Vector(region.Center);
+                    float floor = (float)region.CellSpawn.Y - 1f;
+                    if (Mathf.Abs(Vector3.Dot(delta, CellRight(region))) <= 11.7f
+                        && Mathf.Abs(Vector3.Dot(delta, Vector3.Cross(CellRight(region), Vector3.up))) <= 11.7f && current.y > floor + 7.5f)
+                        // A flying enemy that pushes into the ceiling retains its
+                        // horizontal position, including inside the open cell.
+                        position = new Vector3(current.x, floor + 5.5f, current.z);
+                }
                 character.transform.position = position;
                 Rigidbody body = character.GetComponent<Rigidbody>();
                 if (body != null) { body.position = position; body.linearVelocity = Vector3.zero; body.angularVelocity = Vector3.zero; }

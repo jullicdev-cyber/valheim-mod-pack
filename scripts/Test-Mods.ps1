@@ -32,6 +32,7 @@ Run-Suite 'inventory-admin-policy' 'plugins/InventoryAdmin/Test-Policy.ps1'
 Run-Suite 'party-prison-policy' 'plugins/PartyPrison/Test-Policy.ps1'
 Run-Suite 'party-prison-placement' 'plugins/PartyPrison/Test-PlacementPlan.ps1'
 Run-Suite 'party-prison-protocol' 'plugins/PartyPrison/Test-Protocol.ps1'
+Run-Suite 'party-prison-combat' 'plugins/PartyPrison/Test-Combat.ps1'
 Run-Suite 'party-prison-custody' 'plugins/PartyPrison/Test-Custody.ps1'
 Run-Suite 'party-prison-withdrawal' 'plugins/PartyPrison/Test-Withdrawal.ps1'
 Run-Suite 'party-prison-performance' 'plugins/PartyPrison/Test-Performance.ps1' @('-GameDirectory',$GameDirectory)

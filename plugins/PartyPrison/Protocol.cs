@@ -8,16 +8,17 @@ namespace ValheimModPack.PartyPrison
     // Custody inventory blobs may be up to 4MiB; command authority stays host-side.
     internal static class PrisonProtocol
     {
-        internal const int Version = 2;
+        internal const int Version = 3;
         internal const int MaximumBlobBytes = 4 * 1024 * 1024;
         internal const int MaximumBytes = MaximumBlobBytes + 8192;
         internal const int State = 1, Heartbeat = 2, ReleaseAck = 3, Wave = 4,
             InventoryOffer = 5, InventoryClear = 6, InventoryCleared = 7,
-            WithdrawalRequest = 8, WithdrawalGrant = 9, WithdrawalAck = 10, WorldClearance = 11;
+            WithdrawalRequest = 8, WithdrawalGrant = 9, WithdrawalAck = 10, WorldClearance = 11,
+            CombatChoice = 12, Defeat = 13, AdmissionFailed = 14;
         internal static void WriteHeader(BinaryWriter writer, long world, int kind)
         {
             if (writer == null) throw new ArgumentNullException("writer");
-            if (world == 0 || kind < State || kind > WorldClearance) throw new InvalidDataException("Invalid prison protocol world or message kind.");
+            if (world == 0 || kind < State || kind > AdmissionFailed) throw new InvalidDataException("Invalid prison protocol world or message kind.");
             if (writer.BaseStream.Position != 0) throw new InvalidDataException("Prison header must begin the message.");
             writer.Write(Version); writer.Write(world); writer.Write(kind);
         }
@@ -29,7 +30,7 @@ namespace ValheimModPack.PartyPrison
             if (reader.ReadInt32() != Version || reader.ReadInt64() != expectedWorld)
                 throw new InvalidDataException("Prison protocol/world mismatch.");
             int kind = reader.ReadInt32();
-            if (kind < State || kind > WorldClearance) throw new InvalidDataException("Unknown prison message kind.");
+            if (kind < State || kind > AdmissionFailed) throw new InvalidDataException("Unknown prison message kind.");
             return kind;
         }
         internal static void Blob(BinaryWriter writer, byte[] bytes)
@@ -93,17 +94,18 @@ namespace ValheimModPack.PartyPrison
         {
             writer.Write(value != null); if (value == null) return;
             Text(writer, value.AccountId); Text(writer, value.SentenceId); Text(writer, value.PlayerName); Text(writer, value.Reason);
-            writer.Write(value.RemainingSeconds); Point(writer, value.ReturnPosition); writer.Write(value.PendingRelease); writer.Write(value.Revision);
+            writer.Write(value.RemainingSeconds); Point(writer, value.ReturnPosition); writer.Write(value.PendingRelease); writer.Write(value.Revision); writer.Write(value.EmergencyRelease);
         }
         internal static SentenceState Sentence(BinaryReader reader)
         {
             if (!Flag(reader)) return null;
             var value = new SentenceState { AccountId = Text(reader), SentenceId = Text(reader), PlayerName = Text(reader), Reason = Text(reader), RemainingSeconds = reader.ReadDouble(),
-                ReturnPosition = Point(reader), PendingRelease = Flag(reader), Revision = reader.ReadInt64() };
+                ReturnPosition = Point(reader), PendingRelease = Flag(reader), Revision = reader.ReadInt64(), EmergencyRelease = Flag(reader) };
             Guid token;
             if (value.AccountId.Length == 0 || value.SentenceId.Length != 32 || !Guid.TryParseExact(value.SentenceId, "N", out token)
                 || value.Revision < 1 || Double.IsNaN(value.RemainingSeconds) || Double.IsInfinity(value.RemainingSeconds)
-                || value.RemainingSeconds < 0 || value.RemainingSeconds > SentencePolicy.MaximumDurationSeconds || value.PendingRelease != (value.RemainingSeconds == 0))
+                || value.RemainingSeconds < 0 || value.RemainingSeconds > SentencePolicy.MaximumDurationSeconds || value.PendingRelease != (value.RemainingSeconds == 0)
+                || value.EmergencyRelease && !value.PendingRelease)
                 throw new InvalidDataException("Invalid prison sentence.");
             SentencePolicy.RequireSentence(value); return value;
         }
