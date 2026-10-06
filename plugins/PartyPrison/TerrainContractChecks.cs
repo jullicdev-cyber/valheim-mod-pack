@@ -161,6 +161,19 @@ internal static class TerrainContractChecks
             "System.Collections.Generic.List`1<System.Single>", "System.Single[]", "System.Single[]", "Heightmap");
         Check(Calls(applyNative, "UnityEngine.Mathf", "Clamp") && applyNative.Body.Instructions.Count(i => Float(i, 8f)) == 2,
             "Native rebuilt heightmap clamp changed; the saved absolute-height postfix needs review.");
+        Check(UsesField(applyNative, "TerrainComp", "m_modifiedPaint") && UsesField(applyNative, "TerrainComp", "m_paintMask") &&
+            Calls(applyNative, "UnityEngine.Texture2D", "SetPixel"), "Compiled painted terrain must rebuild from the persisted per-vertex paint arrays.");
+        MethodDefinition heightmapConstants = Method(heightmap, ".cctor", "System.Void");
+        Instruction dirtMask = heightmapConstants.Body.Instructions.Single(i => i.OpCode.Code == Code.Stsfld &&
+            i.Operand is FieldReference && ((FieldReference)i.Operand).Name == "m_paintMaskDirt");
+        Check(dirtMask.Previous != null && dirtMask.Previous.OpCode.Code == Code.Newobj &&
+            dirtMask.Previous.Previous != null && Float(dirtMask.Previous.Previous, 1f) &&
+            Float(dirtMask.Previous.Previous.Previous, 0f) && Float(dirtMask.Previous.Previous.Previous.Previous, 0f) &&
+            Float(dirtMask.Previous.Previous.Previous.Previous.Previous, 1f), "Native hoe dirt mask changed from RGBA(1,0,0,1).");
+        MethodDefinition cleared = Method(heightmap, "IsCleared", "System.Boolean", "UnityEngine.Vector3");
+        Check(Calls(cleared, "UnityEngine.Texture2D", "GetPixel") && cleared.Body.Instructions.Count(i => Float(i, .5f)) == 3 &&
+            UsesField(cleared, "UnityEngine.Color", "r") && UsesField(cleared, "UnityEngine.Color", "g") && UsesField(cleared, "UnityEngine.Color", "b"),
+            "Native clutter suppression must classify painted dirt by its RGB mask.");
 
         MethodDefinition save = Method(compiler, "Save", "System.Void", "System.Boolean");
         Check(UsesField(save, "TerrainComp", "m_initialized"), "Native Save no longer checks initialization.");
@@ -283,7 +296,12 @@ internal static class TerrainContractChecks
         Check(!terrainCalls.Any(m => m.Name == "ApplyOperation" || m.Name == "DoOperation" || m.Name.StartsWith("RPC_", StringComparison.Ordinal) || m.DeclaringType.FullName == "ZRoutedRpc" || m.DeclaringType.FullName == "ZRpc"), "Terrain construction must batch native compiled data rather than send an operation RPC per vertex.");
         Check(!terrainCalls.Any(m => m.DeclaringType.FullName == "UnityEngine.Object" && m.Name.StartsWith("Find", StringComparison.Ordinal)), "Terrain handling must not scan all scene objects.");
 
-        MethodDefinition applySite = Method(site, "Apply", rootName + "/Transaction");
+        MethodDefinition applySite = Method(site, "Apply", rootName + "/Transaction", "System.Boolean");
+        BoolRoute(Method(site, "Apply", rootName + "/Transaction"), "Apply", false);
+        BoolRoute(Method(site, "ApplyClearPaint", rootName + "/Transaction"), "Apply", true);
+        MethodDefinition clearGrass = Method(leveler, "ClearGrass", "System.Void", "ValheimModPack.PartyPrison.PrisonRegion");
+        Check(Calls(clearGrass, site.FullName, "ApplyClearPaint") && Calls(clearGrass, transaction.FullName, "Commit") &&
+            !Calls(clearGrass, site.FullName, "Apply"), "Existing prisons must clear grass through the paint-only transaction, without changing floor heights.");
         Instruction unchanged = CallInstructions(applySite).Single(i => ((MethodReference)i.Operand).DeclaringType.FullName == tile.FullName && ((MethodReference)i.Operand).Name == "CheckUnchanged");
         Instruction applyTransaction = CallInstructions(applySite).Single(i => ((MethodReference)i.Operand).DeclaringType.FullName == transaction.FullName && ((MethodReference)i.Operand).Name == "Apply");
         Check(unchanged.Offset < applyTransaction.Offset, "A stale terrain plan is modified before it is revalidated.");
@@ -311,7 +329,22 @@ internal static class TerrainContractChecks
             Calls(forceTile, "ZDO", "Set") && Calls(forceTile, "UnityEngine.Mathf", "Clamp"), "Forced heights must merge a bounded saved record while preserving native array limits.");
         Check(UsesField(forceTile, leveler.FullName, "Level") && UsesField(forceTile, leveler.FullName, "Smooth") && UsesField(forceTile, leveler.FullName, "ModifiedHeight"),
             "Force leveling lost its native compiled terrain fallback.");
-        Check(!UsesField(forceTile, leveler.FullName, "Paint") && !UsesField(forceTile, leveler.FullName, "ModifiedPaint"), "Force leveling must preserve existing painted terrain.");
+        MethodDefinition clearPaint = Method(transaction, "ApplyClearedPaint", "System.Void", tile.FullName);
+        Instruction paintMutation = CallInstructions(apply).Single(i => ((MethodReference)i.Operand).DeclaringType.FullName == transaction.FullName &&
+            ((MethodReference)i.Operand).Name == "ApplyClearedPaint");
+        Check(snapshotConstruction.Offset < paintMutation.Offset && paintMutation.Offset < persist.Offset,
+            "Grass clearing must snapshot terrain paint before mutation and persist it afterward.");
+        Check(UsesField(clearPaint, leveler.FullName, "Paint") && UsesField(clearPaint, leveler.FullName, "ModifiedPaint") &&
+            UsesField(clearPaint, tile.FullName, "Vertices") && !UsesField(clearPaint, leveler.FullName, "Level") &&
+            !UsesField(clearPaint, leveler.FullName, "Smooth") && !UsesField(clearPaint, leveler.FullName, "ModifiedHeight"),
+            "Grass clearing must modify only the planned paint vertices, keeping existing height data intact.");
+        Instruction paintColor = CallInstructions(clearPaint).Single(i => ((MethodReference)i.Operand).DeclaringType.FullName == "UnityEngine.Color" &&
+            ((MethodReference)i.Operand).Name == ".ctor");
+        Check(paintColor.Previous != null && Float(paintColor.Previous, 1f) && Float(paintColor.Previous.Previous, 0f) &&
+            Float(paintColor.Previous.Previous.Previous, 0f) && Float(paintColor.Previous.Previous.Previous.Previous, 1f),
+            "Prison floor paint must match native hoe dirt RGBA(1,0,0,1).");
+        Check(UsesField(apply, transaction.FullName, "paintOnly") && Calls(apply, transaction.FullName, "ApplyClearedPaint"),
+            "The shared terrain transaction lost its paint-only migration route.");
         Check(Calls(apply, "Heightmap", "GetHeight"), "Native clamp/rebuild verification is missing after applying terrain.");
         foreach (MethodDefinition method in new[] { apply, Method(transaction, "Dispose", "System.Void") }) {
             Instruction[] pokes = CallInstructions(method).Where(i => ((MethodReference)i.Operand).DeclaringType.FullName == "Heightmap" && ((MethodReference)i.Operand).Name == "Poke").ToArray();

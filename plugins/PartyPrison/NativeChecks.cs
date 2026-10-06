@@ -120,7 +120,7 @@ namespace ValheimModPack.PartyPrison.NativeVerification
             Patch(typeof(ItemDrop), "AutoStackItems", Type.EmptyTypes);
             Patch(typeof(TerrainComp), "ApplyToHeightmap", new[] { typeof(Texture2D), typeof(List<float>), typeof(float[]), typeof(float[]), typeof(Heightmap) });
             report.AppendLine("PASS: Required confinement, death, protection and input-reset Harmony patches bind; native creature loot generation remains available.");
-            CheckCommandRouting(); CheckGroupRadiusCompatibility(); CheckUi(); CheckInventoryIsolation(); CheckCustodyInventory(); CheckExactWithdrawalInsertion(); CheckCustodyMask(); CheckCustodyRegistry(); CheckForcedTerrainHeights(); CheckForceClearance(); CheckLootPickupGuard(); CheckGeometry(); CheckPrefabs();
+            CheckCommandRouting(); CheckGroupRadiusCompatibility(); CheckUi(); CheckInventoryIsolation(); CheckCustodyInventory(); CheckAdmissionEquivalence(); CheckExactWithdrawalInsertion(); CheckCustodyMask(); CheckCustodyRegistry(); CheckCustodyTransitions(); CheckForcedTerrainHeights(); CheckForceClearance(); CheckLootPickupGuard(); CheckGeometry(); CheckLayoutPlan(); CheckPrefabs();
             Check(Player.m_localPlayer == null && Game.instance == null, "probe leaves no game or local player registration");
         }
 
@@ -332,9 +332,9 @@ namespace ValheimModPack.PartyPrison.NativeVerification
 
         private static object Field(object value, string name) { return value.GetType().GetField(name, All).GetValue(value); }
         private static void Set(object value, string name, object field) { value.GetType().GetField(name, All).SetValue(value, field); }
-        private static void Call(object value, string name, params object[] args)
+        private static object Call(object value, string name, params object[] args)
         {
-            try { value.GetType().GetMethod(name, All).Invoke(value, args); }
+            try { return value.GetType().GetMethod(name, All).Invoke(value, args); }
             catch (TargetInvocationException error) { throw new InvalidOperationException("Native UI call failed: " + name, error.InnerException ?? error); }
         }
         private static int InputCount() { return (int)typeof(GUIManager).GetField("InputBlockRequests", All).GetValue(null); }
@@ -495,7 +495,7 @@ namespace ValheimModPack.PartyPrison.NativeVerification
 
         private void CheckPrefabs()
         {
-            string[] pieces = { "stone_floor_2x2", "stone_wall_4x2", "stone_wall_2x1", "iron_wall_2x2", "iron_grate", "piece_dvergr_lantern", "piece_bench01", "piece_chest" };
+            string[] pieces = { "stone_floor_2x2", "stone_wall_4x2", "stone_wall_2x1", "iron_wall_2x2", "iron_grate", "piece_dvergr_lantern", "piece_bench01", "piece_chest", "crystal_wall_1x1", "sign" };
             string[] mobs = { "Neck", "Greydwarf", "Greydwarf_Elite", "Greydwarf_Shaman", "Skeleton", "Draugr", "Draugr_Elite", "Goblin" };
             string[] items = { "SwordBronze", "MaceBronze", "AxeBronze", "SpearBronze", "BowFineWood", "ShieldWood", "ArrowWood", "ArmorLeatherChest", "ArmorLeatherLegs", "HelmetLeather" };
             int verified = 0; var unavailable = new List<string>();
@@ -511,6 +511,8 @@ namespace ValheimModPack.PartyPrison.NativeVerification
                     Check(prefab.GetComponentsInChildren<Collider>(true).Any(collider => !collider.isTrigger), "native prison structure has solid collider: " + name);
                     if (name == "iron_grate") Check(prefab.GetComponent<Door>() != null, "native iron grate supports the release gate and walk-through arena door");
                     if (name == "piece_bench01") Check(prefab.GetComponentInChildren<Chair>(true) != null, "native cell bench supports sitting");
+                    if (name == "sign") Check(prefab.GetComponent<Sign>() != null, "native cell sign supports saved text");
+                    if (name == "crystal_wall_1x1") Check(prefab.GetComponentsInChildren<Renderer>(true).Length != 0, "native crystal viewing wall has visible renderers and solid collision");
                     if (name == "piece_chest")
                     {
                         Container chest = prefab.GetComponent<Container>();
@@ -527,6 +529,104 @@ namespace ValheimModPack.PartyPrison.NativeVerification
             }
             report.AppendLine("PASS: " + verified + " available prison structure, creature and armory prefab definitions inspected without spawning.");
             if (unavailable.Count > 0) report.AppendLine("UNVERIFIED: Menu did not expose these world prefabs: " + String.Join(", ", unavailable.ToArray()) + ". Their resolution requires a world test.");
+        }
+
+        private void CheckCustodyTransitions()
+        {
+            Plugin actual = (Plugin)Chainloader.PluginInfos[Plugin.Id].Instance;
+            string[] names = { "localCustodyStage", "localCustodyAccount", "localCustodyToken", "localCustodyHash", "localRecovery", "clearSave", "cachedOffer", "offerToken", "nextOffer", "localSentence" };
+            var previous = names.ToDictionary(name => name, name => Field(actual, name));
+            string first = new string('1', 32), second = new string('2', 32), hash = new string('a', 64), account = "Steam_76561198000000099";
+            ZRpc rpc = (ZRpc)System.Runtime.Serialization.FormatterServices.GetUninitializedObject(typeof(ZRpc));
+            ZNetPeer peer = (ZNetPeer)System.Runtime.Serialization.FormatterServices.GetUninitializedObject(typeof(ZNetPeer));
+            Set(peer, "m_rpc", rpc);
+            var sent = (Dictionary<ZRpc, float>)Field(actual, "custodySent");
+            var tokens = (Dictionary<ZRpc, string>)Field(actual, "custodySentTokens");
+            try {
+                Set(actual, "localCustodyToken", first); Set(actual, "clearSave", 17L);
+                Set(actual, "cachedOffer", new byte[] { 9 }); Set(actual, "offerToken", first);
+                Call(actual, "ReadCustodyState", 1, account, second, hash, "");
+                Check((long)Field(actual, "clearSave") == 0 && Field(actual, "cachedOffer") == null && (string)Field(actual, "offerToken") == "",
+                    "a second sentence discards the first admission snapshot and save acknowledgement");
+                byte[] snapshot = { 7, 8 }; Set(actual, "cachedOffer", snapshot); Set(actual, "offerToken", second); Set(actual, "clearSave", 23L);
+                Call(actual, "ReadCustodyState", 1, account, second, hash, "");
+                Check((long)Field(actual, "clearSave") == 23 && ReferenceEquals(Field(actual, "cachedOffer"), snapshot),
+                    "repeated state for the same admission preserves its pending durable save and immutable inventory offer");
+                Set(actual, "localSentence", new SentenceState { AccountId = account, SentenceId = second });
+                using (var stream = new MemoryStream()) {
+                    using (var writer = new BinaryWriter(stream, Encoding.UTF8, true)) {
+                        Type protocol = typeof(Plugin).Assembly.GetType("ValheimModPack.PartyPrison.PrisonProtocol", true);
+                        protocol.GetMethod("Text", All, null, new[] { typeof(BinaryWriter), typeof(string) }, null).Invoke(null, new object[] { writer, first });
+                        protocol.GetMethod("Text", All, null, new[] { typeof(BinaryWriter), typeof(string) }, null).Invoke(null, new object[] { writer, hash });
+                        protocol.GetMethod("Blob", All, null, new[] { typeof(BinaryWriter), typeof(byte[]) }, null).Invoke(null, new object[] { writer, new byte[] { 1 } });
+                    }
+                    stream.Position = 0;
+                    Type protocolType = typeof(Plugin).Assembly.GetType("ValheimModPack.PartyPrison.PrisonProtocol", true);
+                    int clearKind = (int)protocolType.GetField("InventoryClear", All).GetRawConstantValue();
+                    using (var reader = new BinaryReader(stream)) Check((bool)Call(actual, "ClientCustodyMessage", clearKind, reader), "a stale clear message is consumed without clearing the new sentence's inventory");
+                }
+                Check((long)Field(actual, "clearSave") == 23 && (string)Field(actual, "localCustodyToken") == second,
+                    "stale first-sentence messages leave the second admission save and identity intact");
+                sent[rpc] = Time.realtimeSinceStartup + 100f; tokens[rpc] = first;
+                Check(!(bool)Call(actual, "CanSendClear", peer, first) && (bool)Call(actual, "CanSendClear", peer, second),
+                    "a second sentence immediately bypasses the previous sentence's recipient cooldown");
+                Call(actual, "ForgetCustodyPeer", rpc);
+                Check(!sent.ContainsKey(rpc) && !tokens.ContainsKey(rpc), "disconnect clears both admission timing and token for the peer");
+            }
+            finally { sent.Remove(rpc); tokens.Remove(rpc); foreach (string name in names) Set(actual, name, previous[name]); }
+            report.AppendLine("PASS: Production custody state handlers reset consecutive admissions, preserve duplicate-state saves, reject stale clear tokens and isolate recipient cooldowns by sentence; no player inventory or user world is touched.");
+        }
+
+        private void CheckAdmissionEquivalence()
+        {
+            var source = new Inventory("torch admission fixture", null, 8, 4);
+            ItemDrop.ItemData torch = NativeItem("Torch", 1, 0, 0), sword = NativeItem("SwordBronze", 1, 1, 0);
+            torch.m_durability = torch.GetMaxDurability() * .75f; sword.m_durability = sword.GetMaxDurability() * .75f;
+            torch.m_customData["fixture_owner"] = "preserved";
+            source.GetAllItems().Add(torch); source.GetAllItems().Add(sword);
+            byte[] prepared = CustodyInventory.Capture(source); float originalWear = torch.m_durability;
+            torch.m_durability = originalWear * .5f;
+            byte[] worn = CustodyInventory.Capture(source);
+            byte[] originalBytes = (byte[])prepared.Clone(), wornBytes = (byte[])worn.Clone();
+            Check(CustodyInventory.EquivalentForAdmission(prepared, worn) && !CustodyInventory.Equivalent(prepared, worn),
+                "legacy prepared admission accepts only spent torch fuel while exact stored and withdrawn items remain strict");
+            Check(torch.m_durability == originalWear * .5f && prepared.SequenceEqual(originalBytes) && worn.SequenceEqual(wornBytes),
+                "admission comparison preserves both live torch wear and immutable backup bytes");
+            torch.m_customData["fixture_owner"] = "changed";
+            Check(!CustodyInventory.EquivalentForAdmission(prepared, CustodyInventory.Capture(source)), "torch metadata changes cannot pass admission equivalence");
+            torch.m_customData["fixture_owner"] = "preserved"; torch.m_stack = 2;
+            Check(!CustodyInventory.EquivalentForAdmission(prepared, SaveDetached(source)), "torch quantity changes cannot pass admission equivalence");
+            torch.m_stack = 1; torch.m_durability = originalWear; sword.m_durability *= .5f;
+            Check(!CustodyInventory.EquivalentForAdmission(prepared, CustodyInventory.Capture(source)), "ordinary weapon wear changes cannot rebind a prepared inventory");
+            sword.m_durability *= 2f; torch.m_durability = torch.GetMaxDurability();
+            Check(!CustodyInventory.EquivalentForAdmission(prepared, CustodyInventory.Capture(source)), "increased torch durability cannot pass the legacy fuel exception");
+            report.AppendLine("PASS: Native payload comparison tolerates decreasing torch fuel only at admission while preserving metadata, quantities, ordinary weapon wear and the immutable original.");
+        }
+
+        private void CheckLayoutPlan()
+        {
+            Type placement = typeof(ArenaBuilder).GetNestedType("Placement", All);
+            var windows = (System.Collections.IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(placement));
+            GameObject glass = PrefabManager.Instance.GetPrefab("crystal_wall_1x1");
+            Check(glass != null, "transparent arena wall prefab is available for layout verification");
+            Bounds bounds = (Bounds)typeof(ArenaBuilder).GetMethod("SolidBounds", All).Invoke(null, new object[] { glass });
+            typeof(ArenaBuilder).GetMethod("AppendWindows", All).Invoke(null, new object[] { windows, bounds });
+            Check(windows.Count == 32, "arena layout creates two eight-metre windows with two native glass rows");
+            foreach (object window in windows) {
+                Vector3 point = (Vector3)Field(window, "Offset");
+                Check((string)Field(window, "Prefab") == "crystal_wall_1x1" && (string)Field(window, "Marker") == ArenaBuilder.WindowKey,
+                    "viewing opening uses protected native glass rather than an empty escape gap");
+                Check(point.y + bounds.min.y >= -.001f && point.y + bounds.max.y <= 2.01f
+                    && (Mathf.Abs(point.x - 12f) < .001f || Mathf.Abs(point.z - 12f) < .001f),
+                    "viewing glass fills the planned outer arena wall at standing eye height");
+            }
+            var lamps = (System.Collections.IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(placement));
+            typeof(ArenaBuilder).GetMethod("AppendLamps", All).Invoke(null, new object[] { lamps });
+            float[] angles = { 180f, 0f, 90f, 270f, 0f, 0f };
+            Check(lamps.Count == angles.Length, "all six wall lanterns remain in the upgraded layout");
+            for (int i = 0; i < lamps.Count; ++i) Check((float)Field(lamps[i], "Yaw") == angles[i], "lantern bracket rotates toward its wall: " + i);
+            Check(ArenaBuilder.CellSignText == "преступление против вальхейма", "cell sign contains the requested Russian inscription");
+            report.AppendLine("PASS: Production layout planning covers both viewing openings with 32 solid glass panels, rotates all six lanterns and retains the requested cell inscription.");
         }
 
         private static ItemDrop.ItemData Arrows(bool loan, int count, int x)
@@ -836,6 +936,25 @@ namespace ValheimModPack.PartyPrison.NativeVerification
                 zdo.Set(key, new byte[0]); List<float> cleared = Enumerable.Repeat(40f, 9).ToList();
                 apply.Invoke(compiler, new object[] { null, cleared, baseHeights, baseHeights, map });
                 Check(cleared[4] == 48f && cleared[8] == 40f, "removing the saved override returns the compiler to normal native terrain behavior");
+
+                Type tileType = typeof(TerrainLeveler).GetNestedType("NativeTile", All), vertexType = typeof(TerrainLeveler).GetNestedType("Vertex", All);
+                object tile = Activator.CreateInstance(tileType, All, null, new object[] { map, compiler, map.transform.position, 2, 1f, true }, null);
+                var vertices = (System.Collections.IList)tileType.GetField("Vertices", All).GetValue(tile);
+                vertices.Add(Activator.CreateInstance(vertexType, All, null, new object[] { 1, 1, map.transform.position, 40f, 0f, 0f }, null));
+                MethodInfo paintCleared = typeof(TerrainLeveler.Transaction).GetMethod("ApplyClearedPaint", All);
+                Check(paintCleared != null, "prison upgrade exposes its native hoe paint implementation");
+                paintCleared.Invoke(null, new object[] { tile });
+                bool[] painted = (bool[])Field(compiler, "m_modifiedPaint"); Color[] colors = (Color[])Field(compiler, "m_paintMask");
+                Check(painted[4] && colors[4] == new Color(1f, 0f, 0f, 1f) && !painted[0] && colors[0] == default(Color),
+                    "cleared dirt modifies only planned native ground vertices");
+                var texture = new Texture2D(3, 3, TextureFormat.RGBA32, false);
+                try {
+                    List<float> paintedHeights = Enumerable.Repeat(40f, 9).ToList();
+                    apply.Invoke(compiler, new object[] { texture, paintedHeights, baseHeights, baseHeights, map }); texture.Apply();
+                    Check(texture.GetPixel(1, 1).r > .99f && texture.GetPixel(1, 1).g < .01f && texture.GetPixel(1, 1).b < .01f,
+                        "native ApplyToHeightmap applies the saved hoe dirt mask used to suppress grass");
+                    Check(paintedHeights.SequenceEqual(cleared), "paint-only upgrade preserves existing native ground heights");
+                } finally { UnityEngine.Object.DestroyImmediate(texture); }
             }
             finally {
                 if (detached != null) { UnityEngine.Object.DestroyImmediate(detached); registryFixtureObjects.Remove(detached); }
@@ -1162,6 +1281,21 @@ namespace ValheimModPack.PartyPrison.NativeVerification
                     "changed live ZDO identity cannot retain the previous world's custody marker through a cached ZDO reference");
                 typeof(ZNetView).GetField("m_zdo", All).SetValue(chest.View, chest.Zdo);
                 Check(ReferenceEquals(CustodyInventory.ChestForInventory(replacement), chest.Zdo), "restored live view is classified from its current native ZDO");
+                chest.Zdo.Set(CustodyInventory.PublicKey, true);
+                Check(CustodyInventory.ChestForInventory(replacement) == null && ReferenceEquals(chest.Container.GetInventory(), replacement)
+                    && !ArenaBuilder.IsCustody(chest.Object), "public foyer chest returns its actual native inventory while retaining its permanent custody identity");
+                ItemDrop.ItemData publicItem = NativeItem("Wood", 4, 1, 0);
+                Check(replacement.AddItem(publicItem) && replacement.GetAllItems().Contains(publicItem), "ordinary native add works in a public prison chest");
+                var visitorInventory = new Inventory("ordinary visitor", null, 6, 4);
+                Check(visitorInventory.MoveItemToThis(replacement, publicItem, 4, 0, 0) && visitorInventory.GetAllItems().Sum(item => item.m_stack) == 4
+                    && replacement.GetAllItems().Count == 0, "ordinary native chest transfer moves public stock once without a custody receipt");
+                ItemDrop.ItemData transferred = visitorInventory.GetAllItems()[0];
+                Check(replacement.MoveItemToThis(visitorInventory, transferred, 4, 1, 0) && replacement.GetAllItems().Sum(item => item.m_stack) == 4,
+                    "ordinary visitor may put items back into the public prison chest");
+                replacement.RemoveItem(replacement.GetAllItems()[0]);
+                Check(replacement.GetAllItems().Count == 0, "removed public stock stays removed rather than replaying its immutable backup");
+                chest.Zdo.Set(CustodyInventory.PublicKey, false);
+                Check(ReferenceEquals(chest.Container.GetInventory(), mask), "admission may temporarily reserve the native foyer chest before confiscation");
                 var timer = System.Diagnostics.Stopwatch.StartNew(); int ordinaryCount = 0;
                 for (int i = 0; i < 5000; ++i)
                 { ordinaryCount += detached.GetAllItems().Count; if (ReferenceEquals(detached.GetItemAt(0, 0), ordinaryItem)) ++ordinaryCount; }

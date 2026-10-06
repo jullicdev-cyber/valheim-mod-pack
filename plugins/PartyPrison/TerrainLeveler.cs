@@ -53,6 +53,17 @@ namespace ValheimModPack.PartyPrison
             return Inspect(center, Vector3.zero, targetHeight, extent, true);
         }
 
+        /// <summary>Upgrade an existing prison's ground without moving its saved terrain or belongings.</summary>
+        public static void ClearGrass(PrisonRegion region)
+        {
+            if (region == null) throw new ArgumentNullException("region");
+            Vector3 center = Plugin.Vector(region.Center) - Vector3.up * 4f, direction = Plugin.Vector(region.Center) - Plugin.Vector(region.CellSpawn);
+            direction.y = 0f;
+            Quaternion rotation = direction.sqrMagnitude > .1f ? Quaternion.LookRotation(Vector3.Cross(direction.normalized, Vector3.up)) : Quaternion.identity;
+            Site site = PlanAnywhere(center, center.y - .15f, rotation);
+            using (Transaction transaction = site.ApplyClearPaint()) transaction.Commit();
+        }
+
         private static Site PlanInterior(Vector3 center, float targetHeight, float extent)
         {
             TerrainLevelPlan decision = TerrainPlan.CreateInterior(center.x, center.z, targetHeight);
@@ -139,6 +150,12 @@ namespace ValheimModPack.PartyPrison
             { this.center = center; this.decision = decision; this.tiles = tiles; this.network = network; this.world = world; this.extent = extent; this.force = force; }
 
             public Transaction Apply()
+            { return Apply(false); }
+
+            public Transaction ApplyClearPaint()
+            { return Apply(true); }
+
+            private Transaction Apply(bool paintOnly)
             {
                 RequireHost();
                 if (applied) throw new InvalidOperationException("Эта площадка уже была выровнена.");
@@ -147,7 +164,7 @@ namespace ValheimModPack.PartyPrison
                 // Revalidate the whole read-only plan before creating or claiming anything.
                 foreach (NativeTile tile in tiles) tile.CheckUnchanged();
                 applied = true;
-                Transaction transaction = new Transaction(center, TargetHeight, tiles, network, world, extent, force);
+                Transaction transaction = new Transaction(center, TargetHeight, tiles, network, world, extent, force, paintOnly);
                 try { transaction.Apply(); return transaction; }
                 catch (Exception error) {
                     try { transaction.Dispose(); }
@@ -169,11 +186,11 @@ namespace ValheimModPack.PartyPrison
             private readonly ZNet network;
             private readonly long world;
             private readonly float extent;
-            private readonly bool force;
+            private readonly bool force, paintOnly;
             private bool committed, disposed;
 
-            internal Transaction(Vector3 center, float target, List<NativeTile> tiles, ZNet network, long world, float extent, bool force)
-            { this.center = center; this.target = target; this.tiles = tiles; this.network = network; this.world = world; this.extent = extent; this.force = force; }
+            internal Transaction(Vector3 center, float target, List<NativeTile> tiles, ZNet network, long world, float extent, bool force, bool paintOnly)
+            { this.center = center; this.target = target; this.tiles = tiles; this.network = network; this.world = world; this.extent = extent; this.force = force; this.paintOnly = paintOnly; }
 
             internal void Apply()
             {
@@ -190,21 +207,35 @@ namespace ValheimModPack.PartyPrison
                     m_level = true, m_levelOffset = 0f, m_levelRadius = 0f, m_square = true,
                     m_raise = false, m_smooth = false, m_paintCleared = false
                 };
-                if (force) {
+                if (!paintOnly && force) {
                     foreach (NativeTile tile in tiles) ApplyForcedTile(tile);
-                } else foreach (NativeTile tile in tiles)
+                } else if (!paintOnly) foreach (NativeTile tile in tiles)
                     foreach (Vertex vertex in tile.Vertices) {
                         Vector3 point = vertex.Position; point.y = target;
                         Operation.Invoke(tile.Compiler, new object[] { point, Vector3.zero, settings });
                     }
+                foreach (NativeTile tile in tiles) ApplyClearedPaint(tile);
                 foreach (Snapshot snapshot in snapshots) snapshot.Persist();
                 foreach (Snapshot snapshot in snapshots) snapshot.Heightmap.Poke(0, false);
                 // Check rebuilt collision heights, including the absolute overrides after native clamping.
-                foreach (NativeTile tile in tiles)
+                if (!paintOnly) foreach (NativeTile tile in tiles)
                     foreach (Vertex vertex in tile.Vertices)
                         if (Mathf.Abs(tile.Heightmap.transform.position.y + tile.Heightmap.GetHeight(vertex.X, vertex.Z) - target) > HeightTolerance)
                             throw new InvalidOperationException("Valheim не смог выровнять эту площадку в пределах допустимой высоты земли.");
                 ResetGrass();
+            }
+
+            private static void ApplyClearedPaint(NativeTile tile)
+            {
+                int pitch = tile.Width + 1;
+                bool[] modified = (bool[])ModifiedPaint.GetValue(tile.Compiler);
+                Color[] paint = (Color[])Paint.GetValue(tile.Compiler);
+                // Native hoe dirt is (1,0,0,1); ClutterSystem excludes cleared ground.
+                foreach (Vertex vertex in tile.Vertices)
+                {
+                    int index = vertex.Z * pitch + vertex.X;
+                    paint[index] = new Color(1f, 0f, 0f, 1f); modified[index] = true;
+                }
             }
 
             private void ApplyForcedTile(NativeTile tile)

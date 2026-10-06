@@ -11,23 +11,20 @@ namespace ValheimModPack.PartyPrison
     public sealed partial class Plugin
     {
         private CustodyWithdrawal withdrawal;
-        private int collectingChest = -1;
-        private float nextCollection, nextGrantAck;
+        private float nextGrantAck;
         private string grantId = "", grantToken = "";
         private int grantIndex;
         private long grantSave;
         private readonly Dictionary<string, long> withdrawalBaselines = new Dictionary<string, long>();
+        private readonly Dictionary<string, float> legacyGrantAfter = new Dictionary<string, float>();
         private void ResetWithdrawal()
         {
             if (withdrawal != null) { withdrawal.Dispose(); withdrawal = null; }
-            collectingChest = -1; nextCollection = nextGrantAck = 0; grantSave = 0; grantId = grantToken = ""; withdrawalBaselines.Clear();
+            nextGrantAck = 0; grantSave = 0; grantId = grantToken = ""; withdrawalBaselines.Clear(); legacyGrantAfter.Clear();
         }
         internal void CollectFromChest(Container container, Humanoid actor)
         {
-            if (!CanOpenCustody(container, actor)) { notice = T("Личные вещи доступны владельцу после окончания срока.", "Belongings are available to their owner after the sentence."); return; }
-            ZDO chest = container.GetComponent<ZNetView>().GetZDO();
-            collectingChest = chest.GetInt(ArenaBuilder.CustodyIndexKey, -1); nextCollection = 0;
-            notice = T("Забираем вещи из сундука. Если инвентарь заполнится, освободите место и нажмите E ещё раз.", "Collecting belongings. If inventory fills, make room and press E again.");
+            notice = T("Откройте сундук клавишей E, как обычный сундук.", "Open this ordinary chest with E.");
         }
         private void ProgressWithdrawal()
         {
@@ -37,9 +34,6 @@ namespace ValheimModPack.PartyPrison
                 nextGrantAck = Time.realtimeSinceStartup + 2;
                 ToHost(PrisonProtocol.WithdrawalAck, w => { PrisonProtocol.Text(w, grantToken); w.Write(grantIndex); PrisonProtocol.Text(w, grantId); w.Write(grantSave); });
             }
-            if (collectingChest < 0 || localCustodyStage != (int)CustodyStage.Released || localRecovery.Length != 0 || Time.realtimeSinceStartup < nextCollection) return;
-            nextCollection = Time.realtimeSinceStartup + 3;
-            ToHost(PrisonProtocol.WithdrawalRequest, w => { PrisonProtocol.Text(w, localCustodyToken); w.Write(collectingChest); });
         }
         private bool ServerWithdrawalMessage(ZNetPeer peer, int kind, BinaryReader reader)
         {
@@ -56,24 +50,13 @@ namespace ValheimModPack.PartyPrison
                 string id = PrisonProtocol.Text(reader); long durable = reader.ReadInt64(); PrisonProtocol.End(reader); long baseline;
                 string key = id + ":" + peer.m_uid;
                 if (record.PendingId != id || !withdrawalBaselines.TryGetValue(key, out baseline) || durable <= Math.Max(0, baseline) || WC.GetAdministrativeDurableSequence(peer.m_uid) < durable) return true;
-                withdrawal.Commit(token, index, id); withdrawalBaselines.Remove(key); ProjectWithdrawal(custodyRecord); nextHost = Time.realtimeSinceStartup; return true;
+                withdrawal.Commit(token, index, id); withdrawalBaselines.Remove(key);
+                if (custodyRecord.PublicAccess && !withdrawal.All(token).Any(r => r.PendingId.Length != 0)) custody.MarkCollected(account, token);
+                nextHost = Time.realtimeSinceStartup; return true;
             }
-            PrisonProtocol.End(reader); PrisonPoint position; ZDO[] chests = Chests();
-            if (!Position(peer, out position) || Vector3.Distance(Vector(position), chests[index].GetPosition()) > 6) return true;
-            if (record.PendingId.Length == 0)
-            {
-                Inventory remaining = CustodyInventory.Decode(record.RemainingPayload);
-                ItemDrop.ItemData first = remaining.GetAllItems().FirstOrDefault();
-                if (first == null)
-                { Send(peer.m_rpc, PrisonProtocol.WithdrawalGrant, w => { PrisonProtocol.Text(w, token); w.Write(index); PrisonProtocol.Text(w, ""); PrisonProtocol.Blob(w, new byte[0]); }); return true; }
-                Inventory one = new Inventory("Custody item", null, 1, 1); ItemDrop.ItemData item = first.Clone(); item.m_equipped = false;
-                item.m_gridPos = new Vector2i(0, 0); one.GetAllItems().Add(item);
-                remaining.RemoveItem(first);
-                record = withdrawal.Begin(token, index, CustodyInventory.Capture(remaining), CustodyInventory.Capture(one));
-            }
-            string baselineKey = record.PendingId + ":" + peer.m_uid;
-            if (!withdrawalBaselines.ContainsKey(baselineKey)) withdrawalBaselines[baselineKey] = WC.GetAdministrativeDurableSequence(peer.m_uid);
-            Send(peer.m_rpc, PrisonProtocol.WithdrawalGrant, w => { PrisonProtocol.Text(w, token); w.Write(index); PrisonProtocol.Text(w, record.PendingId); PrisonProtocol.Blob(w, record.PendingPayload); });
+            // Native chests own all new withdrawals. Only an already reserved
+            // pre-upgrade grant can be completed, never a fresh ledger grant.
+            PrisonProtocol.End(reader);
             return true;
         }
         private bool ClientWithdrawalMessage(int kind, BinaryReader reader)
@@ -82,7 +65,7 @@ namespace ValheimModPack.PartyPrison
             string token = PrisonProtocol.Text(reader); int index = reader.ReadInt32(); string id = PrisonProtocol.Text(reader); byte[] bytes = PrisonProtocol.Blob(reader); PrisonProtocol.End(reader);
             if (!WC.AdministrativeReady || localCustodyStage != (int)CustodyStage.Released || token != localCustodyToken || index < 0 || index > 3) return true;
             if (id.Length == 0)
-            { collectingChest = -1; grantSave = 0; grantId = ""; notice = T("Этот сундук пуст. Проверьте остальные три сундука.", "This chest is empty. Check the other three chests."); return true; }
+            { grantSave = 0; grantId = ""; return true; }
             Guid guid; if (!Guid.TryParseExact(id, "N", out guid) || CustodyInventory.Count(bytes) != 1) throw new InvalidDataException("Invalid personal item grant.");
             Player player = Player.m_localPlayer; string receipt = "VMP_PP_Withdrawal_" + id;
             string expected = world.ToString("x16") + ":" + token + ":" + CustodyInventory.Fingerprint(bytes), existing;
@@ -95,12 +78,11 @@ namespace ValheimModPack.PartyPrison
                 try { added = CustodyInventory.AddExact(player.GetInventory(), VisibleInventoryRows(player), bytes); }
                 catch (CustodyInsertionException e)
                 {
-                    collectingChest = -1;
                     if (!e.AppliedAmbiguously) player.m_customData.Remove(receipt);
                     try { WC.RequestAdministrativeSave(); } catch { }
                     throw;
                 }
-                if (!added) { player.m_customData.Remove(receipt); collectingChest = -1; notice = T("Инвентарь заполнен. Освободите ячейку и нажмите E на сундуке ещё раз.", "Inventory full. Free a slot and press E on the chest again."); return true; }
+                if (!added) { player.m_customData.Remove(receipt); notice = T("Освободите ячейку: завершаем возврат вещи из предыдущей версии тюрьмы.", "Free a slot to finish returning an item reserved by the previous prison version."); return true; }
                 player.m_customData[receipt] = expected;
             }
             if (id != grantId || grantSave == 0)
@@ -117,40 +99,37 @@ namespace ValheimModPack.PartyPrison
             }
             return Math.Min(4, player.GetInventory().GetHeight());
         }
-        private void ProjectWithdrawal(CustodyRecord custodyRecord)
+        private void TrackLegacyWithdrawal(CustodyRecord record)
         {
-            ZDO[] chests = Chests();
-            foreach (WithdrawalRecord record in withdrawal.All(custodyRecord.SentenceId))
-            {
-                ZDO chest = chests[record.ChestIndex]; chest.SetOwner(ZNet.GetUID());
-                chest.Set(CustodyInventory.OwnerKey, custodyRecord.AccountId); chest.Set(CustodyInventory.TokenKey, custodyRecord.SentenceId);
-                chest.Set(CustodyInventory.ReleasedKey, true); chest.Set(CustodyInventory.HashKey, CustodyInventory.Fingerprint(record.RemainingPayload));
-                chest.Set(ZDOVars.s_items, record.RemainingPayload);
-            }
+            if (!pendingLegacyWithdrawals.Any(r => r.SentenceId == record.SentenceId)) pendingLegacyWithdrawals.Add(record.StateCopy());
         }
-        private void ProjectOriginalLocked(CustodyRecord record, ZDO[] chests, int width, int height)
+        private void ResumeLegacyWithdrawals()
         {
-            // Before release no item can have been issued. The durable escrow
-            // therefore repairs a stale world view without creating spendable copies.
-            byte[][] bytes = CustodyInventory.PrepareChestPayloads(record.OriginalPayload, width, height);
-            for (int i = 0; i < 4; ++i)
+            if (pendingLegacyWithdrawals.Count == 0 || Time.realtimeSinceStartup < nextLegacyWithdrawal) return;
+            nextLegacyWithdrawal = Time.realtimeSinceStartup + 3;
+            foreach (CustodyRecord custodyRecord in pendingLegacyWithdrawals.ToArray())
             {
-                ZDO chest = chests[i]; chest.SetOwner(ZNet.GetUID()); chest.Set(CustodyInventory.OwnerKey, record.AccountId);
-                chest.Set(CustodyInventory.TokenKey, record.SentenceId); chest.Set(CustodyInventory.ReleasedKey, false);
-                chest.Set(CustodyInventory.HashKey, CustodyInventory.Fingerprint(bytes[i])); chest.Set(ZDOVars.s_items, bytes[i]);
+                CustodyRecord state = custody.FindState(custodyRecord.AccountId, custodyRecord.SentenceId);
+                if (state == null || state.Stage != CustodyStage.Released || state.NeedsRecovery)
+                { pendingLegacyWithdrawals.Remove(custodyRecord); continue; }
+                WithdrawalRecord[] balances = withdrawal.All(custodyRecord.SentenceId);
+                if (!balances.Any(b => b.PendingId.Length != 0))
+                { custody.MarkCollected(state.AccountId, state.SentenceId); pendingLegacyWithdrawals.Remove(custodyRecord); continue; }
+                ZNetPeer peer = peers.Values.FirstOrDefault(p => Ready(p) && WC.GetAdministrativeOwner(p) == state.AccountId);
+                if (peer == null) continue;
+                foreach (WithdrawalRecord balance in balances)
+                {
+                    if (balance.PendingId.Length == 0 || balance.NeedsRecovery) continue;
+                    string key = balance.PendingId + ":" + peer.m_uid;
+                    float after; if (legacyGrantAfter.TryGetValue(key, out after) && Time.realtimeSinceStartup < after) break;
+                    if (!withdrawalBaselines.ContainsKey(key)) withdrawalBaselines[key] = WC.GetAdministrativeDurableSequence(peer.m_uid);
+                    Send(peer.m_rpc, PrisonProtocol.WithdrawalGrant, w => { PrisonProtocol.Text(w, state.SentenceId); w.Write(balance.ChestIndex); PrisonProtocol.Text(w, balance.PendingId); PrisonProtocol.Blob(w, balance.PendingPayload); });
+                    legacyGrantAfter[key] = Time.realtimeSinceStartup + Math.Max(5, 5 + balance.PendingPayload.Length / (128f * 1024));
+                    // The client has one durable grant ACK slot. Finish one
+                    // reserved item before sending another chest's reservation.
+                    break;
+                }
             }
-        }
-        private void ReconcileWithdrawals(CustodyRecord record)
-        {
-            WithdrawalRecord[] existing = withdrawal.All(record.SentenceId);
-            if (existing.Length != 4 || existing.Any(r => r.NeedsRecovery))
-            { custody.RequireRecovery(record.AccountId, record.SentenceId, "Withdrawal balance is incomplete or requires recovery; no items replayed."); return; }
-            int width, height; ArenaBuilder.ChestDimensions(out width, out height);
-            withdrawal.Ensure(record, CustodyInventory.PrepareChestPayloads(record.OriginalPayload, width, height));
-            ProjectWithdrawal(record);
-            var records = withdrawal.All(record.SentenceId);
-            if (records.Length == 4 && records.All(r => !r.NeedsRecovery && r.PendingId.Length == 0 && CustodyInventory.Count(r.RemainingPayload) == 0))
-            { custody.MarkCollected(record.AccountId, record.SentenceId); network.Save(true, false, false); }
         }
     }
 }

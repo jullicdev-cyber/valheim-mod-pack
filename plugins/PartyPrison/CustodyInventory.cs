@@ -21,7 +21,7 @@ namespace ValheimModPack.PartyPrison
     public static class CustodyInventory
     {
         public const string OwnerKey = "VMP_PP_CustodyOwner", TokenKey = "VMP_PP_CustodyToken",
-            ReleasedKey = "VMP_PP_CustodyReleased", HashKey = "VMP_PP_CustodyHash", ReceiptKey = "VMP_PP_CustodyCleared";
+            ReleasedKey = "VMP_PP_CustodyReleased", HashKey = "VMP_PP_CustodyHash", ReceiptKey = "VMP_PP_CustodyCleared", PublicKey = "VMP_PP_PublicChest";
         private static readonly string[] EquipmentKeys = { "eaqs_slot", "eaqs_player", "eaqs_parked", "eaqs_weaponshield" };
         private static readonly FieldInfo PlayerCustom = AccessTools.Field(typeof(Player), "m_customData");
         private static readonly MethodInfo ContainerLoad = AccessTools.Method(typeof(Container), "Load", Type.EmptyTypes);
@@ -39,6 +39,15 @@ namespace ValheimModPack.PartyPrison
             if (player == null || player.IsDead()) throw new InvalidOperationException("The prisoner's character is not ready.");
             Inventory inventory = player.GetInventory(); VerifyEquipmentRoot(inventory);
             return Capture(inventory);
+        }
+        public static byte[] CaptureForAdmission(Player player)
+        {
+            if (player == null || player.IsDead() || player.IsTeleporting()) throw new InvalidOperationException("The prisoner's character is not ready to deposit belongings.");
+            // Stop equipped torches consuming durability while the immutable
+            // offer crosses the paced channel. Items stay in their native root.
+            foreach (ItemDrop.ItemData item in player.GetInventory().GetAllItems().ToArray())
+            { player.RemoveEquipAction(item); if (item.m_equipped) player.UnequipItem(item, false); }
+            return Capture(player);
         }
         public static byte[] Capture(Inventory inventory)
         {
@@ -150,10 +159,9 @@ namespace ValheimModPack.PartyPrison
             Inventory root = player.GetInventory(); byte[] current = Capture(player);
             if (Fingerprint(current) != hash)
             {
-                // EAQS can adjust equipped flags/slot bookkeeping between the
-                // offer and its ACK. All substantive item data must still match.
-                try { RequireEquivalent(Decode(originalPayload).GetAllItems(), Decode(current).GetAllItems()); }
-                catch (InvalidDataException) { throw new InvalidOperationException("Personal inventory changed after custody was prepared; no items removed."); }
+                // EAQS can change equipment bookkeeping. An old Prepared
+                // torch can also have burnt down while its offer was in flight.
+                if (!EquivalentForAdmission(originalPayload, current)) throw new InvalidOperationException("Personal inventory changed after custody was prepared; no items removed.");
             }
             // Validate all receipt access and all bytes before any mutation.
             foreach (ItemDrop.ItemData item in root.GetAllItems().ToArray())
@@ -274,7 +282,7 @@ namespace ValheimModPack.PartyPrison
         public static void Deposit(ZDO[] chests, CustodyRecord record, int width, int height)
         {
             RequireHost(); RequireFour(chests);
-            if (record == null || record.NeedsRecovery || record.Stage != CustodyStage.Cleared)
+            if (record == null || record.NeedsRecovery || record.PublicAccess || record.Stage != CustodyStage.Cleared)
                 throw new InvalidOperationException("Custody deposit requires durable, unreleased confiscation.");
             byte[][] payloads = PrepareChestPayloads(record.OriginalPayload, width, height);
             for (int i = 0; i < 4; ++i)
@@ -292,7 +300,7 @@ namespace ValheimModPack.PartyPrison
             {
                 ZDO chest = chests[i]; if (chest.GetString(TokenKey, "") == record.SentenceId) continue;
                 chest.SetOwner(ZNet.GetUID()); chest.Persistent = true;
-                chest.Set(OwnerKey, record.AccountId); chest.Set(TokenKey, record.SentenceId); chest.Set(ReleasedKey, false);
+                chest.Set(OwnerKey, record.AccountId); chest.Set(TokenKey, record.SentenceId); chest.Set(ReleasedKey, false); chest.Set(PublicKey, false);
                 chest.Set(HashKey, Fingerprint(payloads[i])); chest.Set(ZDOVars.s_items, payloads[i]);
                 ReloadLoadedChest(chest);
             }
@@ -329,6 +337,60 @@ namespace ValheimModPack.PartyPrison
         }
         public static string[] ChestIdentities(ZDO[] chests)
         { RequireFour(chests); return chests.Select(c => c.m_uid.ToString()).ToArray(); }
+        public static bool IsPublic(ZDO chest) { return chest != null && chest.GetBool(PublicKey, false); }
+        public static void SetPublic(ZDO[] chests, bool value)
+        {
+            RequireHost(); RequireFour(chests);
+            foreach (ZDO chest in chests)
+                if (chest.GetBool(PublicKey, false) != value) { chest.SetOwner(ZNet.GetUID()); chest.Set(PublicKey, value); }
+        }
+        public static void SetNativeItems(ZDO chest, byte[] payload)
+        {
+            RequireHost(); if (chest == null) throw new ArgumentNullException("chest"); Decode(payload);
+            chest.SetOwner(ZNet.GetUID()); chest.Persistent = true; chest.Set(ZDOVars.s_items, payload); ReloadLoadedChest(chest);
+        }
+        public static bool Equivalent(byte[] expected, byte[] actual)
+        {
+            try { RequireEquivalent(Decode(expected).GetAllItems(), Decode(actual).GetAllItems()); return true; }
+            catch (InvalidDataException) { return false; }
+        }
+        public static bool EquivalentForAdmission(byte[] expectedPayload, byte[] actualPayload)
+        {
+            try
+            {
+                List<ItemDrop.ItemData> expected = Decode(expectedPayload).GetAllItems();
+                List<ItemDrop.ItemData> actual = Decode(actualPayload).GetAllItems();
+                var unmatchedTorches = expected.Where(IsNativeTorch).ToList();
+                foreach (ItemDrop.ItemData item in actual)
+                {
+                    if (!IsNativeTorch(item)) continue;
+                    float maximum = item.GetMaxDurability();
+                    if (!FiniteDurability(maximum) || !FiniteDurability(item.m_durability) || item.m_durability < 0 || item.m_durability > maximum) return false;
+                    string identity = TorchIdentity(item); ItemDrop.ItemData matched = null;
+                    foreach (ItemDrop.ItemData prior in unmatchedTorches)
+                    {
+                        float priorMaximum = prior.GetMaxDurability();
+                        if (!FiniteDurability(priorMaximum) || !FiniteDurability(prior.m_durability) || prior.m_durability < 0
+                            || prior.m_durability > priorMaximum || item.m_durability > prior.m_durability || TorchIdentity(prior) != identity) continue;
+                        // Least sufficient original wear handles multiple
+                        // otherwise identical torches without borrowing wear.
+                        if (matched == null || prior.m_durability < matched.m_durability) matched = prior;
+                    }
+                    if (matched == null) return false;
+                    item.m_durability = matched.m_durability; unmatchedTorches.Remove(matched);
+                }
+                if (unmatchedTorches.Count != 0) return false;
+                // Only detached native Decode results were normalized. The
+                // immutable backup and actual player inventory remain untouched.
+                RequireEquivalent(expected, actual); return true;
+            }
+            catch (Exception) { return false; }
+        }
+        private static bool IsNativeTorch(ItemDrop.ItemData item)
+        { return item != null && item.m_dropPrefab != null && item.m_dropPrefab.name == "Torch"; }
+        private static bool FiniteDurability(float value) { return !Single.IsNaN(value) && !Single.IsInfinity(value); }
+        private static string TorchIdentity(ItemDrop.ItemData source)
+        { ItemDrop.ItemData detached = source.Clone(); detached.m_durability = 0; return ItemIdentity(detached); }
         internal static void RegisterContainer(Container container)
         {
             if (container == null || ContainerInventory == null) return;
@@ -355,7 +417,8 @@ namespace ValheimModPack.PartyPrison
             { InventoryContainers.Remove(inventory); return null; }
             // Native containers can resolve their view through m_rootObjectOverride.
             ZNetView view = ContainerView == null ? null : ContainerView.GetValue(container) as ZNetView;
-            return view != null && view.IsValid() && view.GetZDO().GetBool("VMP_PP_Custody", false) ? view.GetZDO() : null;
+            return view != null && view.IsValid() && view.GetZDO().GetBool("VMP_PP_Custody", false)
+                && !view.GetZDO().GetBool(PublicKey, false) ? view.GetZDO() : null;
         }
         private static void RequireFour(ZDO[] chests)
         {
@@ -368,12 +431,9 @@ namespace ValheimModPack.PartyPrison
         private static void ReloadLoadedChest(ZDO chest)
         {
             if (ZNetScene.instance == null || ContainerLoad == null) return;
-            foreach (Container container in UnityEngine.Object.FindObjectsByType<Container>(FindObjectsSortMode.None))
-            {
-                ZNetView view = container.GetComponent<ZNetView>();
-                if (view != null && view.IsValid() && System.Object.ReferenceEquals(view.GetZDO(), chest))
-                { ContainerLoad.Invoke(container, null); return; }
-            }
+            GameObject instance = ZNetScene.instance.FindInstance(chest.m_uid);
+            Container container = instance == null ? null : instance.GetComponent<Container>();
+            if (container != null) ContainerLoad.Invoke(container, null);
         }
         private static void RequireHost()
         { if (ZNet.instance == null || !ZNet.instance.IsServer()) throw new UnauthorizedAccessException("Only the host may write custody chests."); }

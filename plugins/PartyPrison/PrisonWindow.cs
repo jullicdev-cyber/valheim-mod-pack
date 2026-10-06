@@ -194,7 +194,7 @@ namespace ValheimModPack.PartyPrison
             reasonText = Label("", 0, 167, 710, 47, 18, false);
             Label(T("Можно сидеть на лавочке или пройти через дверь на арену.\nМобы появляются сами; добычу можно подбирать.",
                 "Sit on the bench or walk through the door into the arena.\nEnemies spawn automatically; you may collect their loot."), 0, 100, 710, 65, 18, false);
-            kit = ButtonAt(T("Получить базовую броню и оружие", "Get basic armor and weapons"), 0, 31, 638, 45, Kit);
+            kit = ButtonAt(T("Открыть сундук со снаряжением", "Open equipment chest"), 0, 31, 638, 45, Kit);
             cell = ButtonAt(T("Вернуться в камеру", "Return to cell"), -168, -31, 300, 45, () => Move(false));
             arena = ButtonAt(T("Перейти на арену", "Go to arena"), 168, -31, 300, 45, () => Move(true));
             Label(T("Сложность следующих волн", "Difficulty of future waves"), 0, -86, 710, 32, 21, true);
@@ -263,13 +263,13 @@ namespace ValheimModPack.PartyPrison
                 reasonText.text = state == null ? "" : T("Причина: ", "Reason: ") + Safe(state.Reason, 180);
                 custodyText.text = String.IsNullOrEmpty(custody)
                     ? state != null && state.PendingRelease
-                        ? T("После открытия решётки нажмите E на сундуке, чтобы забрать вещи. Перенос идёт до заполнения инвентаря; освободите место и повторите.\nДобыча остаётся у вас; тюремное снаряжение возвращается.",
-                            "Once the gate opens, press E on a chest to retrieve your belongings until your inventory is full; make space and repeat.\nYou keep the loot; prison equipment is returned.")
+                        ? T("После открытия решётки нажмите E на сундуке, чтобы забрать вещи через обычный инвентарь сундука.\nДобыча и взятое снаряжение остаются у вас.",
+                            "Once the gate opens, press E on a chest to retrieve your belongings through its normal inventory.\nYou keep loot and equipment.")
                         : !ready
                             ? T("Ваши вещи сохраняются в четырёх железных сундуках. Дождитесь окончания подготовки перед боем.",
                                 "Your belongings are being secured in four iron chests. Wait for preparation to finish before fighting.")
-                            : T("Ваши вещи хранятся в четырёх железных сундуках до открытия решётки.\nПри поражении вы проснётесь в камере и сохраните добычу с арены.",
-                                "Your belongings stay in four iron chests until the gate opens.\nOn defeat you wake in the cell and keep your arena loot.")
+                            : T("Ваши вещи находятся в четырёх обычных железных сундуках в прихожей. Снаряжение — в сундуке камеры.\nПри поражении вы проснётесь в камере и сохраните добычу с арены.",
+                                "Your belongings are in four normal iron chests in the foyer. Equipment is in the cell chest.\nOn defeat you wake in the cell and keep your arena loot.")
                     : Safe(custody, 440);
                 if (kit != null) kit.interactable = ready && bindings.Kit != null;
                 if (cell != null) cell.interactable = ready && bindings.Move != null;

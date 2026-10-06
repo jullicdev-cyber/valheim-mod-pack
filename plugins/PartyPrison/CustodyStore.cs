@@ -16,12 +16,18 @@ namespace ValheimModPack.PartyPrison
         public CustodyStage Stage;
         public byte[] OriginalPayload = new byte[0];
         public string[] ChestIds = new string[0];
-        public bool NeedsRecovery;
+        public bool NeedsRecovery, PublicAccess;
         public CustodyRecord Copy()
         {
             return new CustodyRecord { AccountId = AccountId, SentenceId = SentenceId, PayloadHash = PayloadHash,
                 RecoveryReason = RecoveryReason, World = World, ClearSequence = ClearSequence, Stage = Stage,
-                OriginalPayload = (byte[])OriginalPayload.Clone(), ChestIds = (string[])ChestIds.Clone(), NeedsRecovery = NeedsRecovery };
+                OriginalPayload = (byte[])OriginalPayload.Clone(), ChestIds = (string[])ChestIds.Clone(), NeedsRecovery = NeedsRecovery, PublicAccess = PublicAccess };
+        }
+        public CustodyRecord StateCopy()
+        {
+            return new CustodyRecord { AccountId = AccountId, SentenceId = SentenceId, PayloadHash = PayloadHash,
+                RecoveryReason = RecoveryReason, World = World, ClearSequence = ClearSequence, Stage = Stage,
+                ChestIds = (string[])ChestIds.Clone(), NeedsRecovery = NeedsRecovery, PublicAccess = PublicAccess };
         }
     }
 
@@ -78,11 +84,30 @@ namespace ValheimModPack.PartyPrison
                 if (record.AccountId == account && (record.Stage != CustodyStage.Collected || record.NeedsRecovery)) return record.Copy();
             return null;
         }
+        public CustodyRecord FindState(string account, string token)
+        {
+            CheckOpen(); SentencePolicy.RequireAccountId(account); Token(token); CustodyRecord value;
+            return records.TryGetValue(token, out value) && value.AccountId == account ? value.StateCopy() : null;
+        }
+        public CustodyRecord FindState(string account)
+        {
+            CheckOpen(); SentencePolicy.RequireAccountId(account);
+            foreach (CustodyRecord record in records.Values)
+                if (record.AccountId == account && (record.Stage != CustodyStage.Collected || record.NeedsRecovery)) return record.StateCopy();
+            return null;
+        }
         public CustodyRecord[] All()
         {
             CheckOpen(); var keys = new List<string>(records.Keys); keys.Sort(StringComparer.Ordinal);
             var result = new CustodyRecord[keys.Count];
             for (int i = 0; i < keys.Count; ++i) result[i] = records[keys[i]].Copy();
+            return result;
+        }
+        public CustodyRecord[] AllStates()
+        {
+            CheckOpen(); var keys = new List<string>(records.Keys); keys.Sort(StringComparer.Ordinal);
+            var result = new CustodyRecord[keys.Count];
+            for (int i = 0; i < keys.Count; ++i) result[i] = records[keys[i]].StateCopy();
             return result;
         }
         public bool CanAdmit(string account)
@@ -139,6 +164,15 @@ namespace ValheimModPack.PartyPrison
             CustodyRecord value = Require(account, token);
             if (value.Stage >= CustodyStage.Released) return value.Copy();
             RequireStage(value, CustodyStage.Deposited); return Advance(value, CustodyStage.Released);
+        }
+        // Once native chest access is published, the world inventory is the
+        // sole balance. Immutable originals remain backups, never replay data.
+        public CustodyRecord MarkPublicAccess(string account, string token)
+        {
+            CustodyRecord value = Require(account, token);
+            if (value.Stage < CustodyStage.Deposited) throw new InvalidOperationException("Public access requires a deposited inventory.");
+            if (value.PublicAccess) return value.Copy();
+            value.PublicAccess = true; Persist(value); records[token] = value; return value.Copy();
         }
         public CustodyRecord MarkCollected(string account, string token)
         {
@@ -202,10 +236,11 @@ namespace ValheimModPack.PartyPrison
             byte[] body;
             using (var stream = new MemoryStream()) using (var w = new BinaryWriter(stream, new UTF8Encoding(false, true)))
             {
-                w.Write(Magic); w.Write(1); w.Write(value.World); Text(w, value.AccountId); Text(w, value.SentenceId);
+                w.Write(Magic); w.Write(2); w.Write(value.World); Text(w, value.AccountId); Text(w, value.SentenceId);
                 w.Write((int)value.Stage); w.Write(value.ClearSequence); w.Write(value.NeedsRecovery); Text(w, value.RecoveryReason);
                 Text(w, value.PayloadHash); w.Write(value.OriginalPayload.Length); w.Write(value.OriginalPayload);
                 w.Write(value.ChestIds.Length); foreach (string id in value.ChestIds) Text(w, id);
+                w.Write(value.PublicAccess);
                 w.Flush(); body = stream.ToArray();
             }
             using (var stream = new MemoryStream()) { byte[] hash = Hash(body); stream.Write(hash, 0, hash.Length); stream.Write(body, 0, body.Length); return stream.ToArray(); }
@@ -217,7 +252,8 @@ namespace ValheimModPack.PartyPrison
             byte[] hash = Hash(body); for (int i = 0; i < 32; ++i) if (hash[i] != bytes[i]) throw new InvalidDataException("Custody journal checksum mismatch; file preserved.");
             using (var stream = new MemoryStream(body, false)) using (var r = new BinaryReader(stream, new UTF8Encoding(false, true)))
             {
-                if (r.ReadInt32() != Magic || r.ReadInt32() != 1) throw new InvalidDataException("Unsupported custody journal format.");
+                if (r.ReadInt32() != Magic) throw new InvalidDataException("Unsupported custody journal format.");
+                int version = r.ReadInt32(); if (version < 1 || version > 2) throw new InvalidDataException("Unsupported custody journal format.");
                 var value = new CustodyRecord { World = r.ReadInt64(), AccountId = Text(r, 64), SentenceId = Text(r, 32),
                     Stage = (CustodyStage)r.ReadInt32(), ClearSequence = r.ReadInt64() };
                 byte flag = r.ReadByte(); if (flag > 1) throw new InvalidDataException("Invalid custody recovery flag.");
@@ -226,6 +262,7 @@ namespace ValheimModPack.PartyPrison
                 value.OriginalPayload = r.ReadBytes(size); int count = r.ReadInt32();
                 if (count != 0 && count != 4) throw new InvalidDataException("Custody needs exactly four chests.");
                 value.ChestIds = new string[count]; for (int i = 0; i < count; ++i) value.ChestIds[i] = Text(r, 128);
+                if (version >= 2) { byte access = r.ReadByte(); if (access > 1) throw new InvalidDataException("Invalid custody public access flag."); value.PublicAccess = access == 1; }
                 if (stream.Position != stream.Length) throw new InvalidDataException("Trailing custody journal data.");
                 Validate(value); return value;
             }
@@ -240,6 +277,7 @@ namespace ValheimModPack.PartyPrison
                 || value.NeedsRecovery != (value.RecoveryReason.Length != 0)) throw new InvalidDataException("Invalid custody state.");
             if (value.Stage >= CustodyStage.Deposited) Chests(value.ChestIds);
             else if (value.ChestIds.Length != 0) throw new InvalidDataException("Unexpected custody chest identities.");
+            if (value.PublicAccess && value.Stage < CustodyStage.Deposited) throw new InvalidDataException("Undeposited custody cannot expose chest contents.");
         }
         private static void Chests(string[] ids)
         {

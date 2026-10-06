@@ -20,6 +20,62 @@ function All-Types($types) {
         if ($type.HasNestedTypes) { All-Types $type.NestedTypes }
     }
 }
+function Method([string]$type, [string]$name, [int]$parameters = -1) {
+    $found = @($types | Where-Object FullName -eq $type | ForEach-Object Methods | Where-Object {
+        $_.Name -eq $name -and ($parameters -lt 0 -or $_.Parameters.Count -eq $parameters)
+    })
+    Check ($found.Count -eq 1) ('Missing or ambiguous performance contract method: ' + $type + '.' + $name)
+    return $found[0]
+}
+function Graph($entry) {
+    $pending = New-Object 'System.Collections.Generic.Queue[object]'
+    $visited = New-Object 'System.Collections.Generic.HashSet[string]'
+    $result = New-Object 'System.Collections.Generic.List[object]'
+    $pending.Enqueue($entry)
+    while ($pending.Count) {
+        $current = $pending.Dequeue()
+        if (-not $visited.Add($current.FullName) -or -not $current.HasBody) { continue }
+        $result.Add($current)
+        foreach ($instruction in $current.Body.Instructions) {
+            if ($instruction.OpCode.Name -notin @('call','callvirt','newobj')) { continue }
+            if ($methods.ContainsKey($instruction.Operand.FullName)) { $pending.Enqueue($methods[$instruction.Operand.FullName]) }
+        }
+    }
+    return $result.ToArray()
+}
+function Calls($method, [string]$pattern) {
+    return @($method.Body.Instructions | Where-Object {
+        $_.OpCode.Name -in @('call','callvirt','newobj') -and $_.Operand.FullName -match $pattern
+    })
+}
+function No-WorldScan($entry) {
+    foreach ($method in @(Graph $entry)) {
+        foreach ($instruction in $method.Body.Instructions) {
+            if ($instruction.Operand -isnot [Mono.Cecil.MemberReference]) { continue }
+            Check ($instruction.Operand.FullName -notmatch 'UnityEngine\.Object::Find|Resources::FindObjects|ZDOMan::m_objectsByID|ArenaBuilder::TaggedWorldObjects') (
+                'Recurring prison activity must not scan every scene or world object: ' + $method.FullName + ' -> ' + $instruction.Operand.FullName)
+        }
+    }
+}
+function Clock-Gate($method, [string]$field, [single]$interval, [string]$work) {
+    $instructions = @($method.Body.Instructions)
+    $workCalls = @(Calls $method $work)
+    Check ($workCalls.Count -gt 0) ('The throttled activity disappeared: ' + $method.FullName)
+    $firstWork = $workCalls[0].Offset
+    Check ([bool]($instructions | Where-Object {
+        $_.OpCode.Name -eq 'ldfld' -and $_.Operand.Name -eq $field -and $_.Offset -lt $firstWork
+    })) ('The cooldown must be consulted before work: ' + $method.Name + '.' + $field)
+    Check ([bool]($instructions | Where-Object {
+        $_.OpCode.Name -eq 'stfld' -and $_.Operand.Name -eq $field -and $_.Offset -lt $firstWork
+    })) ('The cooldown must be advanced before work: ' + $method.Name + '.' + $field)
+    Check ([bool]($instructions | Where-Object { $_.OpCode.Name -eq 'ldc.r4' -and [single]$_.Operand -eq $interval })) (
+        'The activity budget changed: ' + $method.Name + ' should wait ' + $interval + ' seconds.')
+    Check ([bool](Calls $method 'UnityEngine\.Time::get_realtimeSinceStartup')) ('Activity cooldown must use the monotonic game clock: ' + $method.Name)
+    Check ([bool]($instructions | Where-Object {
+        $_.OpCode.FlowControl -eq [Mono.Cecil.Cil.FlowControl]::Cond_Branch -and $_.Offset -lt $firstWork -and
+        $_.Operand -is [Mono.Cecil.Cil.Instruction] -and $_.Operand.Offset -gt $firstWork
+    })) ('The cooldown needs a path which skips work: ' + $method.Name)
+}
 try {
     $types = @(All-Types $plugin.MainModule.Types)
     $methods = @{}
@@ -46,6 +102,7 @@ try {
     Check ($lookup.Count -eq 1) 'Custody inventory identity lookup is missing.'
     Check ([bool]($lookup[0].Body.Instructions | Where-Object { $_.Operand -eq 'VMP_PP_Custody' })) 'Custody lookup must consult the current marker, including chests tagged after Awake.'
     Check ([bool]($lookup[0].Body.Instructions | Where-Object { $_.Operand.FullName -match 'ZDO::GetBool' })) 'Custody classification must remain dynamic.'
+    Check ([bool]($lookup[0].Body.Instructions | Where-Object { $_.Operand -eq 'VMP_PP_PublicChest' })) 'Public prison chests must bypass the temporary legacy custody mask.'
     $container = $native.MainModule.Types | Where-Object Name -eq 'Container'
     $assigners = @($container.Methods | Where-Object { $_.HasBody -and [bool]($_.Body.Instructions | Where-Object { $_.OpCode.Name -eq 'stfld' -and $_.Operand.FullName -eq 'Inventory Container::m_inventory' }) })
     Check ($assigners.Count -eq 1 -and $assigners[0].Name -eq 'Awake') 'Native container inventory lifecycle changed; registration needs review.'
@@ -60,7 +117,57 @@ try {
         })
         Check ($patch.Count -gt 0) ('The registry lifecycle has no Harmony hook: Container.' + $name)
     }
-    Write-Output ('PASS: ' + $script:checks + ' custody inventory performance/lifecycle contracts against the installed game. No game process launched.')
+    $arenaType = 'ValheimModPack.PartyPrison.ArenaBuilder'
+    $pluginType = 'ValheimModPack.PartyPrison.Plugin'
+    $count = Method $arenaType 'LiveMobCount' 1
+    $confine = Method $arenaType 'EnforceOwnedMobs' 1
+    No-WorldScan $count
+    No-WorldScan $confine
+    Check ([bool](Calls $count 'ArenaBuilder::PendingMobCount')) 'Pending spawns must count as an active wave, preventing duplicate automatic waves.'
+    Check ([bool](@(Graph $count) | ForEach-Object { Calls $_ 'ZDOMan::FindSectorObjects' })) 'Mob counting must use bounded native sectors.'
+    Check ([bool](Calls $confine 'ArenaBuilder::Contains(Confinement|Room)')) 'Owned mobs must be allowed in the cell as well as the arena.'
+    Check (-not [bool](Calls $confine 'ArenaBuilder::InsideArena')) 'The cell doorway must not teleport mobs back into the arena.'
+    Check ([bool]($confine.Body.Instructions | Where-Object { $_.OpCode.Name -eq 'ldc.r4' -and [single]$_.Operand -eq 0.5 })) 'Mob escape checks must be throttled to at most twice per second.'
+    $cleanup = Method $arenaType 'CleanupMobs' 2
+    Check ([bool](Calls $cleanup 'ArenaBuilder::Contains(Confinement|Room)')) 'Inactive cleanup must preserve living mobs inside the cell.'
+
+    $wave = Method $arenaType 'SpawnWave' 4
+    foreach ($method in @(Graph $wave)) {
+        Check (-not [bool](Calls $method 'UnityEngine\.Object::Instantiate')) 'Accepting a wave must queue mobs without instantiating the whole wave in one frame.'
+    }
+    $spawn = Method $arenaType 'TickWaveSpawning' 1
+    $instantiation = @(Calls $spawn 'UnityEngine\.Object::Instantiate')
+    Check ($instantiation.Count -eq 1) 'The wave scheduler must have exactly one native mob creation site.'
+    Check ([bool]($spawn.Body.Instructions | Where-Object { $_.OpCode.Name -eq 'ldc.r4' -and [single]$_.Operand -eq [single]0.6 })) 'Mob creation must be staggered by at least 0.6 seconds.'
+    Check ([bool](Calls $spawn 'UnityEngine\.Time::get_realtimeSinceStartup')) 'The wave scheduler needs a monotonic clock gate.'
+    if ($instantiation.Count -eq 1) {
+        Check (-not [bool]($spawn.Body.Instructions | Where-Object {
+            $_.Operand -is [Mono.Cecil.Cil.Instruction] -and $_.Operand.Offset -le $instantiation[0].Offset -and
+            $_.Offset -ge $instantiation[0].Offset
+        })) 'Native mob creation must not occur in an in-frame loop.'
+    }
+    No-WorldScan $spawn
+    $auto = Method $pluginType 'AutoWaves' 0
+    $live = @(Calls $auto 'ArenaBuilder::LiveMobCount')
+    $inside = @(Calls $auto 'ArenaBuilder::IsInsideArena')
+    $ready = @(Calls $auto 'Plugin::HostFightReady')
+    Check ($live.Count -eq 1 -and $inside.Count -gt 0 -and $ready.Count -gt 0 -and
+        $inside[0].Offset -lt $live[0].Offset -and $ready[0].Offset -lt $live[0].Offset) 'Empty or unoccupied arenas must skip the mob-count query.'
+    Clock-Gate (Method $pluginType 'Enforce' 1) 'nextLoanMaintenance' 0.5 'Inventory::GetAllItems'
+    # Immediate release cleanup is allowed; the ordinary idle-player fallback is gated in Update.
+    Clock-Gate (Method $pluginType 'Update' 0) 'nextLoanRemoval' 1 'Plugin::RemoveLoans'
+    Clock-Gate (Method $pluginType 'FinishRelease' 0) 'nextReleaseAck' 2 'Plugin::ToHost'
+
+    $progress = Method $pluginType 'ProgressCustody' 0
+    Check ([bool]($progress.Body.Instructions | Where-Object { $_.Operand -is [Mono.Cecil.FieldReference] -and $_.Operand.Name -eq 'cachedOffer' })) 'Admission retries must reuse the initial inventory offer instead of repeatedly serializing backpacks.'
+    $sendClear = Method $pluginType 'SendClear' 2
+    Check ([bool]($sendClear.Body.Instructions | Where-Object { $_.Operand -is [Mono.Cecil.FieldReference] -and $_.Operand.Name -eq 'custodySentTokens' })) 'A second sentence must not inherit the previous sentence admission cooldown.'
+    foreach ($name in @('HostFightReady','WriteCustodyState')) {
+        $state = Method $pluginType $name
+        Check ([bool](Calls $state 'CustodyStore::FindState')) ('Frequent state updates must not clone full item backups: ' + $name)
+        Check (-not [bool](Calls $state 'CustodyStore::Find\(')) ('Full custody payload lookup remains in a frequent state update: ' + $name)
+    }
+    Write-Output ('PASS: ' + $script:checks + ' prison inventory, admission, arena and spawn performance contracts against the installed game. No game process launched.')
 } finally {
     $plugin.Dispose()
     $native.Dispose()

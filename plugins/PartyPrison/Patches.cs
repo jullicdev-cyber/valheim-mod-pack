@@ -73,9 +73,10 @@ namespace ValheimModPack.PartyPrison
     {
         private static bool Prefix(Character __instance, HitData __0)
         {
-            if (Plugin.Active != null && __instance == Player.m_localPlayer && Plugin.Active.Confined
-                && Plugin.Active.CellSafe(Plugin.Point(__instance.transform.position))) return false;
             Character attacker = __0 == null ? null : __0.GetAttacker();
+            if (Plugin.Active != null && __instance == Player.m_localPlayer && Plugin.Active.Confined
+                && Plugin.Active.CellSafe(Plugin.Point(__instance.transform.position))
+                && (attacker == null || !ArenaBuilder.IsMob(attacker.gameObject))) return false;
             if (attacker != null)
             {
                 var view = attacker.GetComponent<ZNetView>();
@@ -145,7 +146,7 @@ namespace ValheimModPack.PartyPrison
     }
     [HarmonyPatch(typeof(Container), "Interact")]
     internal static class ContainerPatch
-    { private static bool Prefix(Container __instance, Humanoid __0, ref bool __result) { if (ArenaBuilder.IsCustody(__instance.gameObject)) { if (Plugin.Active != null) Plugin.Active.CollectFromChest(__instance, __0); __result = false; return false; } if (!PrisonGuard.Restricted(__0)) return true; __result = false; return false; } }
+    { private static bool Prefix(Container __instance, Humanoid __0, ref bool __result) { if (ArenaBuilder.IsCustody(__instance.gameObject) || PrisonGuard.Local(__0) && Plugin.Active.PreparingCustody) { __result = false; return false; } return true; } }
     [HarmonyPatch(typeof(Door), "Interact")]
     internal static class DoorPatch
     { private static bool Prefix(Door __instance, Humanoid __0, ref bool __result) { if (ArenaBuilder.IsExitGate(__instance.gameObject)) { __result = false; return false; } if (ArenaBuilder.IsInnerGate(__instance.gameObject) && PrisonGuard.Restricted(__0) && !Plugin.Active.PreparingCustody) return true; if (!PrisonGuard.Restricted(__0)) return true; __result = false; return false; } }

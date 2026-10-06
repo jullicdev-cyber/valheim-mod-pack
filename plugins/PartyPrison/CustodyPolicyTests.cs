@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 
 namespace ValheimModPack.PartyPrison
 {
@@ -26,6 +27,7 @@ namespace ValheimModPack.PartyPrison
                 string root = Path.GetFullPath(args[0]); Directory.CreateDirectory(root);
                 Basic(Path.Combine(root, "basic")); Recovery(Path.Combine(root, "recovery"));
                 Tampering(Path.Combine(root, "tamper")); Corruption(Path.Combine(root, "corrupt"));
+                PublicHandoff(Path.Combine(root, "public")); LegacyFormat(Path.Combine(root, "legacy"));
                 Check(true, "all fixtures finished");
                 System.Console.WriteLine("PASS: custody journal " + checks + " checks; originals durable, immutable, stage-safe, corruption preserved."); return 0;
             }
@@ -120,6 +122,59 @@ namespace ValheimModPack.PartyPrison
                 Refuses<InvalidOperationException>(() => store.MarkCollected(A, closed), "finished receipt replay cannot dismiss recovery");
                 Refuses<InvalidOperationException>(() => store.Release(A, closed), "release replay cannot unlock recovered chest");
             }
+        }
+        private static void PublicHandoff(string root)
+        {
+            const long world = 19; string first = Token(), second = Token(); byte[] original = { 7, 8, 9 };
+            using (var store = new CustodyStore(root, world))
+            {
+                store.Prepare(A, first, original);
+                Refuses<InvalidOperationException>(() => store.MarkPublicAccess(A, first), "public before clearing");
+                store.MarkCleared(A, first, 1);
+                Refuses<InvalidOperationException>(() => store.MarkPublicAccess(A, first), "public before depositing");
+                store.MarkDeposited(A, first, Chests);
+                CustodyRecord exposed = store.MarkPublicAccess(A, first);
+                Check(exposed.PublicAccess && exposed.Stage == CustodyStage.Deposited, "native access does not release the prisoner");
+                Check(store.MarkPublicAccess(A, first).PublicAccess, "public handoff idempotent");
+                CustodyRecord state = store.FindState(A, first);
+                Check(state.PublicAccess && state.OriginalPayload.Length == 0 && state.PayloadHash == CustodyStore.Fingerprint(original), "metadata reads omit large inventory blobs");
+                state.ChestIds[0] = "changed";
+                Check(store.FindState(A).ChestIds[0] == Chests[0], "metadata chest identity isolated");
+                Refuses<InvalidOperationException>(() => store.Prepare(A, second, new byte[] { 10 }), "native public access alone does not permit concurrent imprisonment");
+            }
+            using (var store = new CustodyStore(root, world))
+            {
+                Check(store.Find(A, first).PublicAccess, "native handoff survives restart");
+                Check(store.Find(A, first).OriginalPayload.SequenceEqual(original), "handoff retains the immutable backup");
+                store.Release(A, first); store.MarkCollected(A, first);
+                Check(!store.HasOutstanding && store.FindState(A) == null, "ordinary chest handoff retires escrow on release");
+                store.Prepare(A, second, new byte[] { 10 }); store.MarkCleared(A, second, 2); store.MarkDeposited(A, second, Chests); store.MarkPublicAccess(A, second);
+                Check(store.FindState(A).SentenceId == second && store.Find(A, first).Stage == CustodyStage.Collected, "second sentence has independent custody state");
+                store.Release(A, second); store.MarkCollected(A, second);
+            }
+            using (var store = new CustodyStore(root, world))
+            {
+                Check(store.All().All(record => record.PublicAccess && record.Stage == CustodyStage.Collected) && !store.HasOutstanding, "two public custody handoffs persist without unfinished withdrawal ledgers");
+                Check(store.AllStates().Length == 2 && store.AllStates().All(record => record.OriginalPayload.Length == 0), "history migration omits every original payload buffer");
+            }
+        }
+        private static void LegacyFormat(string root)
+        {
+            const long world = 29; string token = Token();
+            using (var store = new CustodyStore(root, world))
+            { store.Prepare(A, token, new byte[] { 5 }); store.MarkCleared(A, token, 1); store.MarkDeposited(A, token, Chests); }
+            string path = Journal(root, world, token); byte[] current = File.ReadAllBytes(path);
+            byte[] body = new byte[current.Length - 33]; Buffer.BlockCopy(current, 32, body, 0, body.Length);
+            Buffer.BlockCopy(BitConverter.GetBytes(1), 0, body, 4, 4);
+            byte[] legacy = new byte[body.Length + 32]; using (var sha = SHA256.Create()) Buffer.BlockCopy(sha.ComputeHash(body), 0, legacy, 0, 32);
+            Buffer.BlockCopy(body, 0, legacy, 32, body.Length); File.WriteAllBytes(path, legacy);
+            using (var store = new CustodyStore(root, world))
+            {
+                Check(!store.FindState(A).PublicAccess && store.FindState(A).Stage == CustodyStage.Deposited, "v1 journal loads with transient locked native access");
+                store.MarkPublicAccess(A, token);
+            }
+            using (var store = new CustodyStore(root, world))
+                Check(store.FindState(A).PublicAccess && store.Find(A, token).OriginalPayload[0] == 5, "legacy journal upgrades once without changing original bytes");
         }
         private static void Tampering(string root)
         {
