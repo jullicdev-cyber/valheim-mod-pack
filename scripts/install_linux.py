@@ -169,6 +169,7 @@ def prepare_install(source, target, stage, names):
                                    stage / 'BepInEx/config/valheimmodpack.nordicradio.cfg')
         preserve_portal_configuration(previous_config / 'yay.spikehimself.xportal.cfg',
                                       stage / 'BepInEx/config/yay.spikehimself.xportal.cfg')
+        preserve_personal_saved_data(previous_config, stage / 'BepInEx/config')
     # These are personal Bindrune state, not shared modpack settings.
     for relative in ('BepInEx/bindrune.keys', 'BepInEx/bindrune.spare', 'BepInEx/config/Bindrune/situations.txt', 'BepInEx/config/isimp.Bindrune.cfg'):
         personal = target / relative
@@ -187,6 +188,27 @@ def prepare_install(source, target, stage, names):
     wrapper = stage / 'valheim-modded.sh'
     wrapper.write_text('#!/bin/sh\ncd -- "$(dirname -- "$0")" || exit 1\nexec ./start_game_bepinex.sh "$@"\n', encoding='utf-8')
     wrapper.chmod(0o755)
+
+
+def preserve_personal_saved_data(previous_config, staged_config):
+    """Retain opaque trash-slot and bounty state, not old shared Epic Loot JSON."""
+    rules = (('', r'Recycle_N_Reclaim_player_-?\d+\.dat'),
+             ('EpicLoot/BountySaves', r'randyknapp\.mods\.epicloot\.BountyLedger\.-?\d+\.dat'))
+    for relative, pattern in rules:
+        previous = Path(previous_config) / relative
+        destination = Path(staged_config) / relative
+        if previous.is_symlink():
+            raise ValueError('Personal saved-data directory must be an unlinked directory.')
+        if not previous.exists():
+            continue
+        if not previous.is_dir() or any(parent.is_symlink() for parent in previous.parents):
+            raise ValueError('Personal saved-data directory must be an unlinked directory.')
+        for personal in previous.iterdir():
+            if re.fullmatch(pattern, personal.name):
+                if personal.is_symlink() or not personal.is_file():
+                    raise ValueError('Personal saved data must be an unlinked regular file.')
+                destination.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(personal, destination / personal.name)
 
 
 def preserve_portal_configuration(previous, staged):

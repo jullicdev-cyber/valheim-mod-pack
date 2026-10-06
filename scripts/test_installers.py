@@ -34,6 +34,13 @@ PORTAL_CONFIG = ('## Настройки прежнего XPortal\r\n[General]\r\
                  'DisplayPortalColour = true\r\nHidePortalDistance = true\r\n'
                  'DoublePortalCosts = true\r\n[Controls]\r\nNextPortal = PageDown\r\n').encode('utf-8-sig')
 
+PERSONAL_SAVED_DATA = {
+    'Recycle_N_Reclaim_player_123.dat': b'\x00\xfftrash-slot fixture',
+    'Recycle_N_Reclaim_player_-456.dat': b'\x00\xfetrash-slot second fixture',
+    'EpicLoot/BountySaves/randyknapp.mods.epicloot.BountyLedger.123.dat': b'\x00\xffbounty fixture',
+    'EpicLoot/BountySaves/randyknapp.mods.epicloot.BountyLedger.-456.dat': b'\x00\xfebounty second fixture',
+}
+
 
 def radio_values(path):
     config = configparser.RawConfigParser()
@@ -147,6 +154,15 @@ class InstallTests(unittest.TestCase):
         (self.target / 'BepInEx/config/AzuExtendedPlayerInventory_player_-456.dat').write_bytes(b'legacy Azu EPI favorites fixture')
         (self.target / 'BepInEx/config/unknown-old-mod.cfg').write_bytes(b'old config must not survive')
         (self.target / 'BepInEx/config/yay.spikehimself.xportal.cfg').write_bytes(PORTAL_CONFIG)
+        for relative, content in PERSONAL_SAVED_DATA.items():
+            path = self.target / 'BepInEx/config' / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        for relative in ('Recycle_N_Reclaim_player_invalid.dat',
+                         'EpicLoot/BountySaves/randyknapp.mods.epicloot.BountyLedger.invalid.dat',
+                         'EpicLoot/BountySaves/unrelated.dat',
+                         'EpicLoot/personal-old-config.json'):
+            (self.target / 'BepInEx/config' / relative).write_bytes(b'unmatched old data')
         (self.target / 'ValheimModpack/ExpeditionLoadouts').mkdir(parents=True)
         (self.target / 'ValheimModpack/ExpeditionLoadouts/character.json').write_bytes(b'personal loadout fixture')
         (self.target / 'ValheimModpack/MapPinHistory').mkdir()
@@ -170,6 +186,13 @@ class InstallTests(unittest.TestCase):
         self.assertEqual((location / 'BepInEx/config/AzuAutoStore_player_123.dat').read_bytes(), b'legacy Azu favorites fixture')
         self.assertEqual((location / 'BepInEx/config/AzuExtendedPlayerInventory_player_-456.dat').read_bytes(), b'legacy Azu EPI favorites fixture')
         self.assertEqual((location / 'BepInEx/config/yay.spikehimself.xportal.cfg').read_bytes(), PORTAL_CONFIG)
+        for relative, content in PERSONAL_SAVED_DATA.items():
+            self.assertEqual((location / 'BepInEx/config' / relative).read_bytes(), content)
+        for relative in ('Recycle_N_Reclaim_player_invalid.dat',
+                         'EpicLoot/BountySaves/randyknapp.mods.epicloot.BountyLedger.invalid.dat',
+                         'EpicLoot/BountySaves/unrelated.dat',
+                         'EpicLoot/personal-old-config.json'):
+            self.assertFalse((location / 'BepInEx/config' / relative).exists())
 
     def test_linux_install_and_reinstall(self):
         installer.install(ROOT, self.target)
@@ -188,6 +211,51 @@ class InstallTests(unittest.TestCase):
         self.assertFalse((self.target / 'ValheimModpack-backups').exists())
         self.assertEqual(list(self.target.glob('.valheim-modpack-install-*')), [])
         self.assertEqual(list(self.target.glob('.valheim-modpack-txn-*')), [])
+
+    def reject_invalid_saved_data(self, windows=False, linked=False):
+        # Exercise both exact file patterns, before any game entry is replaced.
+        for relative in ('Recycle_N_Reclaim_player_123.dat',
+                         'EpicLoot/BountySaves/randyknapp.mods.epicloot.BountyLedger.123.dat'):
+            with self.subTest(relative=relative, windows=windows, linked=linked):
+                personal = self.target / 'BepInEx/config' / relative
+                content = personal.read_bytes()
+                personal.unlink()
+                external = self.target.parent / 'external-personal.dat'
+                external.write_bytes(content)
+                if linked:
+                    self.make_symlink(personal, external)
+                else:
+                    personal.mkdir()
+                if windows:
+                    result = subprocess.run(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+                                             str(ROOT / 'scripts/Install-Windows.ps1'), '-SkipMusic',
+                                             '-SettingsDirectory', str(self.settings), '-GameDirectory', str(self.target)], capture_output=True)
+                    self.assertNotEqual(result.returncode, 0)
+                else:
+                    with self.assertRaisesRegex(ValueError, 'unlinked regular file'):
+                        installer.install(ROOT, self.target)
+                self.assertEqual((self.target / 'BepInEx/old-plugin.txt').read_text(), 'old mod')
+                self.assertEqual(external.read_bytes(), content)
+                self.assert_no_automatic_backups()
+                if linked:
+                    personal.unlink()
+                else:
+                    personal.rmdir()
+                personal.write_bytes(content)
+
+    def test_linux_saved_data_directories_rejected_without_changes(self):
+        self.reject_invalid_saved_data()
+
+    def test_linux_saved_data_links_rejected_without_changes(self):
+        self.reject_invalid_saved_data(linked=True)
+
+    @unittest.skipUnless(sys.platform == 'win32', 'Windows PowerShell test')
+    def test_windows_saved_data_directories_rejected_without_changes(self):
+        self.reject_invalid_saved_data(windows=True)
+
+    @unittest.skipUnless(sys.platform == 'win32', 'Windows PowerShell test')
+    def test_windows_saved_data_links_rejected_without_changes(self):
+        self.reject_invalid_saved_data(windows=True, linked=True)
 
     def set_radio_preferences(self):
         (self.target / 'BepInEx/config/valheimmodpack.nordicradio.cfg').write_text(
@@ -484,6 +552,7 @@ class InstallTests(unittest.TestCase):
         self.assertEqual((self.target / 'NordicRadio/Cache/fixture.mp3').read_bytes(), b'cached music fixture')
         self.assertEqual((self.target / 'unrelated.txt').read_text(), 'keep')
         self.assertEqual((self.target / 'BepInEx/config/yay.spikehimself.xportal.cfg').read_bytes(), PORTAL_CONFIG)
+        self.assert_personal_data(self.target)
         invalid = self.target / 'invalid'
         invalid.mkdir()
         command[-1] = str(invalid)

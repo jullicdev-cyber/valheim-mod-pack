@@ -144,6 +144,36 @@ function Preserve-PortalConfiguration([string]$Previous, [string]$Staged) {
     Copy-Item -LiteralPath $entry.FullName -Destination $Staged -Force
 }
 
+function Preserve-PersonalSavedData([string]$PreviousConfig, [string]$StagedConfig) {
+    # Copy opaque user state, never deserialize it or retain old shared configs.
+    # Recycle stores marked trash slots; Epic Loot stores world bounty progress.
+    $rules = @(
+        @{ Relative = ''; Pattern = '^Recycle_N_Reclaim_player_-?\d+\.dat$' },
+        @{ Relative = 'EpicLoot/BountySaves'; Pattern = '^randyknapp\.mods\.epicloot\.BountyLedger\.-?\d+\.dat$' }
+    )
+    foreach ($rule in $rules) {
+        $previous = if ($rule.Relative) { Join-Path $PreviousConfig $rule.Relative } else { $PreviousConfig }
+        $destination = if ($rule.Relative) { Join-Path $StagedConfig $rule.Relative } else { $StagedConfig }
+        $directory = Get-Item -LiteralPath $previous -Force -ErrorAction SilentlyContinue
+        if ($null -eq $directory) { continue }
+        if (-not $directory.PSIsContainer) { throw 'Personal saved-data directory must be an unlinked directory.' }
+        $ancestor = $directory.FullName
+        while ($ancestor) {
+            $entry = Get-Item -LiteralPath $ancestor -Force -ErrorAction Stop
+            if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Personal saved-data directory must be an unlinked directory.' }
+            $ancestor = Split-Path $ancestor -Parent
+        }
+        foreach ($personal in Get-ChildItem -LiteralPath $previous -Force) {
+            if ($personal.Name -notmatch $rule.Pattern) { continue }
+            if ($personal.PSIsContainer -or ($personal.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                throw 'Personal saved data must be an unlinked regular file.'
+            }
+            New-Item -ItemType Directory -Path $destination -Force | Out-Null
+            Copy-Item -LiteralPath $personal.FullName -Destination (Join-Path $destination $personal.Name) -Force
+        }
+    }
+}
+
 $transaction = $null
 $retainRecovery = $false
 
@@ -183,6 +213,7 @@ try {
         }
         Merge-RadioPersonalAudio (Join-Path $previousConfig 'valheimmodpack.nordicradio.cfg') (Join-Path $stagedConfig 'valheimmodpack.nordicradio.cfg')
         Preserve-PortalConfiguration (Join-Path $previousConfig 'yay.spikehimself.xportal.cfg') (Join-Path $stagedConfig 'yay.spikehimself.xportal.cfg')
+        Preserve-PersonalSavedData $previousConfig $stagedConfig
     }
     # Bindrune keeps personal key overrides outside config; replacing BepInEx must retain them.
     foreach ($relative in @('BepInEx/bindrune.keys', 'BepInEx/bindrune.spare', 'BepInEx/config/Bindrune/situations.txt', 'BepInEx/config/isimp.Bindrune.cfg')) {
