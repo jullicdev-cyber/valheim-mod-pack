@@ -20,7 +20,7 @@ namespace ValheimModPack.PartyPrison
     [NetworkCompatibility(CompatibilityLevel.EveryoneMustHaveMod, VersionStrictness.Patch)]
     public sealed partial class Plugin : BaseUnityPlugin
     {
-        public const string Id = "valheimmodpack.partyprison", Version = "1.1.2";
+        public const string Id = "valheimmodpack.partyprison", Version = "1.1.3";
         internal const string LoanKey = "VMP_PP_Loan", InmateKey = "VMP_PP_Inmate";
         private const string RpcName = PrisonWire.RpcName;
         internal static Plugin Active;
@@ -365,12 +365,14 @@ namespace ValheimModPack.PartyPrison
             if (custody.HasOutstanding) throw new InvalidOperationException("Collect all stored belongings before rebuilding.");
             if (store.All().Length != 0) throw new InvalidOperationException("Release all prisoners first.");
             PrisonRegion old = region;
-            ArenaBuilder.BuildNearAltars(levelGround, delegate(PrisonRegion created) { store.SetRegion(true, created); });
+            string clearFailure = null;
+            ArenaBuilder.BuildNearAltars(levelGround, delegate(PrisonRegion created) { store.SetRegion(true, created); }, message => clearFailure = message);
             region = store.Region; nextHost = Time.realtimeSinceStartup;
             if (old != null) ArenaBuilder.RemoveStructure(old); ArenaBuilder.SetExitLocked(region, false); network.Save(true, false, false);
             notice = levelGround
-                ? T("Земля выровнена. Тюрьма создана возле алтарей: камера, арена и четыре железных сундука.", "Ground levelled. Prison built near the altars: cell, arena and four iron chests.")
+                ? T("Площадка расчищена и выровнена. Тюрьма создана возле алтарей: камера, арена и четыре железных сундука.", "Site cleared and levelled. Prison built near the altars: cell, arena and four iron chests.")
                 : T("Тюрьма создана возле алтарей: камера, арена и четыре железных сундука.", "Prison built near the altars: cell, arena and four iron chests.");
+            if (clearFailure != null) Report(clearFailure);
         }
         private void Move(bool arena)
         {

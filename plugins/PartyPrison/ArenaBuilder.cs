@@ -5,7 +5,7 @@ using UnityEngine;
 
 namespace ValheimModPack.PartyPrison
 {
-    /// <summary>Host-built native pieces; manual construction can prepare a bounded, empty terrain site.</summary>
+    /// <summary>Host-built native pieces; manual construction prepares one bounded site.</summary>
     public static class ArenaBuilder
     {
         public const string ProtectedKey = "VMP_PP_Protected";
@@ -42,6 +42,9 @@ namespace ValheimModPack.PartyPrison
 
         /// <summary>Keep terrain preparation and the durable region write in one rollback scope.</summary>
         public static PrisonRegion BuildNearAltars(bool levelGround, Action<PrisonRegion> saveRegion)
+        { return BuildNearAltars(levelGround, saveRegion, null); }
+
+        public static PrisonRegion BuildNearAltars(bool levelGround, Action<PrisonRegion> saveRegion, Action<string> reportClearFailure)
         {
             RequireHost();
             if (ZoneSystem.instance == null || Player.m_localPlayer == null)
@@ -56,10 +59,11 @@ namespace ValheimModPack.PartyPrison
             Vector3 best = Vector3.zero;
             Quaternion bestRotation = Quaternion.identity;
             TerrainLeveler.Site bestTerrain = null;
+            SiteClearer.Site bestClear = null;
             float bestScore = Single.MaxValue;
             string failure = "";
-            // Search only loaded terrain, so native buildings, rocks, trees and the
-            // altar itself are all included in collision validation. Never clear them.
+            // Candidate searches are read-only. Only the selected manual site is
+            // staged for clearing; background generation still needs an empty site.
             for (int ring = 0; ring < 5; ++ring)
                 for (int direction = 0; direction < 24; ++direction) {
                     float angle = direction * Mathf.PI * 2f / 24f;
@@ -71,6 +75,7 @@ namespace ValheimModPack.PartyPrison
                         : Quaternion.LookRotation(new Vector3(-Mathf.Sin(angle), 0f, Mathf.Cos(angle)));
                     try {
                         TerrainLeveler.Site terrain = levelGround ? TerrainLeveler.Plan(candidate, altar) : null;
+                        SiteClearer.Site clear = null;
                         float floor;
                         if (terrain == null) floor = PreflightSite(candidate, rotation);
                         else {
@@ -78,24 +83,40 @@ namespace ValheimModPack.PartyPrison
                             // Do not bury objects when raising the floor or uncover them when lowering it.
                             float low = terrain.TargetHeight - (float)TerrainPlan.MaximumGroundChange - 1f;
                             float high = terrain.TargetHeight + (float)TerrainPlan.MaximumGroundChange + RoomHeight + 1f;
-                            RequireClearSite(candidate, rotation, (float)(TerrainPlan.HalfWidth + TerrainPlan.FootprintPadding), low, high, false);
+                            clear = SiteClearer.Plan(candidate, rotation, (float)(TerrainPlan.HalfWidth + TerrainPlan.FootprintPadding), low, high, altar, true);
                             floor = terrain.FloorHeight;
                         }
-                        float score = ring * 20f + Mathf.Abs(floor - height);
+                        float score = ring * 20f + Mathf.Abs(floor - height) + (clear == null ? 0f : clear.Cost * 0.5f);
                         if (score < bestScore) {
-                            bestScore = score; best = candidate; bestRotation = rotation; bestTerrain = terrain;
+                            bestScore = score; best = candidate; bestRotation = rotation; bestTerrain = terrain; bestClear = clear;
                         }
                     }
                     catch (InvalidOperationException error) { failure = error.Message; }
                 }
             if (bestScore == Single.MaxValue)
-                throw new InvalidOperationException("Рядом с алтарями нет подходящего свободного сухого места под тюрьму. Подойдите к камням и освободите площадку в пределах 40–88 м. " + failure);
+                throw new InvalidOperationException(levelGround
+                    ? "Рядом с алтарями нет подходящей сухой загруженной площадки под тюрьму. Подойдите ближе к камням; камни, деревья, дикие мобы и постройки на выбранном месте будут убраны автоматически. " + failure
+                    : "Рядом с алтарями нет свободного ровного места для фоновой постройки. Команда /prison build сама расчистит и выровняет площадку. " + failure);
+            using (SiteClearer.Transaction clear = bestClear == null ? null : bestClear.Apply())
             using (TerrainLeveler.Transaction terrain = bestTerrain == null ? null : bestTerrain.Apply()) {
                 if (bestTerrain != null) best.y = bestTerrain.TargetHeight;
                 PrisonRegion created = Build(best, bestRotation);
-                try { if (saveRegion != null) saveRegion(created); }
+                try {
+                    if (clear != null) clear.ValidateCommit();
+                    if (saveRegion != null) saveRegion(created);
+                }
                 catch { TryRollback(created); throw; }
                 if (terrain != null) terrain.Commit();
+                if (clear != null) {
+                    try { clear.Commit(); }
+                    catch (Exception error) {
+                        // The prison and its durable record are already committed.
+                        // A partially completed native deletion cannot be rolled back.
+                        string message = "Тюрьма построена, но расчистка завершилась с ошибкой: " + error.Message;
+                        if (reportClearFailure != null) reportClearFailure(message);
+                        else Debug.LogWarning("[Party Prison] " + message);
+                    }
+                }
                 return created;
             }
         }

@@ -277,12 +277,12 @@ internal static class TerrainContractChecks
         MethodDefinition defaultBuilder = Method(builder, "BuildNearAltars", "ValheimModPack.PartyPrison.PrisonRegion");
         Instruction defaultCall = CallInstructions(defaultBuilder).Single(i => ((MethodReference)i.Operand).Name == "BuildNearAltars");
         Check(defaultCall.Previous != null && defaultCall.Previous.OpCode.Code == Code.Ldnull && defaultCall.Previous.Previous != null && Int(defaultCall.Previous.Previous, 0), "Compatibility/default generation must keep terrain unchanged.");
-        MethodDefinition build = Method(builder, "BuildNearAltars", "ValheimModPack.PartyPrison.PrisonRegion", "System.Boolean", "System.Action`1<ValheimModPack.PartyPrison.PrisonRegion>");
+        MethodDefinition build = Method(builder, "BuildNearAltars", "ValheimModPack.PartyPrison.PrisonRegion", "System.Boolean", "System.Action`1<ValheimModPack.PartyPrison.PrisonRegion>", "System.Action`1<System.String>");
         List<Instruction> buildCalls = CallInstructions(build).ToList();
         Instruction apply = buildCalls.Single(i => ((MethodReference)i.Operand).DeclaringType.FullName == "ValheimModPack.PartyPrison.TerrainLeveler/Site" && ((MethodReference)i.Operand).Name == "Apply");
         Instruction construct = buildCalls.Single(i => ((MethodReference)i.Operand).DeclaringType.FullName == builder.FullName && ((MethodReference)i.Operand).Name == "Build");
-        Instruction durableWrite = buildCalls.Single(i => ((MethodReference)i.Operand).DeclaringType.FullName.StartsWith("System.Action`1", StringComparison.Ordinal) && ((MethodReference)i.Operand).Name == "Invoke");
-        Instruction commit = buildCalls.Single(i => ((MethodReference)i.Operand).Name == "Commit");
+        Instruction durableWrite = buildCalls.Single(i => ((MethodReference)i.Operand).DeclaringType.FullName == "System.Action`1<ValheimModPack.PartyPrison.PrisonRegion>" && ((MethodReference)i.Operand).Name == "Invoke");
+        Instruction commit = buildCalls.Single(i => ((MethodReference)i.Operand).DeclaringType.FullName == "ValheimModPack.PartyPrison.TerrainLeveler/Transaction" && ((MethodReference)i.Operand).Name == "Commit");
         Check(apply.Offset < construct.Offset && construct.Offset < durableWrite.Offset && durableWrite.Offset < commit.Offset, "Terrain commit must follow successful building and the durable prison-state write.");
         Check(build.Body.ExceptionHandlers.Any(h => h.HandlerType == ExceptionHandlerType.Finally), "Terrain transaction is not disposed when construction fails.");
         Check(Calls(build, builder.FullName, "TryRollback"), "Failed prison-state persistence must remove the newly constructed structure.");

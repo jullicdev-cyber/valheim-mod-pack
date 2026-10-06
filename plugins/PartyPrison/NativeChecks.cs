@@ -59,7 +59,7 @@ namespace ValheimModPack.PartyPrison.NativeVerification
                 try
                 {
                     Run(); Finish("PASS: " + checks + " Party Prison native assertions.\n" + report
-                        + "Scope: isolated main menu, full-pack startup, registered patches, synthetic UI and available prefab definitions.\n"
+                        + "Scope: isolated main menu, full-pack startup, registered patches, native Chat/Console command routing with a safe sentinel, synthetic UI and available prefab definitions.\n"
                         + "UNVERIFIED: live altar construction, host/client inventory custody, chest retrieval, automatic arena waves, death recovery, reconnect, wall protection and release need an in-game multiplayer test.\n", 0);
                 }
                 catch (Exception error) { Finish("FAIL: " + error + "\n" + report, 4); }
@@ -115,7 +115,7 @@ namespace ValheimModPack.PartyPrison.NativeVerification
             Patch(typeof(Container), "GetInventory", Type.EmptyTypes);
             Patch(typeof(ItemDrop), "AutoStackItems", Type.EmptyTypes);
             report.AppendLine("PASS: Required confinement, death, protection and input-reset Harmony patches bind; native creature loot generation remains available.");
-            CheckGroupRadiusCompatibility(); CheckUi(); CheckInventoryIsolation(); CheckCustodyInventory(); CheckExactWithdrawalInsertion(); CheckCustodyMask(); CheckCustodyRegistry(); CheckLootPickupGuard(); CheckGeometry(); CheckPrefabs();
+            CheckCommandRouting(); CheckGroupRadiusCompatibility(); CheckUi(); CheckInventoryIsolation(); CheckCustodyInventory(); CheckExactWithdrawalInsertion(); CheckCustodyMask(); CheckCustodyRegistry(); CheckLootPickupGuard(); CheckGeometry(); CheckPrefabs();
             Check(Player.m_localPlayer == null && Game.instance == null, "probe leaves no game or local player registration");
         }
 
@@ -126,6 +126,150 @@ namespace ValheimModPack.PartyPrison.NativeVerification
             Patches patches = Harmony.GetPatchInfo(method);
             Check(patches != null && patches.Owners.Contains(Plugin.Id), "Party Prison Harmony patch registered: " + target.Name + "." + name);
         }
+
+        private void CheckCommandRouting()
+        {
+            FieldInfo commandField = typeof(Terminal).GetField("commands", All);
+            Check(commandField != null && commandField.FieldType == typeof(Dictionary<string, Terminal.ConsoleCommand>),
+                "installed native Terminal exposes the expected command registry");
+            var commands = (Dictionary<string, Terminal.ConsoleCommand>)commandField.GetValue(null);
+            Terminal.ConsoleCommand original;
+            Check(commands != null && commands.TryGetValue("prison", out original), "actual full-pack startup registers the prison command");
+            // Assign separately because the assertion helper does not establish
+            // definite assignment for the old compiler used by the pack.
+            original = commands["prison"];
+            Check(!original.IsCheat && !original.IsNetwork && !original.OnlyServer && !original.RemoteCommand
+                && !original.IsSecret && !original.AllowInDevBuild && !original.HideBehindDevCommands && !original.OnlyAdmin,
+                "actual prison registration has no cheat, network, server-only, remote or hidden-command restriction");
+            FieldInfo actionField = typeof(Terminal.ConsoleCommand).GetField("action", All);
+            FieldInfo failableField = typeof(Terminal.ConsoleCommand).GetField("actionFailable", All);
+            var action = actionField == null ? null : actionField.GetValue(original) as Delegate;
+            object plugin = Chainloader.PluginInfos[Plugin.Id].Instance;
+            Check(action != null && ReferenceEquals(action.Target, plugin) && action.Method == typeof(Plugin).GetMethod("Command", All)
+                && failableField != null && failableField.GetValue(original) == null,
+                "actual prison registry callback is this loaded plugin's Command method");
+
+            FieldInfo chatSingleton = typeof(Chat).GetField("m_instance", All);
+            FieldInfo consoleSingleton = typeof(global::Console).GetField("m_instance", All);
+            Check(chatSingleton != null && consoleSingleton != null, "native Chat and Console singleton fields can be preserved by the fixture");
+            object oldChat = chatSingleton.GetValue(null), oldConsole = consoleSingleton.GetValue(null);
+            bool oldCheat = Terminal.m_cheat;
+            Terminal.ConsoleCommand slashAlias;
+            bool hadSlashAlias = commands.TryGetValue("/prison", out slashAlias);
+            GameObject fixture = new GameObject("Party Prison inactive command route fixture");
+            fixture.SetActive(false);
+            int dispatches = 0;
+            Terminal.ConsoleEventArgs received = null;
+            try
+            {
+                Chat chat = (Chat)CommandTerminalFixture(typeof(Chat), fixture);
+                Terminal console = CommandTerminalFixture(typeof(global::Console), fixture);
+                Check(!chat.gameObject.activeInHierarchy && !console.gameObject.activeInHierarchy
+                    && ReferenceEquals(chatSingleton.GetValue(null), oldChat) && ReferenceEquals(consoleSingleton.GetValue(null), oldConsole),
+                    "synthetic Chat and Console stay inactive and never replace native singletons or execute Awake");
+                Terminal.m_cheat = false;
+                MethodInfo validity = typeof(Terminal.ConsoleCommand).GetMethod("IsValid", All, null, new[] { typeof(Terminal), typeof(bool) }, null);
+                Check(validity != null && (bool)validity.Invoke(original, new object[] { chat, false }),
+                    "actual prison command is valid in native Chat with cheats disabled and no player or world");
+                Check((bool)validity.Invoke(original, new object[] { console, false }),
+                    "actual prison command is valid in native Console with cheats disabled and no player or world");
+                var sentinel = new Terminal.ConsoleCommand("prison", "Safe menu-only route sentinel",
+                    (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args) { ++dispatches; received = args; });
+                // A future explicit slash alias must never execute a real build
+                // in this test. The base Console parser is tested without it.
+                commands.Remove("/prison");
+                Check(ReferenceEquals(commands["prison"], sentinel), "safe sentinel temporarily replaces only the prison callback");
+                MethodInfo chatInput = typeof(Chat).GetMethod("InputText", All, null, Type.EmptyTypes, null);
+                MethodInfo consoleInput = typeof(Terminal).GetMethod("InputText", All, null, Type.EmptyTypes, null);
+                Check(chatInput != null && consoleInput != null, "native Chat override and base Console InputText methods exist");
+
+                CommandInput(chat, "/prison build"); chatInput.Invoke(chat, null);
+                Check(dispatches == 1 && received != null && ReferenceEquals(received.Context, chat)
+                    && ReferenceEquals(received.Commmand, sentinel) && received.FullLine == "prison build"
+                    && received.Args.SequenceEqual(new[] { "prison", "build" }),
+                    "real Chat.InputText strips one slash and dispatches prison/build with the native Chat context");
+                Check(CommandBuffer(chat).Count == 0, "successful chat sentinel route needs no rendered chat message or network send");
+
+                CommandInput(console, "prison build"); consoleInput.Invoke(console, null);
+                Check(dispatches == 2 && ReferenceEquals(received.Context, console) && received.FullLine == "prison build"
+                    && received.Args.SequenceEqual(new[] { "prison", "build" }),
+                    "real Console InputText dispatches prison/build with the native Console context");
+                Check(CommandBuffer(console).Count == 1 && CommandBuffer(console)[0] == "prison build",
+                    "native Console echoes the typed command before dispatch");
+
+                CommandInput(console, "/prison build"); consoleInput.Invoke(console, null);
+                Check(dispatches == 2 && CommandBuffer(console).Last().Contains("'/prison' is not a recognized command"),
+                    "base Console parser retains the slash and rejects /prison without an explicitly registered alias");
+
+                string missing = "vmp_partyprison_missing_" + Guid.NewGuid().ToString("N");
+                Check(!commands.ContainsKey(missing), "unknown-command fixture token is absent from the actual registry");
+                int chatLines = CommandBuffer(chat).Count;
+                CommandInput(chat, "/" + missing + " build"); chatInput.Invoke(chat, null);
+                Check(dispatches == 2 && CommandBuffer(chat).Count == chatLines,
+                    "native Chat silently rejects an unknown command token without reaching the prison callback");
+                commands.Remove("prison");
+                CommandInput(chat, "/prison build"); chatInput.Invoke(chat, null);
+                Check(dispatches == 2 && CommandBuffer(chat).Count == chatLines,
+                    "an absent prison registration reproduces silent chat failure without running any build");
+                commands["prison"] = sentinel;
+
+                CommandInput(chat, "/prison"); chatInput.Invoke(chat, null);
+                Check(dispatches == 3 && ReferenceEquals(received.Context, chat) && received.Args.SequenceEqual(new[] { "prison" }),
+                    "native Chat dispatches a registered command with a missing subcommand as one argument");
+                CommandInput(chat, "/prison  build"); chatInput.Invoke(chat, null);
+                Check(dispatches == 4 && received.Args.SequenceEqual(new[] { "prison", "", "build" }),
+                    "native command tokenization preserves an empty argument between repeated spaces");
+                CommandInput(chat, ""); chatInput.Invoke(chat, null);
+                Check(dispatches == 4 && CommandBuffer(chat).Count == chatLines, "empty native chat input returns without dispatch or output");
+                Check(Player.m_localPlayer == null && Game.instance == null, "native command route tests never create a live player or world");
+            }
+            finally
+            {
+                commands["prison"] = original;
+                if (hadSlashAlias) commands["/prison"] = slashAlias; else commands.Remove("/prison");
+                Terminal.m_cheat = oldCheat;
+                UnityEngine.Object.DestroyImmediate(fixture);
+                chatSingleton.SetValue(null, oldChat); consoleSingleton.SetValue(null, oldConsole);
+            }
+            Check(ReferenceEquals(commands["prison"], original) && Terminal.m_cheat == oldCheat
+                && ReferenceEquals(chatSingleton.GetValue(null), oldChat) && ReferenceEquals(consoleSingleton.GetValue(null), oldConsole),
+                "command route fixture restores the exact real callback, cheat flag and native Chat/Console singletons");
+            Check(hadSlashAlias ? ReferenceEquals(commands["/prison"], slashAlias) : !commands.ContainsKey("/prison"),
+                "command route fixture restores the original slash-alias registry state");
+            report.AppendLine("PASS: Actual prison flags and callback are valid; native Chat routes /prison build and Console routes prison build through a safe sentinel. Unknown or missing chat registrations are silent; repeated spaces preserve empty arguments. Exact registry and singleton state was restored.");
+            report.AppendLine("UNVERIFIED: Command routing in the user's running world, its current registry contents and the real Plugin.Command/build callback were not executed by this menu fixture.");
+        }
+
+        private static Terminal CommandTerminalFixture(Type type, GameObject parent)
+        {
+            var node = new GameObject(type.Name + " inactive route terminal", typeof(RectTransform));
+            node.SetActive(false); node.transform.SetParent(parent.transform, false);
+            var terminal = (Terminal)node.AddComponent(type);
+            foreach (string name in new[] { "m_input", "m_output" })
+            {
+                FieldInfo field = typeof(Terminal).GetField(name, All);
+                if (field == null) throw new InvalidOperationException("Native terminal fixture field missing: " + name);
+                var child = new GameObject(name + " inactive route control", typeof(RectTransform));
+                child.SetActive(false); child.transform.SetParent(node.transform, false);
+                field.SetValue(terminal, child.AddComponent(field.FieldType));
+            }
+            typeof(Terminal).GetField("m_chatBuffer", All).SetValue(terminal, new List<string>());
+            terminal.m_maxVisibleBufferLength = 20;
+            return terminal;
+        }
+
+        private static void CommandInput(Terminal terminal, string text)
+        {
+            object input = typeof(Terminal).GetField("m_input", All).GetValue(terminal);
+            FieldInfo value = AccessTools.Field(input.GetType(), "m_Text");
+            if (value == null) throw new InvalidOperationException("Installed TMP input backing field is unavailable.");
+            // Supply text without activating a virtual keyboard or a rendered
+            // input control. InputText still calls the actual TMP text getter.
+            value.SetValue(input, text);
+        }
+
+        private static List<string> CommandBuffer(Terminal terminal)
+        { return (List<string>)typeof(Terminal).GetField("m_chatBuffer", All).GetValue(terminal); }
 
         private void CheckGroupRadiusCompatibility()
         {

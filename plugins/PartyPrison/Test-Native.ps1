@@ -35,7 +35,7 @@ $probeSourceHash = (Get-FileHash -LiteralPath $probeSource -Algorithm SHA256).Ha
 [IO.File]::WriteAllLines((Join-Path $fixtureRoot 'probe-inputs.txt'), @(
     'PartyPrison SHA256: ' + $testedPrisonHash
     'NativeChecks.cs SHA256: ' + $probeSourceHash
-    'Scope: menu startup, native patches, detached inventories, synthetic UI and prefab definitions'
+    'Scope: menu startup, native patches, safe native Chat/Console command routing, detached inventories, synthetic UI and prefab definitions'
 ), [Text.UTF8Encoding]::new($false))
 @'
 [Logging.Console]
