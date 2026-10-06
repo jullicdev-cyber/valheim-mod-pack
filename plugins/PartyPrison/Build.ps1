@@ -10,7 +10,7 @@ foreach ($ref in $refs) { if (-not (Test-Path -LiteralPath $ref)) { throw "Missi
 New-Item -ItemType Directory -Force -Path (Split-Path $OutputFile -Parent) | Out-Null
 $arguments = @('/nologo','/codepage:65001','/target:library','/optimize+',('/out:' + $OutputFile))
 $arguments += $refs | ForEach-Object { '/reference:' + $_ }
-$arguments += @('SentenceState.cs','SentenceStore.cs','CustodyStore.cs','CustodyWithdrawal.cs','CustodyInventory.cs','Protocol.cs','PrisonWire.cs','TerrainPlan.cs','TerrainLeveler.cs','ClearanceFootprint.cs','SiteClearer.cs','ArenaBuilder.cs','PrisonWindow.cs','Plugin.cs','CustodyRuntime.cs','WithdrawalRuntime.cs','Patches.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
+$arguments += @('SentenceState.cs','SentenceStore.cs','CustodyStore.cs','CustodyWithdrawal.cs','CustodyInventory.cs','Protocol.cs','PrisonWire.cs','PlacementPlan.cs','TerrainPlan.cs','TerrainLeveler.cs','ClearanceFootprint.cs','SiteClearer.cs','ForceClearance.cs','ArenaBuilder.cs','PrisonWindow.cs','Plugin.cs','CustodyRuntime.cs','WithdrawalRuntime.cs','Patches.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
 & (Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe') @arguments
 if ($LASTEXITCODE -ne 0) { throw 'PartyPrison compilation failed.' }
 Write-Output "Built PartyPrison: $OutputFile"

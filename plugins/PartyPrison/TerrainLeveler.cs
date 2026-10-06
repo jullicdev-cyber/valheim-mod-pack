@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Threading;
+using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimModPack.PartyPrison
@@ -30,16 +32,40 @@ namespace ValheimModPack.PartyPrison
         private static readonly FieldInfo View = NativeField("m_nview");
         private static readonly FieldInfo Map = NativeField("m_hmap");
         private static readonly FieldInfo Heights = typeof(Heightmap).GetField("m_heights", BindingFlags.Instance | BindingFlags.NonPublic);
+        private static readonly ConditionalWeakTable<TerrainComp, OverrideCache> OverrideCaches = new ConditionalWeakTable<TerrainComp, OverrideCache>();
 
         /// <summary>Inspect loaded terrain only. Rejected sites create no terrain compilers or network changes.</summary>
         public static Site Plan(Vector3 center, Vector3 altar)
         {
             RequireHost();
             TerrainPlan.RequireFootprint(center.x, center.z, altar.x, altar.z);
+            return Inspect(center, altar, 0f, (float)(TerrainPlan.HalfWidth + TerrainPlan.FootprintPadding), false);
+        }
+
+        public static Site PlanAnywhere(Vector3 center, float targetHeight, Quaternion rotation)
+        {
+            RequireHost();
+            if (!Finite(center.x) || !Finite(center.y) || !Finite(center.z) || !Finite(targetHeight) ||
+                !Finite(rotation.x) || !Finite(rotation.y) || !Finite(rotation.z) || !Finite(rotation.w))
+                throw new ArgumentException("Неверная площадка под тюрьму.");
+            float extent = (float)TerrainPlan.EnclosingExtent(rotation.eulerAngles.y);
+            if (Character.InInterior(center)) return PlanInterior(center, targetHeight, extent);
+            return Inspect(center, Vector3.zero, targetHeight, extent, true);
+        }
+
+        private static Site PlanInterior(Vector3 center, float targetHeight, float extent)
+        {
+            TerrainLevelPlan decision = TerrainPlan.CreateInterior(center.x, center.z, targetHeight);
+            if (ZNetScene.instance == null || !ZNetScene.instance.IsAreaReady(center))
+                throw new InvalidOperationException("Объекты возле площадки ещё загружаются. Подождите несколько секунд.");
+            return new Site(center, decision, new List<NativeTile>(), ZNet.instance, ZNet.instance.GetWorldUID(), extent, true);
+        }
+
+        private static Site Inspect(Vector3 center, Vector3 altar, float targetHeight, float extent, bool force)
+        {
             // Loaded ground alone is insufficient: nearby network objects may still be queued.
             if (ZNetScene.instance == null || !ZNetScene.instance.IsAreaReady(center))
                 throw new InvalidOperationException("Объекты возле площадки ещё загружаются. Подойдите ближе и повторите постройку.");
-            float extent = (float)(TerrainPlan.HalfWidth + TerrainPlan.FootprintPadding);
             List<Heightmap> maps = new List<Heightmap>();
             Heightmap.FindHeightmap(center, extent * 1.414214f + 1f, maps);
             HashSet<Heightmap> seen = new HashSet<Heightmap>();
@@ -57,13 +83,16 @@ namespace ValheimModPack.PartyPrison
                     throw new InvalidOperationException("Земля ещё обновляется. Повторите создание тюрьмы через несколько секунд.");
                 List<float> heights = Heights == null ? null : Heights.GetValue(hmap) as List<float>;
                 int pitch = hmap.m_width + 1;
+                if (force && pitch > TerrainOverrides.MaximumPitch)
+                    throw new InvalidOperationException("Неподдерживаемый размер участка земли.");
                 if (heights == null || heights.Count != pitch * pitch)
                     throw new InvalidOperationException("Высота земли ещё не загружена. Подойдите ближе к площадке.");
                 TerrainComp compiler = TerrainComp.FindTerrainCompiler(position);
                 if (compiler != null) CheckCompiler(compiler, hmap, true);
+                if (compiler != null && force) TerrainOverrides.Decode(NativeView(compiler).GetZDO().GetByteArray(TerrainOverrides.Key, null), pitch);
                 float[] level = compiler == null ? null : (float[])Level.GetValue(compiler);
                 float[] smooth = compiler == null ? null : (float[])Smooth.GetValue(compiler);
-                NativeTile tile = new NativeTile(hmap, compiler, position, hmap.m_width, hmap.m_scale);
+                NativeTile tile = new NativeTile(hmap, compiler, position, hmap.m_width, hmap.m_scale, force);
                 // A seam vertex belongs to every adjoining heightmap. Keep each copy.
                 for (int z = 0; z <= hmap.m_width; ++z)
                     for (int x = 0; x <= hmap.m_width; ++x) {
@@ -73,7 +102,7 @@ namespace ValheimModPack.PartyPrison
                         int index = z * pitch + x;
                         float worldHeight = position.y + hmap.GetHeight(x, z);
                         if (!Finite(worldHeight)) throw new InvalidOperationException("Не удалось прочитать высоту земли.");
-                        RequireBuildable(new Vector3(vertex.x, worldHeight, vertex.z));
+                        if (!force) RequireBuildable(new Vector3(vertex.x, worldHeight, vertex.z));
                         float oldLevel = level == null ? 0f : level[index], oldSmooth = smooth == null ? 0f : smooth[index];
                         tile.Vertices.Add(new Vertex(x, z, vertex, worldHeight, oldLevel, oldSmooth));
                         ground.Add(worldHeight); baseline.Add(worldHeight - oldLevel - oldSmooth);
@@ -84,10 +113,10 @@ namespace ValheimModPack.PartyPrison
                 if (tiles.Count > TerrainPlan.MaximumCompilers)
                     throw new InvalidOperationException("Площадка затрагивает слишком много участков земли.");
             }
-            RequireCoverage(center, extent, tiles);
-            TerrainLevelPlan decision = TerrainPlan.Create(center.x, center.z, altar.x, altar.z,
-                ZoneSystem.instance.m_waterLevel, ground, baseline, tiles.Count);
-            return new Site(center, decision, tiles, ZNet.instance, ZNet.instance.GetWorldUID());
+            RequireCoverage(center, extent, tiles, force);
+            TerrainLevelPlan decision = force ? TerrainPlan.CreateAnywhere(center.x, center.z, targetHeight, ground, tiles.Count) :
+                TerrainPlan.Create(center.x, center.z, altar.x, altar.z, ZoneSystem.instance.m_waterLevel, ground, baseline, tiles.Count);
+            return new Site(center, decision, tiles, ZNet.instance, ZNet.instance.GetWorldUID(), extent, force);
         }
 
         public sealed class Site
@@ -97,12 +126,17 @@ namespace ValheimModPack.PartyPrison
             private readonly List<NativeTile> tiles;
             private readonly ZNet network;
             private readonly long world;
+            private readonly float extent;
+            private readonly bool force;
             private bool applied;
             public float TargetHeight { get { return (float)decision.TargetHeight; } }
             public float FloorHeight { get { return (float)decision.FloorHeight; } }
+            public float WorldExtent { get { return extent; } }
+            public float LowestGroundHeight { get { return (float)decision.LowestGroundHeight; } }
+            public float HighestGroundHeight { get { return (float)decision.HighestGroundHeight; } }
 
-            internal Site(Vector3 center, TerrainLevelPlan decision, List<NativeTile> tiles, ZNet network, long world)
-            { this.center = center; this.decision = decision; this.tiles = tiles; this.network = network; this.world = world; }
+            internal Site(Vector3 center, TerrainLevelPlan decision, List<NativeTile> tiles, ZNet network, long world, float extent, bool force)
+            { this.center = center; this.decision = decision; this.tiles = tiles; this.network = network; this.world = world; this.extent = extent; this.force = force; }
 
             public Transaction Apply()
             {
@@ -113,7 +147,7 @@ namespace ValheimModPack.PartyPrison
                 // Revalidate the whole read-only plan before creating or claiming anything.
                 foreach (NativeTile tile in tiles) tile.CheckUnchanged();
                 applied = true;
-                Transaction transaction = new Transaction(center, TargetHeight, tiles, network, world);
+                Transaction transaction = new Transaction(center, TargetHeight, tiles, network, world, extent, force);
                 try { transaction.Apply(); return transaction; }
                 catch (Exception error) {
                     try { transaction.Dispose(); }
@@ -134,10 +168,12 @@ namespace ValheimModPack.PartyPrison
             private readonly List<Snapshot> snapshots = new List<Snapshot>();
             private readonly ZNet network;
             private readonly long world;
+            private readonly float extent;
+            private readonly bool force;
             private bool committed, disposed;
 
-            internal Transaction(Vector3 center, float target, List<NativeTile> tiles, ZNet network, long world)
-            { this.center = center; this.target = target; this.tiles = tiles; this.network = network; this.world = world; }
+            internal Transaction(Vector3 center, float target, List<NativeTile> tiles, ZNet network, long world, float extent, bool force)
+            { this.center = center; this.target = target; this.tiles = tiles; this.network = network; this.world = world; this.extent = extent; this.force = force; }
 
             internal void Apply()
             {
@@ -154,19 +190,45 @@ namespace ValheimModPack.PartyPrison
                     m_level = true, m_levelOffset = 0f, m_levelRadius = 0f, m_square = true,
                     m_raise = false, m_smooth = false, m_paintCleared = false
                 };
-                foreach (NativeTile tile in tiles)
+                if (force) {
+                    foreach (NativeTile tile in tiles) ApplyForcedTile(tile);
+                } else foreach (NativeTile tile in tiles)
                     foreach (Vertex vertex in tile.Vertices) {
                         Vector3 point = vertex.Position; point.y = target;
                         Operation.Invoke(tile.Compiler, new object[] { point, Vector3.zero, settings });
                     }
                 foreach (Snapshot snapshot in snapshots) snapshot.Persist();
                 foreach (Snapshot snapshot in snapshots) snapshot.Heightmap.Poke(0, false);
-                // Native terrain retains its +/-8 m clamp. Detect a clamp or stale mesh before building.
+                // Check rebuilt collision heights, including the absolute overrides after native clamping.
                 foreach (NativeTile tile in tiles)
                     foreach (Vertex vertex in tile.Vertices)
                         if (Mathf.Abs(tile.Heightmap.transform.position.y + tile.Heightmap.GetHeight(vertex.X, vertex.Z) - target) > HeightTolerance)
                             throw new InvalidOperationException("Valheim не смог выровнять эту площадку в пределах допустимой высоты земли.");
                 ResetGrass();
+            }
+
+            private void ApplyForcedTile(NativeTile tile)
+            {
+                int pitch = tile.Width + 1;
+                ZDO zdo = NativeView(tile.Compiler).GetZDO();
+                SortedDictionary<int, float> values = TerrainOverrides.Decode(zdo.GetByteArray(TerrainOverrides.Key, null), pitch);
+                float[] levels = (float[])Level.GetValue(tile.Compiler), smoothing = (float[])Smooth.GetValue(tile.Compiler);
+                bool[] modified = (bool[])ModifiedHeight.GetValue(tile.Compiler);
+                foreach (Vertex vertex in tile.Vertices) {
+                    int index = vertex.Z * pitch + vertex.X;
+                    // Keep standard terrain data compatible with the native format. The tagged absolute
+                    // record supplies the height beyond native limits after every regeneration on all peers.
+                    levels[index] = Mathf.Clamp(vertex.OldLevel + target - vertex.Ground + vertex.OldSmooth, -8f, 8f);
+                    smoothing[index] = 0f; modified[index] = true;
+                    values[index] = target - tile.Position.y;
+                }
+                byte[] record = TerrainOverrides.Encode(pitch, values);
+                zdo.Set(TerrainOverrides.Key, record);
+                if (!ReferenceEquals(zdo.GetByteArray(TerrainOverrides.Key, null), record))
+                    throw new InvalidOperationException("Не удалось сохранить высоты земли под тюрьмой.");
+                Operations.SetValue(tile.Compiler, checked((int)Operations.GetValue(tile.Compiler) + 1));
+                Vector3 point = center; point.y = target;
+                LastPoint.SetValue(tile.Compiler, point); LastRadius.SetValue(tile.Compiler, extent * 1.414214f);
             }
 
             public void Commit()
@@ -214,7 +276,7 @@ namespace ValheimModPack.PartyPrison
             }
 
             private void ResetGrass()
-            { if (ClutterSystem.instance != null) ClutterSystem.instance.ResetGrass(center, (float)(TerrainPlan.HalfWidth + TerrainPlan.FootprintPadding) * 1.414214f); }
+            { if (tiles.Count != 0 && ClutterSystem.instance != null) ClutterSystem.instance.ResetGrass(center, extent * 1.414214f); }
         }
 
         internal sealed class NativeTile
@@ -226,10 +288,12 @@ namespace ValheimModPack.PartyPrison
             internal readonly float Scale;
             internal readonly List<Vertex> Vertices = new List<Vertex>();
             private readonly uint revision;
-            internal NativeTile(Heightmap hmap, TerrainComp compiler, Vector3 position, int width, float scale)
+            private readonly bool force;
+            internal NativeTile(Heightmap hmap, TerrainComp compiler, Vector3 position, int width, float scale, bool force)
             {
                 Heightmap = hmap; Compiler = compiler; Position = position; Width = width; Scale = scale;
                 revision = compiler == null ? 0u : NativeView(compiler).GetZDO().DataRevision;
+                this.force = force;
             }
             internal void CheckUnchanged()
             {
@@ -242,7 +306,7 @@ namespace ValheimModPack.PartyPrison
                     if (NativeView(current).GetZDO().DataRevision != revision) Changed();
                 }
                 foreach (Vertex vertex in Vertices) {
-                    RequireBuildable(new Vector3(vertex.Position.x, vertex.Ground, vertex.Position.z));
+                    if (!force) RequireBuildable(new Vector3(vertex.Position.x, vertex.Ground, vertex.Position.z));
                     if (Mathf.Abs(Position.y + Heightmap.GetHeight(vertex.X, vertex.Z) - vertex.Ground) > UnchangedTolerance) Changed();
                 }
             }
@@ -270,6 +334,7 @@ namespace ValheimModPack.PartyPrison
             private readonly long owner;
             private readonly Vector3 point;
             private readonly float radius;
+            private readonly byte[] overrides;
             internal Snapshot(TerrainComp compiler, Heightmap hmap)
             {
                 Compiler = compiler; Heightmap = hmap; view = NativeView(compiler);
@@ -281,6 +346,8 @@ namespace ValheimModPack.PartyPrison
                 paint = (Color[])((Color[])Paint.GetValue(compiler)).Clone();
                 operations = (int)Operations.GetValue(compiler); hash = (int)LastHash.GetValue(compiler);
                 point = (Vector3)LastPoint.GetValue(compiler); radius = (float)LastRadius.GetValue(compiler);
+                byte[] saved = view.GetZDO().GetByteArray(TerrainOverrides.Key, null);
+                overrides = saved == null ? null : (byte[])saved.Clone();
             }
             internal void Claim()
             {
@@ -305,12 +372,13 @@ namespace ValheimModPack.PartyPrison
                 ModifiedPaint.SetValue(Compiler, (bool[])modifiedPaint.Clone()); Paint.SetValue(Compiler, (Color[])paint.Clone());
                 Operations.SetValue(Compiler, operations); LastHash.SetValue(Compiler, hash);
                 LastPoint.SetValue(Compiler, point); LastRadius.SetValue(Compiler, radius);
+                view.GetZDO().Set(TerrainOverrides.Key, overrides == null ? new byte[0] : (byte[])overrides.Clone());
                 Persist();
                 view.GetZDO().SetOwner(owner);
             }
         }
 
-        private static void RequireCoverage(Vector3 center, float extent, List<NativeTile> tiles)
+        private static void RequireCoverage(Vector3 center, float extent, List<NativeTile> tiles, bool force)
         {
             // Checking the padded rectangle, including its edges, detects missing neighboring tiles.
             int steps = Mathf.CeilToInt(extent * 2f);
@@ -325,7 +393,7 @@ namespace ValheimModPack.PartyPrison
                     }
                     if (!covered || !ZoneSystem.instance.IsZoneLoaded(new Vector3(px, center.y, pz)))
                         throw new InvalidOperationException("Вся площадка под тюрьму должна быть загружена. Подойдите ближе.");
-                    RequireBuildable(new Vector3(px, center.y, pz));
+                    if (!force) RequireBuildable(new Vector3(px, center.y, pz));
                 }
         }
 
@@ -335,6 +403,40 @@ namespace ValheimModPack.PartyPrison
         {
             if (Location.IsInsideNoBuildLocation(point))
                 throw new InvalidOperationException("Площадка пересекает игровую область, где запрещены строительство и изменение земли. Выберите другое место.");
+        }
+
+        // Called after the native clamp on both the host and clients, including terrain reconstructed
+        // after world reload. It touches only indices explicitly tagged in this compiler's saved ZDO.
+        internal static void ApplyForcedHeights(TerrainComp compiler, List<float> heights, Heightmap hmap)
+        {
+            if (compiler == null || hmap == null || heights == null) return;
+            ZNetView view = View.GetValue(compiler) as ZNetView;
+            if (view == null || !view.IsValid()) return;
+            ZDO zdo = view.GetZDO();
+            byte[] data = zdo.GetByteArray(TerrainOverrides.Key, null);
+            if (data == null || data.Length == 0) return;
+            int pitch = hmap.m_width + 1;
+            if (heights.Count != pitch * pitch) return;
+            OverrideCache cache = OverrideCaches.GetOrCreateValue(compiler);
+            if (!ReferenceEquals(cache.Data, data) || cache.Revision != zdo.DataRevision || cache.Pitch != pitch) {
+                cache.Data = data; cache.Revision = zdo.DataRevision; cache.Pitch = pitch;
+                try { cache.Values = TerrainOverrides.Decode(data, pitch); }
+                catch (Exception error) {
+                    cache.Values = null;
+                    Debug.LogError("[PartyPrison] Не удалось восстановить сохранённую площадку: " + error.Message);
+                }
+            }
+            if (cache.Values == null) return;
+            foreach (KeyValuePair<int, float> item in cache.Values) heights[item.Key] = item.Value;
+        }
+
+        private sealed class OverrideCache
+        {
+            internal byte[] Data;
+            internal uint Revision;
+            internal int Pitch;
+            internal SortedDictionary<int, float> Values;
+            public OverrideCache() { }
         }
 
         private static void CheckCompiler(TerrainComp compiler, Heightmap hmap, bool requireCurrent)
@@ -388,5 +490,12 @@ namespace ValheimModPack.PartyPrison
             if (ZNet.instance == null || !ZNet.instance.IsServer() || ZoneSystem.instance == null || Player.m_localPlayer == null)
                 throw new InvalidOperationException("Выравнивать площадку под тюрьму может только хост в игровом мире.");
         }
+    }
+
+    [HarmonyPatch(typeof(TerrainComp), "ApplyToHeightmap")]
+    internal static class TerrainForcedHeightPatch
+    {
+        private static void Postfix(TerrainComp __instance, List<float> __1, Heightmap __4)
+        { TerrainLeveler.ApplyForcedHeights(__instance, __1, __4); }
     }
 }

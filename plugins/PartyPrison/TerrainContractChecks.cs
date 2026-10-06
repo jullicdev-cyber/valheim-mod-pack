@@ -117,6 +117,11 @@ internal static class TerrainContractChecks
         TypeDefinition attack = Type(assembly, "Attack");
         MethodDefinition terrainHit = Method(attack, "SpawnOnHitTerrain", "UnityEngine.GameObject", "UnityEngine.Vector3", "UnityEngine.GameObject", "Character", "System.Single", "ItemDrop/ItemData", "ItemDrop/ItemData", "System.Boolean");
         Check(Calls(terrainHit, "Location", "IsInsideNoBuildLocation"), "Native terrain-tool placement no longer uses the location no-build query.");
+        TypeDefinition character = Type(assembly, "Character");
+        MethodDefinition interior = Method(character, "InInterior", "System.Boolean", "UnityEngine.Vector3");
+        Check(interior.IsPublic && interior.IsStatic && UsesField(interior, "UnityEngine.Vector3", "y") &&
+            interior.Body.Instructions.Any(i => Float(i, 3000f)) && interior.Body.Instructions.Any(i => i.OpCode.Code == Code.Cgt),
+            "Native virtual-interior classification changed; exterior terrain must never be raised to a dungeon floor.");
         foreach (string name in new[] { "m_initialized" }) Field(compiler, name, "System.Boolean");
         foreach (string name in new[] { "m_width", "m_pitch", "m_operations", "m_lastHash" }) Field(compiler, name, "System.Int32");
         foreach (string name in new[] { "m_levelDelta", "m_smoothDelta" }) Field(compiler, name, "System.Single[]");
@@ -152,6 +157,10 @@ internal static class TerrainContractChecks
         Check(clampIndex > 1 && Float(instructions[clampIndex - 2], -8f) && Float(instructions[clampIndex - 1], 8f), "Installed game's native level limit is no longer +/-8 metres.");
         Check(instructions.Any(i => i.OpCode.Code == Code.Ldarg_3 && i.Next != null && (i.Next.OpCode.Code == Code.Brtrue || i.Next.OpCode.Code == Code.Brtrue_S)), "Native square mode no longer bypasses the circular-radius filter.");
         Check(instructions.Count(i => i.OpCode.Code == Code.Ble || i.OpCode.Code == Code.Ble_S) >= 2, "Native zero-radius inclusive vertex loops changed.");
+        MethodDefinition applyNative = Method(compiler, "ApplyToHeightmap", "System.Void", "UnityEngine.Texture2D",
+            "System.Collections.Generic.List`1<System.Single>", "System.Single[]", "System.Single[]", "Heightmap");
+        Check(Calls(applyNative, "UnityEngine.Mathf", "Clamp") && applyNative.Body.Instructions.Count(i => Float(i, 8f)) == 2,
+            "Native rebuilt heightmap clamp changed; the saved absolute-height postfix needs review.");
 
         MethodDefinition save = Method(compiler, "Save", "System.Void", "System.Boolean");
         Check(UsesField(save, "TerrainComp", "m_initialized"), "Native Save no longer checks initialization.");
@@ -162,6 +171,14 @@ internal static class TerrainContractChecks
         Check(saveInstructions.Any(i => i.OpCode.Code == Code.And && i.Previous != null && i.Previous.OpCode.Code == Code.Ldarg_1 && i.Previous.Previous != null && i.Previous.Previous.OpCode.Code == Code.Ceq), "Save(false) no longer bypasses the unchanged paint-hash optimization.");
         foreach (string name in new[] { "m_levelDelta", "m_smoothDelta", "m_modifiedHeight", "m_modifiedPaint", "m_paintMask", "m_operations", "m_lastOpPoint", "m_lastOpRadius" })
             Check(UsesField(save, "TerrainComp", name), "Terrain Save snapshot payload changed: " + name);
+        MethodDefinition updateCompiler = Method(compiler, "Update", "System.Void");
+        MethodDefinition checkLoad = Method(compiler, "CheckLoad", "System.Void");
+        Check(Calls(updateCompiler, "TerrainComp", "CheckLoad") && Calls(checkLoad, "ZDO", "get_DataRevision") &&
+            UsesField(checkLoad, "TerrainComp", "m_lastDataRevision") && !UsesField(checkLoad, "TerrainComp", "m_lastHash"),
+            "Client compiler reload must react to the complete network ZDO revision, including forced-height records.");
+        Instruction remotePoke = CallInstructions(checkLoad).Single(i => ((MethodReference)i.Operand).DeclaringType.FullName == "Heightmap" && ((MethodReference)i.Operand).Name == "Poke");
+        Check(Calls(checkLoad, "TerrainComp", "Load") && remotePoke.Previous != null && Int(remotePoke.Previous, 0) &&
+            remotePoke.Previous.Previous != null && Int(remotePoke.Previous.Previous, 0), "Remote compiler revisions must regenerate terrain immediately after load.");
 
         MethodDefinition poke = Method(heightmap, "Poke", "System.Void", "System.Int32", "System.Boolean");
         Check(Calls(poke, "Heightmap", "Regenerate"), "Heightmap.Poke no longer regenerates terrain.");
@@ -219,23 +236,45 @@ internal static class TerrainContractChecks
         TypeDefinition snapshot = Type(assembly, rootName + "/Snapshot");
         TypeDefinition tile = Type(assembly, rootName + "/NativeTile");
         MethodDefinition plan = Method(leveler, "Plan", rootName + "/Site", "UnityEngine.Vector3", "UnityEngine.Vector3");
+        MethodDefinition anywhere = Method(leveler, "PlanAnywhere", rootName + "/Site", "UnityEngine.Vector3", "System.Single", "UnityEngine.Quaternion");
+        MethodDefinition inspect = Method(leveler, "Inspect", rootName + "/Site", "UnityEngine.Vector3", "UnityEngine.Vector3", "System.Single", "System.Single", "System.Boolean");
+        Check(Calls(plan, "ValheimModPack.PartyPrison.TerrainPlan", "RequireFootprint") && Calls(plan, rootName, "Inspect"), "Legacy terrain plan lost its altar protection.");
+        Instruction anywhereInspect = CallInstructions(anywhere).Single(i => ((MethodReference)i.Operand).Name == "Inspect");
+        Check(anywhereInspect.Previous != null && Int(anywhereInspect.Previous, 1) && !Calls(anywhere, "ValheimModPack.PartyPrison.TerrainPlan", "RequireFootprint"),
+            "The explicit anywhere route must select force mode without the obsolete altar veto.");
+        Check(Calls(anywhere, "ValheimModPack.PartyPrison.TerrainPlan", "EnclosingExtent") &&
+            Calls(inspect, "ValheimModPack.PartyPrison.TerrainPlan", "CreateAnywhere"), "Rotated force terrain must share the enclosing footprint and supplied plateau height.");
+        Method(site, "get_WorldExtent", "System.Single");
+        Method(site, "get_LowestGroundHeight", "System.Single");
+        Method(site, "get_HighestGroundHeight", "System.Single");
+        Instruction interiorQuery = CallInstructions(anywhere).Single(i => ((MethodReference)i.Operand).DeclaringType.FullName == "Character" && ((MethodReference)i.Operand).Name == "InInterior");
+        Instruction interiorPlanCall = CallInstructions(anywhere).Single(i => ((MethodReference)i.Operand).Name == "PlanInterior");
+        Check(interiorQuery.Next != null && (interiorQuery.Next.OpCode.Code == Code.Brfalse || interiorQuery.Next.OpCode.Code == Code.Brfalse_S) &&
+            interiorQuery.Next.Operand is Instruction && ((Instruction)interiorQuery.Next.Operand).Offset > interiorPlanCall.Offset &&
+            interiorPlanCall.Next != null && interiorPlanCall.Next.OpCode.Code == Code.Ret && interiorPlanCall.Offset < anywhereInspect.Offset,
+            "Virtual interiors must return an empty terrain plan before outdoor heightmaps are inspected.");
+        MethodDefinition interiorPlan = Method(leveler, "PlanInterior", rootName + "/Site", "UnityEngine.Vector3", "System.Single", "System.Single");
+        List<MethodReference> interiorCalls = ClosedGraph(assembly, interiorPlan).SelectMany(CallInstructions).Select(i => (MethodReference)i.Operand).ToList();
+        Check(Calls(interiorPlan, "ZNetScene", "IsAreaReady") && Calls(interiorPlan, "ValheimModPack.PartyPrison.TerrainPlan", "CreateInterior") &&
+            !interiorCalls.Any(m => m.DeclaringType.FullName == "Heightmap" || m.DeclaringType.FullName == "TerrainComp" || m.Name == "Add"),
+            "Virtual interior planning must validate loaded objects but create no terrain tiles or compiler interactions.");
         MethodDefinition buildable = Method(leveler, "RequireBuildable", "System.Void", "UnityEngine.Vector3");
         Instruction noBuildQuery = CallInstructions(buildable).Single(i => ((MethodReference)i.Operand).DeclaringType.FullName == "Location" && ((MethodReference)i.Operand).Name == "IsInsideNoBuildLocation");
         Check(noBuildQuery.Next != null && (noBuildQuery.Next.OpCode.Code == Code.Brfalse || noBuildQuery.Next.OpCode.Code == Code.Brfalse_S) &&
             buildable.Body.Instructions.Any(i => i.OpCode.Code == Code.Throw && i.Offset > noBuildQuery.Offset),
             "Native protected-location queries must reject the candidate instead of being ignored.");
-        Instruction vertexNoBuild = CallInstructions(plan).Single(i => ((MethodReference)i.Operand).DeclaringType.FullName == rootName && ((MethodReference)i.Operand).Name == "RequireBuildable");
-        Instruction vertexRecord = CallInstructions(plan).Single(i => ((MethodReference)i.Operand).DeclaringType.FullName == rootName + "/Vertex" && ((MethodReference)i.Operand).Name == ".ctor");
-        Check(vertexNoBuild.Offset < vertexRecord.Offset, "Every selected terrain vertex must pass the actual no-build query before the candidate is prepared.");
-        MethodDefinition coverage = Method(leveler, "RequireCoverage", "System.Void", "UnityEngine.Vector3", "System.Single", "System.Collections.Generic.List`1<" + rootName + "/NativeTile>");
+        Instruction vertexNoBuild = CallInstructions(inspect).Single(i => ((MethodReference)i.Operand).DeclaringType.FullName == rootName && ((MethodReference)i.Operand).Name == "RequireBuildable");
+        Instruction vertexRecord = CallInstructions(inspect).Single(i => ((MethodReference)i.Operand).DeclaringType.FullName == rootName + "/Vertex" && ((MethodReference)i.Operand).Name == ".ctor");
+        Check(vertexNoBuild.Offset < vertexRecord.Offset, "Legacy terrain vertices must pass the actual no-build query before the candidate is prepared.");
+        MethodDefinition coverage = Method(leveler, "RequireCoverage", "System.Void", "UnityEngine.Vector3", "System.Single", "System.Collections.Generic.List`1<" + rootName + "/NativeTile>", "System.Boolean");
         Check(Calls(coverage, rootName, "RequireBuildable"), "The padded square must respect no-build locations between heightmap vertices.");
-        Instruction[] readiness = CallInstructions(plan).Where(i => ((MethodReference)i.Operand).DeclaringType.FullName == "ZNetScene" && ((MethodReference)i.Operand).Name == "IsAreaReady").ToArray();
+        Instruction[] readiness = CallInstructions(inspect).Where(i => ((MethodReference)i.Operand).DeclaringType.FullName == "ZNetScene" && ((MethodReference)i.Operand).Name == "IsAreaReady").ToArray();
         Instruction[] footprint = CallInstructions(plan).Where(i => ((MethodReference)i.Operand).DeclaringType.FullName == "ValheimModPack.PartyPrison.TerrainPlan" && ((MethodReference)i.Operand).Name == "RequireFootprint").ToArray();
-        Instruction[] findMaps = CallInstructions(plan).Where(i => ((MethodReference)i.Operand).DeclaringType.FullName == "Heightmap" && ((MethodReference)i.Operand).Name == "FindHeightmap").ToArray();
-        Check(readiness.Length == 1 && footprint.Length == 1 && findMaps.Length == 1 && footprint[0].Offset < readiness[0].Offset && readiness[0].Offset < findMaps[0].Offset, "Terrain planning must check area readiness after altar protection and before inspecting heightmaps.");
+        Instruction[] findMaps = CallInstructions(inspect).Where(i => ((MethodReference)i.Operand).DeclaringType.FullName == "Heightmap" && ((MethodReference)i.Operand).Name == "FindHeightmap").ToArray();
+        Check(readiness.Length == 1 && footprint.Length == 1 && findMaps.Length == 1 && readiness[0].Offset < findMaps[0].Offset, "Terrain planning must check area readiness before inspecting heightmaps.");
         Check(readiness[0].Next != null && (readiness[0].Next.OpCode.Code == Code.Brtrue || readiness[0].Next.OpCode.Code == Code.Brtrue_S) &&
-            plan.Body.Instructions.Any(i => i.OpCode.Code == Code.Throw && i.Offset > readiness[0].Offset && i.Offset < findMaps[0].Offset), "Terrain planning ignores a false native area-readiness result.");
-        List<MethodDefinition> inspection = ClosedGraph(assembly, plan).ToList();
+            inspect.Body.Instructions.Any(i => i.OpCode.Code == Code.Throw && i.Offset > readiness[0].Offset && i.Offset < findMaps[0].Offset), "Terrain planning ignores a false native area-readiness result.");
+        List<MethodDefinition> inspection = ClosedGraph(assembly, plan).Concat(ClosedGraph(assembly, anywhere)).ToList();
         List<MethodReference> inspectionCalls = inspection.SelectMany(CallInstructions).Select(i => (MethodReference)i.Operand).ToList();
         Check(inspectionCalls.Any(m => m.DeclaringType.FullName == "TerrainComp" && m.Name == "FindTerrainCompiler"), "Terrain planning no longer inspects the existing compiler.");
         Check(!inspectionCalls.Any(m => m.Name == "GetAndCreateTerrainCompiler" || m.Name == "ClaimOwnership" || m.Name == "SetOwner" || m.Name == "InternalDoOperation" || m.Name == "Save" || m.Name == "Persist" || m.Name == "Poke"), "Candidate inspection must not create, claim, modify, or save terrain.");
@@ -265,6 +304,14 @@ internal static class TerrainContractChecks
         Instruction firstOperation = CallInstructions(apply).Single(i => ((MethodReference)i.Operand).DeclaringType.FullName == "System.Reflection.MethodBase" && ((MethodReference)i.Operand).Name == "Invoke");
         Instruction persist = CallInstructions(apply).Single(i => ((MethodReference)i.Operand).DeclaringType.FullName == snapshot.FullName && ((MethodReference)i.Operand).Name == "Persist");
         Check(snapshotConstruction.Offset < firstOperation.Offset && firstOperation.Offset < persist.Offset, "Snapshots and compiler persistence are not outside the per-vertex mutation phase.");
+        Instruction forcedMutation = CallInstructions(apply).Single(i => ((MethodReference)i.Operand).DeclaringType.FullName == transaction.FullName && ((MethodReference)i.Operand).Name == "ApplyForcedTile");
+        Check(snapshotConstruction.Offset < forcedMutation.Offset && forcedMutation.Offset < persist.Offset, "Force leveling must snapshot all compilers before writing and persist afterward.");
+        MethodDefinition forceTile = Method(transaction, "ApplyForcedTile", "System.Void", tile.FullName);
+        Check(Calls(forceTile, "ValheimModPack.PartyPrison.TerrainOverrides", "Decode") && Calls(forceTile, "ValheimModPack.PartyPrison.TerrainOverrides", "Encode") &&
+            Calls(forceTile, "ZDO", "Set") && Calls(forceTile, "UnityEngine.Mathf", "Clamp"), "Forced heights must merge a bounded saved record while preserving native array limits.");
+        Check(UsesField(forceTile, leveler.FullName, "Level") && UsesField(forceTile, leveler.FullName, "Smooth") && UsesField(forceTile, leveler.FullName, "ModifiedHeight"),
+            "Force leveling lost its native compiled terrain fallback.");
+        Check(!UsesField(forceTile, leveler.FullName, "Paint") && !UsesField(forceTile, leveler.FullName, "ModifiedPaint"), "Force leveling must preserve existing painted terrain.");
         Check(Calls(apply, "Heightmap", "GetHeight"), "Native clamp/rebuild verification is missing after applying terrain.");
         foreach (MethodDefinition method in new[] { apply, Method(transaction, "Dispose", "System.Void") }) {
             Instruction[] pokes = CallInstructions(method).Where(i => ((MethodReference)i.Operand).DeclaringType.FullName == "Heightmap" && ((MethodReference)i.Operand).Name == "Poke").ToArray();
@@ -274,7 +321,7 @@ internal static class TerrainContractChecks
         MethodDefinition snapshotConstructor = Method(snapshot, ".ctor", "System.Void", "TerrainComp", "Heightmap");
         MethodDefinition restore = Method(snapshot, "Restore", "System.Void");
         foreach (MethodDefinition method in new[] { snapshotConstructor, restore }) {
-            Check(CallInstructions(method).Count(i => ((MethodReference)i.Operand).DeclaringType.FullName == "System.Array" && ((MethodReference)i.Operand).Name == "Clone") == 5, "Rollback requires independent copies of all five terrain arrays: " + method.Name);
+            Check(CallInstructions(method).Count(i => ((MethodReference)i.Operand).DeclaringType.FullName == "System.Array" && ((MethodReference)i.Operand).Name == "Clone") == 6, "Rollback requires independent copies of all five terrain arrays and the forced-height record: " + method.Name);
             foreach (string name in new[] { "Level", "Smooth", "ModifiedHeight", "ModifiedPaint", "Paint", "Operations", "LastPoint", "LastRadius", "LastHash" })
                 Check(UsesField(method, leveler.FullName, name), "Rollback snapshot misses terrain state: " + name + " in " + method.Name);
         }
@@ -286,7 +333,27 @@ internal static class TerrainContractChecks
         Instruction restorePersist = CallInstructions(restore).Single(i => ((MethodReference)i.Operand).DeclaringType.FullName == snapshot.FullName && ((MethodReference)i.Operand).Name == "Persist");
         Instruction restoreOwner = CallInstructions(restore).Single(i => ((MethodReference)i.Operand).DeclaringType.FullName == "ZDO" && ((MethodReference)i.Operand).Name == "SetOwner");
         Check(restorePersist.Offset < restoreOwner.Offset, "Rollback gives up ownership before the original terrain is persisted.");
+        Instruction restoreRecord = CallInstructions(restore).Single(i => ((MethodReference)i.Operand).DeclaringType.FullName == "ZDO" && ((MethodReference)i.Operand).Name == "Set");
+        Check(restoreRecord.Offset < restorePersist.Offset && UsesField(snapshotConstructor, snapshot.FullName, "overrides") && UsesField(restore, snapshot.FullName, "overrides"),
+            "Rollback must restore the absolute-height payload before native Save/Poke.");
         Check(Calls(Method(transaction, "Dispose", "System.Void"), snapshot.FullName, "Restore"), "Disposing an uncommitted transaction no longer restores its snapshots.");
+
+        TypeDefinition patch = Type(assembly, "ValheimModPack.PartyPrison.TerrainForcedHeightPatch");
+        Check(patch.CustomAttributes.Any(a => a.AttributeType.FullName == "HarmonyLib.HarmonyPatch" && a.ConstructorArguments.Count == 2 &&
+            a.ConstructorArguments[0].Value is TypeReference && ((TypeReference)a.ConstructorArguments[0].Value).FullName == "TerrainComp" &&
+            (string)a.ConstructorArguments[1].Value == "ApplyToHeightmap"), "Absolute heights must patch the native compiler rebuild on every peer.");
+        MethodDefinition postfix = Method(patch, "Postfix", "System.Void", "TerrainComp", "System.Collections.Generic.List`1<System.Single>", "Heightmap");
+        Check(postfix.Parameters.Select(p => p.Name).SequenceEqual(new[] { "__instance", "__1", "__4" }) && Calls(postfix, rootName, "ApplyForcedHeights"),
+            "Forced-height postfix no longer binds the native height list and map.");
+        MethodDefinition forcedHeights = Method(leveler, "ApplyForcedHeights", "System.Void", "TerrainComp", "System.Collections.Generic.List`1<System.Single>", "Heightmap");
+        Check(Calls(forcedHeights, "ZDO", "GetByteArray") && Calls(forcedHeights, "ZDO", "get_DataRevision") && Calls(forcedHeights, "System.Object", "ReferenceEquals"),
+            "Forced-height cache must invalidate for incoming revisions and replaced payloads.");
+        Check(Calls(forcedHeights, "ValheimModPack.PartyPrison.TerrainOverrides", "Decode") && !Calls(forcedHeights, rootName, "RequireHost"),
+            "Forced heights must decode saved records on clients as well as the host.");
+        MethodDefinition resetGrass = Method(transaction, "ResetGrass", "System.Void");
+        Check(Calls(resetGrass, "System.Collections.Generic.List`1<" + tile.FullName + ">", "get_Count") &&
+            resetGrass.Body.Instructions.Any(i => i.OpCode.Code == Code.Brfalse || i.OpCode.Code == Code.Brfalse_S),
+            "Empty interior transactions must skip exterior grass/terrain regeneration.");
     }
 
     private static void BoolRoute(MethodDefinition method, string name, bool argument)
@@ -303,8 +370,16 @@ internal static class TerrainContractChecks
         Type(assembly, "ValheimModPack.PartyPrison.TerrainLeveler");
         Type(assembly, "ValheimModPack.PartyPrison.TerrainLeveler/Site");
         Type(assembly, "ValheimModPack.PartyPrison.TerrainLeveler/Transaction");
-        BoolRoute(Method(plugin, "BuildPrison", "System.Void"), "BuildPrisonCore", true);
-        BoolRoute(Method(plugin, "AutoBuildNearAltars", "System.Void"), "BuildPrisonCore", false);
+        MethodDefinition manual = Method(plugin, "BuildPrison", "System.Void");
+        Check(Calls(manual, plugin.FullName, "CapturePlacement") && Calls(manual, plugin.FullName, "BuildPrisonCore"),
+            "The console build must capture the host's forward site and use the manual core.");
+        MethodDefinition confirmed = Method(plugin, "BuildConfirmedPrison", "System.Void");
+        Check(Calls(confirmed, plugin.FullName, "BuildPrisonCore") && !Calls(confirmed, plugin.FullName, "CapturePlacement"),
+            "UI confirmation must build the frozen first-click site.");
+        Check(!plugin.Methods.Any(m => m.Name == "AutoBuildNearAltars"), "Prison construction must not run automatically beside altars.");
+        MethodDefinition core = Method(plugin, "BuildPrisonCore", "System.Void", "ValheimModPack.PartyPrison.PrisonPlacementPlan");
+        Check(Calls(core, builder.FullName, "BuildAnywhere") && !Calls(core, builder.FullName, "BuildNearAltars"),
+            "Manual prison building must prepare the forward site instead of choosing another altar candidate.");
         MethodDefinition command = Method(plugin, "Command", "System.Void", "Terminal/ConsoleEventArgs");
         Check(Calls(command, plugin.FullName, "BuildPrison"), "The build console command bypasses the manual terrain route.");
         MethodDefinition defaultBuilder = Method(builder, "BuildNearAltars", "ValheimModPack.PartyPrison.PrisonRegion");
@@ -319,15 +394,31 @@ internal static class TerrainContractChecks
         Check(apply.Offset < construct.Offset && construct.Offset < durableWrite.Offset && durableWrite.Offset < commit.Offset, "Terrain commit must follow successful building and the durable prison-state write.");
         Check(build.Body.ExceptionHandlers.Any(h => h.HandlerType == ExceptionHandlerType.Finally), "Terrain transaction is not disposed when construction fails.");
         Check(Calls(build, builder.FullName, "TryRollback"), "Failed prison-state persistence must remove the newly constructed structure.");
+
+        MethodDefinition forward = Method(builder, "BuildAnywhere", "ValheimModPack.PartyPrison.PrisonRegion", "UnityEngine.Vector3", "UnityEngine.Quaternion",
+            "ValheimModPack.PartyPrison.PrisonRegion", "System.Action`1<ValheimModPack.PartyPrison.PrisonRegion>", "System.Action`1<System.String>", "System.Action`1<System.Byte[]>");
+        List<Instruction> forwardCalls = CallInstructions(forward).ToList();
+        Instruction forwardPlan = forwardCalls.Single(i => ((MethodReference)i.Operand).DeclaringType.FullName == "ValheimModPack.PartyPrison.TerrainLeveler" && ((MethodReference)i.Operand).Name == "PlanAnywhere");
+        Instruction forwardApply = forwardCalls.Single(i => ((MethodReference)i.Operand).DeclaringType.FullName == "ValheimModPack.PartyPrison.TerrainLeveler/Site" && ((MethodReference)i.Operand).Name == "Apply");
+        Instruction forwardBuild = forwardCalls.Single(i => ((MethodReference)i.Operand).Name == "BuildPrepared");
+        Instruction forwardSave = forwardCalls.Single(i => ((MethodReference)i.Operand).DeclaringType.FullName == "System.Action`1<ValheimModPack.PartyPrison.PrisonRegion>" && ((MethodReference)i.Operand).Name == "Invoke");
+        Instruction forwardCommit = forwardCalls.Single(i => ((MethodReference)i.Operand).DeclaringType.FullName == "ValheimModPack.PartyPrison.TerrainLeveler/Transaction" && ((MethodReference)i.Operand).Name == "Commit");
+        Check(forwardPlan.Offset < forwardApply.Offset && forwardApply.Offset < forwardBuild.Offset && forwardBuild.Offset < forwardSave.Offset && forwardSave.Offset < forwardCommit.Offset,
+            "Forward terrain must be committed only after construction and durable region storage succeed.");
+        Check(Calls(forward, "ValheimModPack.PartyPrison.TerrainLeveler/Site", "get_WorldExtent") && Calls(forward, "ValheimModPack.PartyPrison.SiteClearer", "PlanForce"),
+            "Force clearance must use the actual enclosing terrain footprint.");
+        Check(forward.Body.ExceptionHandlers.Any(h => h.HandlerType == ExceptionHandlerType.Finally) && Calls(forward, builder.FullName, "TryRollback"),
+            "Forward construction failure must roll back the prepared terrain and new pieces.");
     }
 
     public static int Main(string[] args)
     {
         try {
-            if (args.Length != 2) throw new ArgumentException("Expected installed assembly_valheim.dll and PartyPrison.dll paths.");
+            if (args.Length != 2 && !(args.Length == 3 && args[2] == "--terrain-only"))
+                throw new ArgumentException("Expected installed assembly_valheim.dll and PartyPrison.dll paths, optionally --terrain-only for an isolated terrain fixture.");
             using (AssemblyDefinition native = AssemblyDefinition.ReadAssembly(args[0]))
             using (AssemblyDefinition plugin = AssemblyDefinition.ReadAssembly(args[1])) {
-                Native(native); Plugin(plugin); Mutation(plugin);
+                Native(native); if (args.Length == 2) Plugin(plugin); Mutation(plugin);
             }
             Console.WriteLine("PASS: " + checks + " native terrain and prison construction contracts. No game process launched.");
             return 0;

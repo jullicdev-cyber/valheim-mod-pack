@@ -13,11 +13,11 @@ namespace ValheimModPack.PartyPrison
         internal const int MaximumBytes = MaximumBlobBytes + 8192;
         internal const int State = 1, Heartbeat = 2, ReleaseAck = 3, Wave = 4,
             InventoryOffer = 5, InventoryClear = 6, InventoryCleared = 7,
-            WithdrawalRequest = 8, WithdrawalGrant = 9, WithdrawalAck = 10;
+            WithdrawalRequest = 8, WithdrawalGrant = 9, WithdrawalAck = 10, WorldClearance = 11;
         internal static void WriteHeader(BinaryWriter writer, long world, int kind)
         {
             if (writer == null) throw new ArgumentNullException("writer");
-            if (world == 0 || kind < State || kind > WithdrawalAck) throw new InvalidDataException("Invalid prison protocol world or message kind.");
+            if (world == 0 || kind < State || kind > WorldClearance) throw new InvalidDataException("Invalid prison protocol world or message kind.");
             if (writer.BaseStream.Position != 0) throw new InvalidDataException("Prison header must begin the message.");
             writer.Write(Version); writer.Write(world); writer.Write(kind);
         }
@@ -29,7 +29,7 @@ namespace ValheimModPack.PartyPrison
             if (reader.ReadInt32() != Version || reader.ReadInt64() != expectedWorld)
                 throw new InvalidDataException("Prison protocol/world mismatch.");
             int kind = reader.ReadInt32();
-            if (kind < State || kind > WithdrawalAck) throw new InvalidDataException("Unknown prison message kind.");
+            if (kind < State || kind > WorldClearance) throw new InvalidDataException("Unknown prison message kind.");
             return kind;
         }
         internal static void Blob(BinaryWriter writer, byte[] bytes)

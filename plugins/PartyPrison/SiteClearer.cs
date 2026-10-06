@@ -8,7 +8,7 @@ using UnityEngine;
 namespace ValheimModPack.PartyPrison
 {
     /// <summary>Bounded manual construction cleanup. Planning is read-only; removal follows successful building.</summary>
-    public static class SiteClearer
+    public static partial class SiteClearer
     {
         public const int MaximumObjects = 512;
         private const int MaximumColliders = 8192;
@@ -82,6 +82,7 @@ namespace ValheimModPack.PartyPrison
 
         public sealed class Site
         {
+            private readonly ForceSite force;
             private readonly Vector3 origin, altar;
             private readonly Quaternion rotation;
             private readonly float extent, low, high;
@@ -91,8 +92,9 @@ namespace ValheimModPack.PartyPrison
             private readonly long world;
             private readonly ZNetScene scene;
             private bool applied;
-            public int Count { get { return entries.Count; } }
-            public int Cost { get { return entries.Count; } }
+            public int Count { get { return force == null ? entries.Count : force.Count; } }
+            public int Cost { get { return Count; } }
+            internal Site(ForceSite force) { this.force = force; }
 
             internal Site(Vector3 origin, Quaternion rotation, float extent, float low, float high, Vector3 altar,
                 bool clearPlayerStructures, List<Entry> entries, ZNet network, long world, ZNetScene scene)
@@ -104,6 +106,7 @@ namespace ValheimModPack.PartyPrison
 
             public Transaction Apply()
             {
+                if (force != null) return force.Apply();
                 RequireWorld(network, world, scene);
                 if (applied) throw new InvalidOperationException("Эта очистка площадки уже была выполнена.");
                 // Re-enumerate just this footprint: new obstacles cannot slip between inspection and staging.
@@ -129,6 +132,7 @@ namespace ValheimModPack.PartyPrison
 
         public sealed class Transaction : IDisposable
         {
+            private readonly ForceTransaction force;
             private readonly List<Entry> entries;
             private readonly bool clearPlayerStructures;
             private readonly ZNet network;
@@ -136,13 +140,16 @@ namespace ValheimModPack.PartyPrison
             private readonly ZNetScene scene;
             private readonly List<Entry> claimed = new List<Entry>();
             private bool committed, disposed;
-            public bool Committed { get { return committed; } }
+            public bool Committed { get { return force == null ? committed : force.Committed; } }
+            public byte[] RemotePayload { get { return force == null ? new byte[0] : force.RemotePayload; } }
+            internal Transaction(ForceTransaction force) { this.force = force; }
 
             internal Transaction(List<Entry> entries, bool clearPlayerStructures, ZNet network, long world, ZNetScene scene)
             { this.entries = entries; this.clearPlayerStructures = clearPlayerStructures; this.network = network; this.world = world; this.scene = scene; }
 
             internal void Apply()
             {
+                if (force != null) { force.Apply(); return; }
                 RequireWorld(network, world, scene);
                 // Claim all objects before disabling the first one, preserving every original owner for rollback.
                 foreach (Entry entry in entries) {
@@ -157,6 +164,7 @@ namespace ValheimModPack.PartyPrison
             /// <summary>Call before saving the new prison region, while all work is still reversible.</summary>
             public void ValidateCommit()
             {
+                if (force != null) { force.ValidateCommit(); return; }
                 RequireWorld(network, world, scene);
                 if (disposed || committed) throw new InvalidOperationException("Очистка площадки уже завершена.");
                 foreach (Entry entry in entries) {
@@ -168,6 +176,7 @@ namespace ValheimModPack.PartyPrison
 
             public void Commit()
             {
+                if (force != null) { force.Commit(); return; }
                 ValidateCommit();
                 // Native destruction is irreversible. Never roll the prison back after the first queued deletion.
                 committed = true;
@@ -205,6 +214,7 @@ namespace ValheimModPack.PartyPrison
 
             public void Dispose()
             {
+                if (force != null) { force.Dispose(); return; }
                 if (disposed) return;
                 CheckThread();
                 if (committed) { disposed = true; return; }
@@ -470,6 +480,7 @@ namespace ValheimModPack.PartyPrison
         }
         private static void FlushDestroyedObjects()
         { FlushDestroyed.Invoke(ZDOMan.instance, null); }
+        internal static void FlushPendingDestruction() { RequireHost(); FlushDestroyedObjects(); }
         private static void RequireWorld(ZNet network, long world, ZNetScene scene)
         {
             RequireHost();

@@ -20,7 +20,7 @@ namespace ValheimModPack.PartyPrison
     [NetworkCompatibility(CompatibilityLevel.EveryoneMustHaveMod, VersionStrictness.Patch)]
     public sealed partial class Plugin : BaseUnityPlugin
     {
-        public const string Id = "valheimmodpack.partyprison", Version = "1.1.4";
+        public const string Id = "valheimmodpack.partyprison", Version = "1.2.0";
         internal const string LoanKey = "VMP_PP_Loan", InmateKey = "VMP_PP_Inmate";
         private const string RpcName = PrisonWire.RpcName;
         internal static Plugin Active;
@@ -31,6 +31,7 @@ namespace ValheimModPack.PartyPrison
         private ZNet network;
         private long world, sequence, receivedSequence;
         private PrisonRegion region;
+        private PrisonPlacementPlan pendingPlacement;
         private SentenceState localSentence;
         private bool receivedState, releaseTeleport, releaseArrived, fatalStore, defeatReturn;
         private long releaseSave;
@@ -57,7 +58,7 @@ namespace ValheimModPack.PartyPrison
             shortcut = Config.Bind("Controls", "OpenPrison", new KeyboardShortcut(KeyCode.F12, KeyCode.LeftControl), "Prison host controls / prisoner activities. Rebind in Bindrune.");
             window = new PrisonWindow(new PrisonUiBindings { IsHost = () => Hosting, CanUse = CanUse, Players = Roster,
                 LocalSentence = () => localSentence == null ? null : localSentence.Copy(), Impose = Impose, Release = Release,
-                Build = BuildPrison, Wave = RequestWave, Move = Move, Kit = GiveKit, CanFight = () => FightReady, CustodyStatus = CustodyStatus,
+                PrepareBuild = PrepareBuild, Build = BuildConfirmedPrison, Wave = RequestWave, Move = Move, Kit = GiveKit, CanFight = () => FightReady, CustodyStatus = CustodyStatus,
                 Notice = () => notice, Translate = T, Error = e => Report(e.Message) });
             harmony = new Harmony(Id); harmony.PatchAll(typeof(Plugin).Assembly);
             new Terminal.ConsoleCommand("prison", "Prison: open, build, players, jail <account/name> <minutes> [reason], release <account/name>, cell, arena, wave <0/1/2>", (Terminal.ConsoleEvent)Command);
@@ -76,6 +77,7 @@ namespace ValheimModPack.PartyPrison
                 try { string directory = Path.Combine(Path.GetDirectoryName(BepInEx.Paths.BepInExRootPath), "ValheimModpack", "PartyPrison"); store = new SentenceStore(directory, id); custody = new CustodyStore(directory, id); withdrawal = new CustodyWithdrawal(directory, id); region = store.Region; receivedState = true; }
                 catch (Exception e) { fatalStore = true; Report("Prison state cannot be opened; admissions blocked: " + e.Message); }
             }
+            SiteClearer.ConfigureRegion(region);
             foreach (ZNetPeer peer in current.GetPeers()) Register(peer);
             nextHost = lastHostTick = Time.realtimeSinceStartup; nextHeartbeat = 0;
         }
@@ -85,7 +87,7 @@ namespace ValheimModPack.PartyPrison
             if (store != null) { store.Dispose(); store = null; }
             ResetCustody(); ResetWithdrawal(); wire.Clear();
             peers.Clear(); presences.Clear(); samples.Clear(); requests.Clear(); releaseBaselines.Clear();
-            region = null; localSentence = null; network = null; world = sequence = receivedSequence = 0;
+            region = null; pendingPlacement = null; SiteClearer.ConfigureRegion(null); localSentence = null; network = null; world = sequence = receivedSequence = 0;
             receivedState = releaseTeleport = releaseArrived = fatalStore = defeatReturn = false; releaseSave = 0;
             nextArmory = nextWave = nextEnforce = nextMobCleanup = 0; notice = lastError = "";
         }
@@ -256,6 +258,10 @@ namespace ValheimModPack.PartyPrison
         }
         private void ClientMessage(int kind, BinaryReader reader)
         {
+            if (kind == PrisonProtocol.WorldClearance) {
+                byte[] payload = PrisonProtocol.Blob(reader); PrisonProtocol.End(reader);
+                SiteClearer.ApplyRemote(payload); return;
+            }
             if (ClientWithdrawalMessage(kind, reader) || ClientCustodyMessage(kind, reader)) return;
             if (kind != PrisonProtocol.State) throw new InvalidDataException("Unknown prison state message.");
             long serial = reader.ReadInt64(); PrisonRegion nextRegion = PrisonProtocol.Region(reader); SentenceState state = PrisonProtocol.Sentence(reader);
@@ -263,7 +269,7 @@ namespace ValheimModPack.PartyPrison
             if (serial <= receivedSequence) return;
             if (state != null && nextRegion == null) throw new InvalidDataException("Sentence without a prison.");
             if (localSentence != null && state == null && !releaseArrived) throw new InvalidDataException("Unconfirmed prison release.");
-            receivedSequence = serial; receivedState = true; region = nextRegion;
+            receivedSequence = serial; receivedState = true; region = nextRegion; SiteClearer.ConfigureRegion(region);
             if (localSentence == null || state == null || localSentence.SentenceId != state.SentenceId)
             { releaseArrived = false; releaseSave = 0; }
             localSentence = state;
@@ -345,7 +351,7 @@ namespace ValheimModPack.PartyPrison
         private void Impose(string account, double minutes, string reason)
         {
             RequireHost(); ZNetPeer peer = peers.Values.FirstOrDefault(p => Ready(p) && WC.GetAdministrativeOwner(p) == account); PrisonPoint position;
-            if (region == null || ArenaBuilder.LayoutVersion(region) < ArenaBuilder.CurrentLayoutVersion) throw new InvalidOperationException(T("Сначала создайте новую тюрьму возле алтарей.", "Build the new prison near the altars first."));
+            if (region == null || ArenaBuilder.LayoutVersion(region) < ArenaBuilder.CurrentLayoutVersion) throw new InvalidOperationException(T("Сначала постройте тюрьму через Ctrl+F12 или /prison build.", "Build the prison using Ctrl+F12 or /prison build first."));
             if (custody.HasOutstanding || store.All().Length != 0) throw new InvalidOperationException(T("Четыре сундука заняты. Дождитесь освобождения и возврата всех вещей.", "The four chests are occupied. Wait for release and collection of all belongings."));
             CustodyInventory.RequireEmptyChests(Chests());
             if (new UTF8Encoding(false, true).GetByteCount(reason ?? "") > 1024) throw new InvalidOperationException(T("Сократите причину наказания.", "Shorten the sentence reason."));
@@ -357,21 +363,50 @@ namespace ValheimModPack.PartyPrison
         private void Release(string account)
         { RequireHost(); store.RequestRelease(true, account); notice = T("Освобождение назначено. Отключённый игрок будет освобождён при входе.", "Release requested. An offline player will be released on reconnect."); nextHost = Time.realtimeSinceStartup; }
         private void BuildPrison()
-        { BuildPrisonCore(true); }
+        { BuildPrisonCore(CapturePlacement()); }
 
-        private void BuildPrisonCore(bool levelGround)
+        private PrisonPlacementPlan CapturePlacement()
         {
-            RequireHost(); if (region != null && ArenaBuilder.LayoutVersion(region) >= ArenaBuilder.CurrentLayoutVersion) throw new InvalidOperationException(T("Тюрьма этого мира уже создана.", "This world's prison is already configured."));
+            RequireHost(); Player player = Player.m_localPlayer;
+            if (player == null || player.IsDead() || player.IsTeleporting()) throw new InvalidOperationException(T("Войдите в мир живым персонажем хоста.", "Enter the world with the host's living character."));
+            return PrisonPlacementPlan.Create(Point(player.transform.position), Point(player.GetLookDir()), Point(player.GetLookYaw() * Vector3.forward));
+        }
+
+        private void PrepareBuild() { pendingPlacement = CapturePlacement(); }
+
+        private void BuildConfirmedPrison()
+        {
+            PrisonPlacementPlan placement = pendingPlacement; pendingPlacement = null;
+            if (placement == null) throw new InvalidOperationException(T("Выберите место постройки ещё раз.", "Choose the construction site again."));
+            BuildPrisonCore(placement);
+        }
+
+        private void BroadcastClearance(byte[] payload)
+        {
+            if (payload == null || payload.Length == 0) return;
+            foreach (ZNetPeer peer in peers.Values.ToArray()) if (Ready(peer))
+                Send(peer.m_rpc, PrisonProtocol.WorldClearance, w => PrisonProtocol.Blob(w, payload));
+        }
+
+        private void BuildPrisonCore(PrisonPlacementPlan placement)
+        {
+            RequireHost();
+            Logger.LogInfo("Prison build requested: center=" + Vector(placement.Origin).ToString("F1") +
+                "; yaw=" + placement.FacingYawDegrees.ToString("F1", CultureInfo.InvariantCulture));
             if (custody.HasOutstanding) throw new InvalidOperationException("Collect all stored belongings before rebuilding.");
             if (store.All().Length != 0) throw new InvalidOperationException("Release all prisoners first.");
+            if (region != null && ArenaBuilder.LayoutVersion(region) >= ArenaBuilder.CurrentLayoutVersion) CustodyInventory.RequireEmptyChests(Chests());
             PrisonRegion old = region;
+            List<ZDOID> oldObjects = ArenaBuilder.CaptureStructure(old);
             string clearFailure = null;
-            ArenaBuilder.BuildNearAltars(levelGround, delegate(PrisonRegion created) { store.SetRegion(true, created); }, message => clearFailure = message);
+            ArenaBuilder.BuildAnywhere(Vector(placement.Origin), Quaternion.Euler(0, (float)placement.FacingYawDegrees, 0), old,
+                delegate(PrisonRegion created) { store.SetRegion(true, created); }, message => clearFailure = message, BroadcastClearance);
             region = store.Region; nextHost = Time.realtimeSinceStartup;
-            if (old != null) ArenaBuilder.RemoveStructure(old); ArenaBuilder.SetExitLocked(region, false); network.Save(true, false, false);
-            notice = levelGround
-                ? T("Площадка расчищена и выровнена. Тюрьма создана возле алтарей: камера, арена и четыре железных сундука.", "Site cleared and levelled. Prison built near the altars: cell, arena and four iron chests.")
-                : T("Тюрьма создана возле алтарей: камера, арена и четыре железных сундука.", "Prison built near the altars: cell, arena and four iron chests.");
+            SiteClearer.ConfigureRegion(region);
+            ArenaBuilder.RemoveCapturedStructure(oldObjects); SiteClearer.FlushPendingDestruction();
+            ArenaBuilder.SetExitLocked(region, false); network.Save(true, false, false);
+            Logger.LogInfo("Prison built and saved at " + Vector(region.Center).ToString("F1") + "; previous pieces captured=" + oldObjects.Count);
+            notice = T("Тюрьма построена перед вами. Площадка расчищена и выровнена; вещи и питомцы перенесены наружу.", "Prison built in front of you. Site cleared and levelled; belongings and pets moved outside.");
             if (clearFailure != null) Report(clearFailure);
         }
         private void Move(bool arena)

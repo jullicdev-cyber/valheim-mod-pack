@@ -28,7 +28,7 @@ namespace ValheimModPack.PartyPrison
         public static int Main()
         {
             try {
-                AltarProtection(); HeightDecision(); TerrainLimits(); BoundedInput();
+                AltarProtection(); HeightDecision(); TerrainLimits(); BoundedInput(); AnywhereDecision(); SavedOverrides(); InteriorDecision();
                 Console.WriteLine("PartyPrison terrain planning checks passed: " + assertions);
                 return 0;
             }
@@ -143,6 +143,90 @@ namespace ValheimModPack.PartyPrison
                 Reject(delegate { Plan(valid, corrupt, 1); }, "invalid original terrain height");
                 Reject(delegate { TerrainPlan.Create(52d, 0d, 0d, 0d, invalid, valid, valid, 1); }, "invalid world water level");
             }
+        }
+
+        private static void AnywhereDecision()
+        {
+            double[] rough = { -45d, 0d, 85d, 120d };
+            TerrainLevelPlan plan = TerrainPlan.CreateAnywhere(0d, 0d, 31d, rough, 4);
+            Check(plan.TargetHeight == 31d && plan.FloorHeight == 31.15d, "explicit plateau height survives rough and submerged original ground");
+            Check(plan.LowestGroundHeight == -45d && plan.HighestGroundHeight == 120d && plan.LargestGroundChange == 89d,
+                "anywhere planning retains actual large cut/fill rather than hiding a native clamp");
+            rough[0] = -200d;
+            Check(plan.LowestGroundHeight == -45d, "anywhere decision owns its immutable summary");
+            Check(TerrainPlan.CreateAnywhere(0d, 0d, -60d, Repeated(500d, 4), 1).TargetHeight == -60d,
+                "explicit administrator height can lower ground beyond native limits");
+            foreach (double invalid in new[] { Double.NaN, Double.PositiveInfinity, Double.NegativeInfinity, 10001d }) {
+                Reject(delegate { TerrainPlan.CreateAnywhere(0d, 0d, invalid, Repeated(40d, 4), 1); }, "invalid forced plateau height");
+                Reject(delegate { TerrainPlan.CreateAnywhere(0d, 0d, 40d, Repeated(invalid, 4), 1); }, "invalid forced ground sample");
+            }
+            Reject(delegate { TerrainPlan.CreateAnywhere(20001d, 0d, 40d, Repeated(40d, 4), 1); }, "forced plateau outside bounded coordinates");
+            Reject(delegate { TerrainPlan.CreateAnywhere(0d, 0d, 40d, null, 1); }, "missing forced ground samples");
+            Reject(delegate { TerrainPlan.CreateAnywhere(0d, 0d, 40d, Repeated(40d, 3), 1); }, "incomplete forced ground samples");
+            Reject(delegate { TerrainPlan.CreateAnywhere(0d, 0d, 40d, Repeated(40d, TerrainPlan.MaximumSamples + 1), 1); }, "unbounded forced ground samples");
+            Reject(delegate { TerrainPlan.CreateAnywhere(0d, 0d, 40d, Repeated(40d, 4), 0); }, "missing forced compiler");
+            Check(Math.Abs(TerrainPlan.EnclosingExtent(45d) - 14.5d * Math.Sqrt(2d)) < 1E-10, "diagonal footprint encloses the complete rotated terrain skirt");
+            Check(Math.Abs(TerrainPlan.EnclosingExtent(90d) - 14.5d) < 1E-10, "cardinal footprint requires no diagonal expansion");
+            for (int yaw = -360; yaw <= 360; yaw += 7) {
+                double a = yaw * Math.PI / 180d, extent = TerrainPlan.EnclosingExtent(yaw);
+                foreach (double x in new[] { -14.5d, 14.5d }) foreach (double z in new[] { -14.5d, 14.5d }) {
+                    Check(Math.Abs(x * Math.Cos(a) + z * Math.Sin(a)) <= extent + 1E-9 &&
+                        Math.Abs(z * Math.Cos(a) - x * Math.Sin(a)) <= extent + 1E-9,
+                        "rotated square corners remain inside the exact shared terrain/clearance extent");
+                }
+            }
+        }
+
+        private static byte[] WithInt(byte[] original, int offset, int value)
+        { byte[] copy = (byte[])original.Clone(); Array.Copy(BitConverter.GetBytes(value), 0, copy, offset, 4); return copy; }
+
+        private static void SavedOverrides()
+        {
+            Dictionary<int, float> original = new Dictionary<int, float>();
+            original[8] = -50.25f; original[0] = 120.5f; original[4] = 31f;
+            byte[] saved = TerrainOverrides.Encode(3, original);
+            SortedDictionary<int, float> loaded = TerrainOverrides.Decode(saved, 3);
+            Check(loaded.Count == 3 && loaded[0] == 120.5f && loaded[8] == -50.25f && loaded[4] == 31f,
+                "sparse elevations beyond native +/-8 survive save/reload serialization");
+            original[0] = 2f;
+            Check(TerrainOverrides.Decode(saved, 3)[0] == 120.5f, "serialized bytes own the original height values");
+            Check(TerrainOverrides.Decode(null, 3).Count == 0 && TerrainOverrides.Decode(new byte[0], 3).Count == 0,
+                "ordinary unmarked compilers and rolled-back empty records have no forced vertices");
+            Reject(delegate { TerrainOverrides.Decode(WithInt(saved, 0, 2), 3); }, "unknown record version");
+            Reject(delegate { TerrainOverrides.Decode(saved, 4); }, "record for another compiler width");
+            Reject(delegate { TerrainOverrides.Decode(WithInt(saved, 8, -1), 3); }, "negative saved count");
+            Reject(delegate { TerrainOverrides.Decode(WithInt(saved, 8, 1000000), 3); }, "unbounded saved count before allocation");
+            Reject(delegate { TerrainOverrides.Decode(WithInt(saved, 20, 0), 3); }, "duplicate saved vertex");
+            Reject(delegate { TerrainOverrides.Decode(WithInt(saved, 12, -1), 3); }, "negative saved vertex");
+            Reject(delegate { TerrainOverrides.Decode(WithInt(saved, 28, 9), 3); }, "vertex beyond compiler arrays");
+            Reject(delegate { TerrainOverrides.Decode(WithInt(saved, 16, BitConverter.ToInt32(BitConverter.GetBytes(Single.NaN), 0)), 3); }, "nonfinite saved height");
+            byte[] extra = new byte[saved.Length + 1]; Array.Copy(saved, extra, saved.Length);
+            Reject(delegate { TerrainOverrides.Decode(extra, 3); }, "trailing unrecognized record bytes");
+            byte[] truncated = new byte[saved.Length - 1]; Array.Copy(saved, truncated, truncated.Length);
+            Reject(delegate { TerrainOverrides.Decode(truncated, 3); }, "truncated height record");
+            Reject(delegate { TerrainOverrides.Encode(3, new Dictionary<int, float> { { -1, 1f } }); }, "negative serialized index");
+            Reject(delegate { TerrainOverrides.Encode(3, new Dictionary<int, float> { { 9, 1f } }); }, "serialized index beyond compiler");
+            Reject(delegate { TerrainOverrides.Encode(3, new Dictionary<int, float> { { 0, Single.PositiveInfinity } }); }, "nonfinite serialized height");
+            Dictionary<int, float> maximum = new Dictionary<int, float>();
+            for (int i = 0; i < TerrainOverrides.MaximumEntries; ++i) maximum[i] = i % 100;
+            byte[] full = TerrainOverrides.Encode(TerrainOverrides.MaximumPitch, maximum);
+            Check(full.Length == 12 + TerrainOverrides.MaximumEntries * 8 &&
+                TerrainOverrides.Decode(full, TerrainOverrides.MaximumPitch).Count == TerrainOverrides.MaximumEntries,
+                "repeated edits remain bounded to one entry per compiler vertex");
+            Reject(delegate { TerrainOverrides.Decode(full, TerrainOverrides.MaximumPitch + 1); }, "unsupported oversized compiler");
+        }
+
+        private static void InteriorDecision()
+        {
+            TerrainLevelPlan interior = TerrainPlan.CreateInterior(42d, -15d, 5020d);
+            Check(interior.TargetHeight == 5020d && interior.LowestGroundHeight == 5020d && interior.HighestGroundHeight == 5020d,
+                "virtual interior clearing stays at the physical floor instead of sweeping exterior ground");
+            Check(interior.SampleCount == 0 && interior.CompilerCount == 0 && interior.LargestGroundChange == 0d,
+                "virtual interior planning explicitly performs no exterior terrain operation");
+            foreach (double invalid in new[] { Double.NaN, Double.PositiveInfinity, Double.NegativeInfinity, 10001d })
+                Reject(delegate { TerrainPlan.CreateInterior(0d, 0d, invalid); }, "invalid virtual floor height");
+            Reject(delegate { TerrainPlan.CreateInterior(20001d, 0d, 5020d); }, "virtual floor outside bounded coordinates");
+            Reject(delegate { TerrainPlan.CreateInterior(0d, Double.NaN, 5020d); }, "nonfinite virtual floor coordinate");
         }
     }
 }

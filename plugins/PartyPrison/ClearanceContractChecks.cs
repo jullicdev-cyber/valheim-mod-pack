@@ -45,6 +45,12 @@ internal static class ClearanceContractChecks
     private static bool Calls(MethodDefinition method, string type, string name)
     { return CallInstructions(method).Any(i => ((MethodReference)i.Operand).DeclaringType.FullName == type && ((MethodReference)i.Operand).Name == name); }
 
+    private static bool UsesField(MethodDefinition method, string type, string name)
+    { return method.Body.Instructions.Any(i => i.Operand is FieldReference && ((FieldReference)i.Operand).DeclaringType.FullName == type && ((FieldReference)i.Operand).Name == name); }
+
+    private static bool GenericType(MethodDefinition method, string type)
+    { return CallInstructions(method).Select(i => i.Operand).OfType<GenericInstanceMethod>().Any(m => m.GenericArguments.Any(a => a.FullName == type)); }
+
     private static Instruction Call(MethodDefinition method, string type, string name)
     {
         Instruction[] matches = CallInstructions(method).Where(i => ((MethodReference)i.Operand).DeclaringType.FullName == type &&
@@ -137,6 +143,14 @@ internal static class ClearanceContractChecks
         MethodDefinition prepare = Method(manager, "PrepareSave");
         Check(!Calls(prepare, "ZDOMan", "SendDestroyed"),
             "Native world-save queue behavior changed; recheck whether the explicit destruction flush is still required.");
+        MethodDefinition create = Method(scene, "CreateObject", "ZDO");
+        Check(Calls(create, "UnityEngine.Object", "Instantiate") && create.ReturnType.FullName == "UnityEngine.GameObject",
+            "Native object-load hook no longer receives the instantiated object after its Awake.");
+        TypeDefinition proxy = Type(game, "LocationProxy");
+        MethodDefinition spawn = Method(proxy, "SpawnLocation");
+        Check(spawn.ReturnType.FullName == "System.Boolean" && UsesField(spawn, proxy.FullName, "m_instance") &&
+            Calls(spawn, "ZoneSystem", "SpawnProxyLocation") && Calls(spawn, "UnityEngine.Transform", "SetParent") && Calls(spawn, "ZNetView", "LoadFields"),
+            "Saved static-mask replay requires the spawned location to be parented to its proxy before the postfix.");
     }
 
     private static void Clearance(AssemblyDefinition plugin)
@@ -284,6 +298,121 @@ internal static class ClearanceContractChecks
             "The native destruction batch is no longer synchronously flushed using cached SendDestroyed metadata.");
     }
 
+    private static void ForceClearance(AssemblyDefinition plugin)
+    {
+        string rootName = Namespace + "SiteClearer";
+        TypeDefinition clearer = Type(plugin, rootName), site = Type(plugin, rootName + "/ForceSite"),
+            entry = Type(plugin, rootName + "/ForceEntry"), node = Type(plugin, rootName + "/MoveNode"), transaction = Type(plugin, rootName + "/ForceTransaction");
+        MethodDefinition plan = Method(clearer, "PlanForce", "UnityEngine.Vector3", "UnityEngine.Quaternion", "System.Single", "System.Single", "System.Single", Namespace + "PrisonRegion");
+        List<MethodReference> planCalls = Graph(plugin, plan).SelectMany(CallInstructions).Select(i => (MethodReference)i.Operand).ToList();
+        Check(Calls(plan, clearer.FullName, "RequireHost") && Calls(plan, "ZNetScene", "IsAreaReady"), "Force planning must remain host-only and inspect loaded network objects.");
+        Check(!planCalls.Any(m => m.Name == "SetActive" || m.Name == "Destroy" || m.Name == "DestroyZDO" || m.Name == "SetOwner" ||
+            m.Name == "ClaimOwnership" || m.Name == "SetPosition" || m.Name == "SetRotation" || m.Name == "Move" ||
+            m.DeclaringType.FullName == "System.Reflection.MethodBase" && m.Name == "Invoke"), "Force planning must not alter geometry, ownership, saved positions, or inventories.");
+        Check(!planCalls.Any(m => m.DeclaringType.FullName == "UnityEngine.Object" && m.Name.StartsWith("Find", StringComparison.Ordinal)),
+            "Force inspection must use bounded collision and sector queries instead of global scene scans.");
+        MethodDefinition gather = Method(site, "Gather");
+        Check(Calls(gather, "UnityEngine.Physics", "OverlapBox") && Calls(gather, "ZDOMan", "FindSectorObjects") &&
+            gather.Body.Instructions.Any(i => IsInt(i, 65536)) && gather.Body.Instructions.Any(i => IsInt(i, 8192)),
+            "Force clearance must bound both collision and colliderless spawn-source enumeration.");
+        Check(GenericType(gather, "Heightmap") && GenericType(gather, "TerrainComp") && Calls(gather, clearer.FullName, "OccupiedPlayer"),
+            "Force clearance must preserve terrain compilers and explicitly guard actual players.");
+        MethodDefinition preserve = Method(clearer, "PreserveRoot", "UnityEngine.GameObject", "ZDO");
+        Check(GenericType(preserve, "ItemDrop") && GenericType(preserve, "Container") && Calls(preserve, "ZDO", "GetByteArray") &&
+            Calls(preserve, "ZDO", "GetString") && UsesField(preserve, "ZDOVars", "s_items"),
+            "Storage and loose loot must be moved with current byte-array and legacy inventory data intact.");
+        Check(Calls(preserve, "Character", "IsTamed") && Calls(preserve, "Character", "IsBoss") && Calls(preserve, "Character", "GetFaction") &&
+            UsesField(preserve, "ZDOVars", "s_tamed") && Calls(preserve, clearer.FullName, "HasInventory"),
+            "Forced removal must preserve pets, bosses, friendly actors, and modded inventory roots.");
+        MethodDefinition select = Method(site, "AddNetwork", "ZNetView", "System.Collections.Generic.Dictionary`2<UnityEngine.GameObject," + entry.FullName + ">");
+        Check(Calls(select, clearer.FullName, "PreserveRoot") && Calls(select, "UnityEngine.Transform", "IsChildOf") && GenericType(select, "ZNetView"),
+            "Preserved network parents must carry their complete child graph, and removed roots must enumerate separate child ZDOs.");
+
+        MethodDefinition apply = Method(transaction, "Apply");
+        Instruction claim = Call(apply, entry.FullName, "Claim"), stage = Call(apply, entry.FullName, "Stage"), record = Call(apply, node.FullName, "RecordStagedRevision");
+        Check(claim.Offset < stage.Offset && stage.Offset < record.Offset && Calls(apply, "UnityEngine.Physics", "SyncTransforms"),
+            "All object ownership must be claimed before staging, and the post-move revision must then be recorded.");
+        MethodDefinition stageEntry = Method(entry, "Stage");
+        Check(Calls(stageEntry, "UnityEngine.Transform", "SetParent") && Calls(stageEntry, node.FullName, "Move") &&
+            Calls(stageEntry, "UnityEngine.GameObject", "SetActive"), "Force staging must relocate preserved roots and deactivate removable geometry reversibly.");
+        MethodDefinition move = Method(node, "Move", "UnityEngine.Vector3");
+        Check(Calls(move, "ZDO", "SetPosition") && Calls(move, "ZDO", "SetRotation") && Calls(move, "ZSyncTransform", "SyncNow"),
+            "Relocation must update native saved position/rotation and network transform state.");
+        List<MethodReference> movingCalls = Graph(plugin, move).SelectMany(CallInstructions).Select(i => (MethodReference)i.Operand).ToList();
+        Check(!movingCalls.Any(m => m.DeclaringType.FullName == "Inventory" || m.Name == "SaveInventory" || m.Name == "DropItems"),
+            "Moving storage must preserve original ZDO/inventory bytes rather than reload or rewrite its inventory.");
+        MethodDefinition stale = Method(node, "Check", "System.Boolean");
+        Check(Calls(stale, "ZDOMan", "GetZDO") && Calls(stale, "ZDO", "get_DataRevision") && UsesField(stale, node.FullName, "stagedRevision") &&
+            Calls(stale, "ZNetView", "IsOwner") && Calls(stale, "ZDO", "IsOwner"), "Force validation must check immutable identity, staged revision, and native ownership.");
+        MethodDefinition restore = Method(entry, "Restore");
+        Check(Calls(restore, "UnityEngine.Transform", "SetParent") && Calls(restore, "UnityEngine.Transform", "SetPositionAndRotation") &&
+            Calls(restore, node.FullName, "Restore") && Calls(restore, node.FullName, "RestoreOwner"), "Force rollback must restore original hierarchy, pose, and owners.");
+
+        MethodDefinition validate = Method(transaction, "ValidateCommit");
+        Instruction packet = Call(validate, clearer.FullName, "MakePayload"), masks = Call(validate, clearer.FullName, "PrepareMasks");
+        Check(Calls(validate, clearer.FullName, "RequireWorld") && Calls(validate, entry.FullName, "Check") &&
+            UsesField(validate, transaction.FullName, "preparedMasks"), "Force precommit must validate world/state and store its prepared cumulative proxy masks.");
+        MethodDefinition prepareMasks = Method(clearer, "PrepareMasks", "System.Collections.Generic.List`1<" + entry.FullName + ">");
+        Check(prepareMasks.Body.Variables.Any(v => v.VariableType.FullName == "System.Collections.Generic.Dictionary`2<ZDO,System.Collections.Generic.List`1<System.String>>") &&
+            prepareMasks.Body.Variables.Any(v => v.VariableType.FullName == "System.Collections.Generic.Dictionary`2<ZDO,System.Byte[]>"),
+            "Static-mask capacity must be computed cumulatively once per shared proxy ZDO.");
+        Check(Calls(prepareMasks, clearer.FullName, "ReadMasks") && Calls(prepareMasks, "ZPackage", "Size") &&
+            prepareMasks.Body.Instructions.Any(i => IsInt(i, 8192)) && prepareMasks.Body.Instructions.Any(i => IsInt(i, 1048576)) &&
+            prepareMasks.Body.Instructions.Count(i => i.OpCode.Code == Code.Throw) >= 3 && !Calls(prepareMasks, "ZDO", "Set"),
+            "Cumulative static paths, count, and bytes must be bounded before persistence, without changing proxy data during validation.");
+        MethodDefinition payload = Method(clearer, "MakePayload", site.FullName);
+        Check(payload.Body.Instructions.Any(i => IsInt(i, 8192)) && payload.Body.Instructions.Any(i => IsInt(i, 1048576)) &&
+            payload.Body.Instructions.Count(i => i.OpCode.Code == Code.Throw) >= 2, "Remote move/static packet capacity must be validated before durable prison storage.");
+        Check(packet.Offset < masks.Offset, "Force payload and masks must both be prepared by the reversible validation phase.");
+        MethodDefinition commit = Method(transaction, "Commit");
+        Instruction latch = commit.Body.Instructions.Single(i => i.OpCode.Code == Code.Stfld && i.Operand is FieldReference && ((FieldReference)i.Operand).Name == "committed");
+        Instruction deletion = Call(commit, "ZNetScene", "Destroy");
+        Check(IsInt(latch.Previous, 1) && latch.Offset < deletion.Offset && UsesField(commit, transaction.FullName, "preparedMasks") &&
+            !Calls(commit, clearer.FullName, "PrepareMasks") && !Calls(commit, clearer.FullName, "ReadMasks"),
+            "Irreversible commit must persist exactly the already-preflighted cumulative mask blobs before deletion.");
+        Check(Calls(commit, "ZDO", "Set") && Calls(commit, "ZDOMan", "ForceSendZDO") && Calls(commit, clearer.FullName, "FlushDestroyedObjects") &&
+            Calls(commit, "ZDOMan", "GetZDO") && UsesField(commit, node.FullName, "Id"), "Force commit must persist moves/masks, flush native deletion, and verify immutable removed IDs.");
+
+        MethodDefinition configure = Method(clearer, "ConfigureRegion", Namespace + "PrisonRegion");
+        MethodDefinition reapply = Method(clearer, "ReapplyCurrentStaticRegion");
+        Check(Calls(configure, "ZNet", "GetWorldUID") && UsesField(configure, clearer.FullName, "staticRegionWorld") &&
+            Calls(configure, clearer.FullName, "SameRegion") && Calls(configure, clearer.FullName, "ReapplyCurrentStaticRegion"),
+            "Changed received regions must replay loaded static geometry immediately, with identical states avoiding repeated scans.");
+        Instruction worldQuery = Call(reapply, "ZNet", "GetWorldUID"), query = Call(reapply, "UnityEngine.Physics", "OverlapBox");
+        Check(worldQuery.Offset < query.Offset && UsesField(reapply, clearer.FullName, "staticRegionWorld") &&
+            reapply.Body.Instructions.Any(i => i.OpCode.Code == Code.Ret && i.Offset > worldQuery.Offset && i.Offset < query.Offset),
+            "Static footprint replay must return before any query when the cached world identity differs.");
+        Check(Calls(reapply, clearer.FullName, "get_CollisionMask") && GenericType(reapply, "Heightmap") && GenericType(reapply, "Player") &&
+            Calls(reapply, clearer.FullName, "StaticParent"), "Raw static replay must share the physical mask and preserve terrain, players, and ordinary network roots.");
+        Check(UsesField(reapply, Namespace + "PrisonRegion", "Center") && UsesField(reapply, Namespace + "PrisonRegion", "HalfHeight") &&
+            Calls(reapply, "UnityEngine.Mathf", "Clamp") && !reapply.Body.Instructions.Any(i => i.OpCode.Code == Code.Ldc_R4 && Math.Abs((float)i.Operand) == 10000f),
+            "Loaded outdoor-prison replay must stay in its saved vertical volume and exclude virtual dungeon rooms sharing the same X/Z.");
+        MethodDefinition replay = Method(clearer, "ReapplyStatic", "UnityEngine.GameObject");
+        Check(Calls(replay, clearer.FullName, "ReadMasks") && Calls(replay, clearer.FullName, "ApplyStaticMasks") &&
+            replay.Body.Instructions.Any(i => i.OpCode.Code == Code.Ldstr && (string)i.Operand == "VMP_PP_StorageMoved"),
+            "Loaded proxy masks and relocated-storage support protection must be restored from saved ZDO data.");
+        foreach (KeyValuePair<string, string> hook in new[] {
+            new KeyValuePair<string,string>("ForceClearanceSceneLoad", "ReapplyStatic"),
+            new KeyValuePair<string,string>("ForceClearanceLocationLoad", "ReapplyStatic"),
+            new KeyValuePair<string,string>("ForceClearanceZoneLoad", "ReapplyZone"),
+            new KeyValuePair<string,string>("ForceClearanceDungeonLoad", "ReapplyStatic") }) {
+            TypeDefinition patch = Type(plugin, Namespace + hook.Key);
+            Check(patch.CustomAttributes.Any(a => a.AttributeType.FullName == "HarmonyLib.HarmonyPatch") &&
+                patch.Methods.Where(m => m.Name == "Postfix").Any(m => Calls(m, clearer.FullName, hook.Value)),
+                "Persistent clearance must replay after native scene, location, zone, and dungeon creation: " + hook.Key);
+        }
+        MethodDefinition remote = Method(clearer, "ApplyRemote", "System.Byte[]");
+        Instruction parseEnd = Call(remote, "ZPackage", "GetPos"), firstMove = Call(remote, clearer.FullName, "ApplyPose");
+        Check(Calls(remote, "ZNet", "GetWorldUID") && parseEnd.Offset < firstMove.Offset && Calls(remote, "UnityEngine.Physics", "SyncTransforms"),
+            "Authenticated remote clearance must validate the entire world-bound packet before moving objects.");
+        Instruction detach = Call(remote, "UnityEngine.Transform", "SetParent");
+        Check(Calls(remote, "System.Collections.Generic.HashSet`1<UnityEngine.Transform>", "Contains") &&
+            Calls(remote, "UnityEngine.Transform", "get_parent") && detach.Previous != null &&
+            remote.Body.Instructions.Any(i => (i.OpCode.Code == Code.Brtrue || i.OpCode.Code == Code.Brtrue_S) && i.Offset < detach.Offset &&
+                i.Operand is Instruction && ((Instruction)i.Operand).Offset > detach.Offset && ((Instruction)i.Operand).Offset <= firstMove.Offset),
+            "Remote relocation must detach only graph roots and preserve descendants whose ancestor is also moved.");
+    }
+
     private static void Integration(AssemblyDefinition plugin)
     {
         TypeDefinition builder = Type(plugin, Namespace + "ArenaBuilder");
@@ -311,17 +440,47 @@ internal static class ClearanceContractChecks
             "Partial clearing failures must reach the supplied visible error reporter.");
 
         TypeDefinition runtime = Type(plugin, Namespace + "Plugin");
-        foreach (KeyValuePair<string, bool> route in new[] {
-            new KeyValuePair<string, bool>("BuildPrison", true), new KeyValuePair<string, bool>("AutoBuildNearAltars", false) }) {
-            MethodDefinition method = Method(runtime, route.Key);
-            Instruction invoke = Call(method, runtime.FullName, "BuildPrisonCore");
-            Check(IsInt(invoke.Previous, route.Value ? 1 : 0),
-                "Destructive site clearing must be restricted to manual generation; changed route: " + route.Key);
-        }
-        MethodDefinition buildCore = Method(runtime, "BuildPrisonCore", "System.Boolean");
-        Instruction buildSite = Call(buildCore, builder.FullName, "BuildNearAltars");
+        MethodDefinition command = Method(runtime, "BuildPrison");
+        Check(Calls(command, runtime.FullName, "CapturePlacement") && Calls(command, runtime.FullName, "BuildPrisonCore"),
+            "The manual console route must capture the host's forward placement.");
+        Check(!runtime.Methods.Any(m => m.Name == "AutoBuildNearAltars"), "Destructive prison construction must not run in the background.");
+        MethodDefinition confirmed = Method(runtime, "BuildConfirmedPrison");
+        Check(Calls(confirmed, runtime.FullName, "BuildPrisonCore") && !Calls(confirmed, runtime.FullName, "CapturePlacement"),
+            "Confirmed UI construction must use the first-click snapshot.");
+        MethodDefinition buildCore = Method(runtime, "BuildPrisonCore", Namespace + "PrisonPlacementPlan");
+        Instruction captureOld = Call(buildCore, builder.FullName, "CaptureStructure");
+        Instruction buildSite = Call(buildCore, builder.FullName, "BuildAnywhere");
+        Instruction removeOld = Call(buildCore, builder.FullName, "RemoveCapturedStructure");
+        Instruction oldFlush = Call(buildCore, Namespace + "SiteClearer", "FlushPendingDestruction");
         Instruction saveWorld = Call(buildCore, "ZNet", "Save");
-        Check(buildSite.Offset < saveWorld.Offset, "The world-save snapshot must follow permanent clearing and its synchronous destruction flush.");
+        Check(captureOld.Offset < buildSite.Offset && buildSite.Offset < removeOld.Offset && removeOld.Offset < oldFlush.Offset && oldFlush.Offset < saveWorld.Offset,
+            "Rebuild must capture old identities before new pieces exist, remove only that snapshot, flush, then save the world.");
+        MethodDefinition force = Method(builder, "BuildAnywhere", "UnityEngine.Vector3", "UnityEngine.Quaternion", Namespace + "PrisonRegion",
+            "System.Action`1<" + Namespace + "PrisonRegion>", "System.Action`1<System.String>", "System.Action`1<System.Byte[]>");
+        Instruction forcePlan = Call(force, Namespace + "TerrainLeveler", "PlanAnywhere");
+        Instruction forceClear = Call(force, Namespace + "SiteClearer", "PlanForce");
+        Instruction forceStage = Call(force, Namespace + "SiteClearer/Site", "Apply");
+        Instruction forceTerrain = Call(force, Namespace + "TerrainLeveler/Site", "Apply");
+        Instruction forceBuild = Call(force, builder.FullName, "BuildPrepared");
+        Instruction forceValidate = Call(force, Namespace + "SiteClearer/Transaction", "ValidateCommit");
+        Instruction forceTerrainCommit = Call(force, Namespace + "TerrainLeveler/Transaction", "Commit");
+        Instruction forceClearCommit = Call(force, Namespace + "SiteClearer/Transaction", "Commit");
+        Instruction forceStore = CallInstructions(force).Single(i => ((MethodReference)i.Operand).FullName.Contains("System.Action`1<" + Namespace + "PrisonRegion>::Invoke"));
+        Check(forcePlan.Offset < forceClear.Offset && forceClear.Offset < forceStage.Offset && forceStage.Offset < forceTerrain.Offset &&
+            forceTerrain.Offset < forceBuild.Offset && forceBuild.Offset < forceValidate.Offset && forceValidate.Offset < forceStore.Offset &&
+            forceStore.Offset < forceTerrainCommit.Offset && forceTerrainCommit.Offset < forceClearCommit.Offset,
+            "Force construction must stage and validate before durable storage, then commit terrain before irreversible removal.");
+        Check(Calls(force, Namespace + "TerrainLeveler/Site", "get_WorldExtent") && Calls(force, builder.FullName, "TryRollback") &&
+            force.Body.ExceptionHandlers.Count(h => h.HandlerType == ExceptionHandlerType.Finally) >= 2,
+            "Force construction must share the exact enclosing footprint and roll back both preparations on failure.");
+        Check(Calls(force, Namespace + "TerrainLeveler/Site", "get_LowestGroundHeight") && Calls(force, Namespace + "TerrainLeveler/Site", "get_HighestGroundHeight") &&
+            Calls(force, "UnityEngine.Mathf", "Min") && Calls(force, "UnityEngine.Mathf", "Max") &&
+            !force.Body.Instructions.Any(i => i.OpCode.Code == Code.Ldc_R4 && Math.Abs((float)i.Operand) == 10000f),
+            "Initial clearance must cover the actual old/new floor interval without deleting virtual dungeon contents far above an outdoor plot.");
+        Instruction broadcast = CallInstructions(force).Single(i => ((MethodReference)i.Operand).FullName.Contains("System.Action`1<System.Byte[]>::Invoke"));
+        Check(forceClearCommit.Offset < broadcast.Offset && force.Body.ExceptionHandlers.Any(h => h.HandlerType == ExceptionHandlerType.Catch &&
+            h.TryStart.Offset <= forceClearCommit.Offset && h.TryEnd.Offset > forceClearCommit.Offset),
+            "Remote clearance notification must follow successful persistence/removal, with partial irreversible failures reported.");
         MethodDefinition preflight = Method(builder, "RequireClearSite", "UnityEngine.Vector3", "UnityEngine.Quaternion", "System.Single",
             "System.Single", "System.Single", "System.Boolean");
         Instruction collision = Call(preflight, "UnityEngine.Physics", "OverlapBox");
@@ -337,7 +496,7 @@ internal static class ClearanceContractChecks
             if (args.Length != 2) throw new ArgumentException("Expected native Valheim assembly and built PartyPrison assembly.");
             using (AssemblyDefinition game = AssemblyDefinition.ReadAssembly(args[0]))
             using (AssemblyDefinition plugin = AssemblyDefinition.ReadAssembly(args[1])) {
-                Native(game); Clearance(plugin); Integration(plugin);
+                Native(game); Clearance(plugin); ForceClearance(plugin); Integration(plugin);
             }
             Console.WriteLine("PASS: " + checks + " destructive-clearance and native deletion contracts. No game process launched.");
             return 0;

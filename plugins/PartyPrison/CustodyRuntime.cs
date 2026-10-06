@@ -14,7 +14,7 @@ namespace ValheimModPack.PartyPrison
         private int localCustodyStage = -1, localLayoutVersion = 2, waveTier;
         private string localCustodyAccount = "", localCustodyToken = "", localCustodyHash = "", localRecovery = "";
         private long clearSave;
-        private float nextOffer, nextSite;
+        private float nextOffer;
         private readonly Dictionary<ZRpc, float> custodySent = new Dictionary<ZRpc, float>();
         private readonly Dictionary<string, long> clearBaselines = new Dictionary<string, long>();
         private readonly Dictionary<string, long> collectionBaselines = new Dictionary<string, long>();
@@ -26,7 +26,7 @@ namespace ValheimModPack.PartyPrison
             if (custody != null) { custody.Dispose(); custody = null; }
             custodySent.Clear(); clearBaselines.Clear(); collectionBaselines.Clear();
             localCustodyStage = -1; localLayoutVersion = 2; localCustodyAccount = localCustodyToken = localCustodyHash = localRecovery = "";
-            clearSave = 0; nextOffer = nextSite = 0; waveTier = 0;
+            clearSave = 0; nextOffer = 0; waveTier = 0;
         }
         private ZDO[] Chests()
         {
@@ -134,7 +134,7 @@ namespace ValheimModPack.PartyPrison
         }
         private void HostCustodyTick()
         {
-            if (region == null) { AutoBuildNearAltars(); return; }
+            if (region == null) return;
             if (LegacyLayout) return;
             foreach (CustodyRecord record in custody.All())
             {
@@ -228,16 +228,6 @@ namespace ValheimModPack.PartyPrison
                 SentenceState state = Ready(peer) ? store.Find(WC.GetAdministrativeOwner(peer)) : null; PrisonPoint position;
                 if (HostFightReady(state) && Position(peer, out position) && ArenaBuilder.IsInsideArena(region, Vector(position))) { SpawnWave(waveTier); return; }
             }
-        }
-        private void AutoBuildNearAltars()
-        {
-            if (!WC.AdministrativeReady || Player.m_localPlayer == null || ZoneSystem.instance == null || Time.realtimeSinceStartup < nextSite) return;
-            nextSite = Time.realtimeSinceStartup + 60;
-            ZoneSystem.LocationInstance temple;
-            if (!ZoneSystem.instance.FindClosestLocation("StartTemple", Player.m_localPlayer.transform.position, out temple)) return;
-            Vector3 delta = temple.m_position - Player.m_localPlayer.transform.position; delta.y = 0;
-            if (delta.sqrMagnitude > 140 * 140) return;
-            try { BuildPrisonCore(false); } catch (Exception e) { Report(e.Message); }
         }
     }
 }

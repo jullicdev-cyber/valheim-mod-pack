@@ -127,7 +127,54 @@ namespace ValheimModPack.PartyPrison
             }
         }
 
+        /// <summary>The caller's frozen forward site is prepared without environmental vetoes.</summary>
+        public static PrisonRegion BuildAnywhere(Vector3 origin, Quaternion facing, PrisonRegion oldRegion,
+            Action<PrisonRegion> saveRegion, Action<string> reportClearFailure, Action<byte[]> broadcast)
+        {
+            RequireHost();
+            if (ZoneSystem.instance == null) throw new InvalidOperationException("Мир ещё не загружен.");
+            float target = Mathf.Max(origin.y, ZoneSystem.instance.m_waterLevel + .75f);
+            TerrainLeveler.Site site = TerrainLeveler.PlanAnywhere(origin, target, facing);
+            float low = Mathf.Min(site.LowestGroundHeight, target) - 3f;
+            float high = Mathf.Max(site.HighestGroundHeight, target + RoomHeight) + 3f;
+            SiteClearer.Site clearing = SiteClearer.PlanForce(origin, Quaternion.identity, site.WorldExtent, low, high, oldRegion);
+            using (SiteClearer.Transaction clear = clearing.Apply())
+            using (TerrainLeveler.Transaction terrain = site.Apply()) {
+                origin.y = site.TargetHeight;
+                PrisonRegion created = BuildPrepared(origin, facing);
+                try {
+                    clear.ValidateCommit();
+                    if (saveRegion != null) saveRegion(created);
+                }
+                catch { TryRollback(created); throw; }
+                terrain.Commit();
+                try {
+                    clear.Commit();
+                }
+                catch (Exception error) {
+                    string message = "Тюрьма построена; ошибка завершения расчистки: " + error.Message;
+                    if (reportClearFailure != null) reportClearFailure(message); else Debug.LogWarning("[Party Prison] " + message);
+                }
+                finally {
+                    if (clear.Committed && broadcast != null) {
+                        try { broadcast(clear.RemotePayload); }
+                        catch (Exception error) {
+                            string message = "Тюрьма построена; повторно подключите клиентов для обновления расчистки: " + error.Message;
+                            if (reportClearFailure != null) reportClearFailure(message); else Debug.LogWarning("[Party Prison] " + message);
+                        }
+                    }
+                }
+                return created;
+            }
+        }
+
         public static PrisonRegion Build(Vector3 origin, Quaternion facing)
+        { return BuildStructure(origin, facing, false); }
+
+        private static PrisonRegion BuildPrepared(Vector3 origin, Quaternion facing)
+        { return BuildStructure(origin, facing, true); }
+
+        private static PrisonRegion BuildStructure(Vector3 origin, Quaternion facing, bool prepared)
         {
             RequireHost();
             if (!Finite(origin)) throw new ArgumentException("Неверные координаты тюрьмы.");
@@ -147,7 +194,7 @@ namespace ValheimModPack.PartyPrison
                 throw new InvalidOperationException("В этой версии игры не поддерживаются тюремная решётка или железный сундук.");
             Dictionary<string, Bounds> bounds = new Dictionary<string, Bounds>();
             foreach (string name in pieceNames) bounds.Add(name, SolidBounds(prefabs[name]));
-            float floor = PreflightSite(origin, rotation);
+            float floor = prepared ? origin.y + .15f : PreflightSite(origin, rotation);
             Vector3 basePoint = new Vector3(origin.x, floor, origin.z);
             PrisonRegion region = new PrisonRegion {
                 Center = Point(basePoint + Vector3.up * 4f), Radius = 18d, HalfHeight = 8d,
@@ -272,6 +319,27 @@ namespace ValheimModPack.PartyPrison
                 ZDOMan.instance.DestroyZDO(zdo);
             }
             return removed.Count;
+        }
+
+        public static List<ZDOID> CaptureStructure(PrisonRegion region)
+        {
+            var captured = new List<ZDOID>(); if (region == null) return captured;
+            var seen = new HashSet<ZDOID>();
+            foreach (string key in new[] { ProtectedKey, ArmoryKey, MobKey })
+                foreach (ZDO zdo in TaggedWorldObjects(key))
+                    if (InsideStructure(region, zdo.GetPosition()) && seen.Add(zdo.m_uid)) captured.Add(zdo.m_uid);
+            return captured;
+        }
+
+        public static void RemoveCapturedStructure(List<ZDOID> captured)
+        {
+            RequireHost();
+            foreach (ZDOID id in captured) {
+                ZDO zdo = ZDOMan.instance.GetZDO(id); if (zdo == null) continue;
+                ZNetView view = ZNetScene.instance.FindInstance(zdo);
+                if (view != null && view.IsValid()) { view.ClaimOwnership(); ZNetScene.instance.Destroy(view.gameObject); }
+                else { zdo.SetOwner(ZNet.GetUID()); ZDOMan.instance.DestroyZDO(zdo); }
+            }
         }
 
         public static List<ZDO> GetCustodyZdos(PrisonRegion region)

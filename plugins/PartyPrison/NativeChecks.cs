@@ -26,6 +26,10 @@ namespace ValheimModPack.PartyPrison.NativeVerification
         private static Inventory exactCallbackInventory;
         private static int exactCallbackMode;
         private static int exactCallbackCalls;
+        private static bool simulatePlacement, failPlacement;
+        private static int placementCaptures, placementBuilds;
+        private static PrisonPoint placementHost, placementLook;
+        private static PrisonPlacementPlan capturedPlacement, constructedPlacement;
         private static readonly HashSet<GameObject> registryFixtureObjects = new HashSet<GameObject>();
         private static readonly HashSet<ZDO> registryFixtureZdos = new HashSet<ZDO>();
         private float started, prefabAt = -1;
@@ -60,7 +64,7 @@ namespace ValheimModPack.PartyPrison.NativeVerification
                 {
                     Run(); Finish("PASS: " + checks + " Party Prison native assertions.\n" + report
                         + "Scope: isolated main menu, full-pack startup, registered patches, native Chat/Console command routing with a safe sentinel, synthetic UI and available prefab definitions.\n"
-                        + "UNVERIFIED: live altar construction, host/client inventory custody, chest retrieval, automatic arena waves, death recovery, reconnect, wall protection and release need an in-game multiplayer test.\n", 0);
+                        + "UNVERIFIED: live host-look construction, host/client inventory custody, chest retrieval, automatic arena waves, death recovery, reconnect, wall protection and release need an in-game multiplayer test.\n", 0);
                 }
                 catch (Exception error) { Finish("FAIL: " + error + "\n" + report, 4); }
             }
@@ -114,8 +118,9 @@ namespace ValheimModPack.PartyPrison.NativeVerification
             Patch(typeof(Container), "Load", Type.EmptyTypes);
             Patch(typeof(Container), "GetInventory", Type.EmptyTypes);
             Patch(typeof(ItemDrop), "AutoStackItems", Type.EmptyTypes);
+            Patch(typeof(TerrainComp), "ApplyToHeightmap", new[] { typeof(Texture2D), typeof(List<float>), typeof(float[]), typeof(float[]), typeof(Heightmap) });
             report.AppendLine("PASS: Required confinement, death, protection and input-reset Harmony patches bind; native creature loot generation remains available.");
-            CheckCommandRouting(); CheckGroupRadiusCompatibility(); CheckUi(); CheckInventoryIsolation(); CheckCustodyInventory(); CheckExactWithdrawalInsertion(); CheckCustodyMask(); CheckCustodyRegistry(); CheckLootPickupGuard(); CheckGeometry(); CheckPrefabs();
+            CheckCommandRouting(); CheckGroupRadiusCompatibility(); CheckUi(); CheckInventoryIsolation(); CheckCustodyInventory(); CheckExactWithdrawalInsertion(); CheckCustodyMask(); CheckCustodyRegistry(); CheckForcedTerrainHeights(); CheckForceClearance(); CheckLootPickupGuard(); CheckGeometry(); CheckPrefabs();
             Check(Player.m_localPlayer == null && Game.instance == null, "probe leaves no game or local player registration");
         }
 
@@ -339,9 +344,25 @@ namespace ValheimModPack.PartyPrison.NativeVerification
             simulatedInputRequests += __0 ? 1 : -1; return false;
         }
 
+        private static bool PlacementCaptureFixture(ref PrisonPlacementPlan __result)
+        {
+            if (!simulatePlacement) return true;
+            ++placementCaptures;
+            if (failPlacement) throw new InvalidOperationException("Controlled placement snapshot failure");
+            __result = PrisonPlacementPlan.Create(placementHost, placementLook, new PrisonPoint(0, 0, 1));
+            capturedPlacement = __result; return false;
+        }
+
+        private static bool PlacementBuildFixture(PrisonPlacementPlan __0)
+        {
+            if (!simulatePlacement) return true;
+            ++placementBuilds; constructedPlacement = __0;
+            return false; // Observe the real confirmed route without touching any world or terrain.
+        }
+
         private void CheckUi()
         {
-            int baseline = InputCount(), builds = 0, imposed = 0, releases = 0, kits = 0, chosenTier = -1;
+            int baseline = InputCount(), imposed = 0, releases = 0, kits = 0, chosenTier = -1;
             bool canFight = true;
             string custody = "";
             string released = null, imposedAccount = null, imposedReason = null;
@@ -350,10 +371,23 @@ namespace ValheimModPack.PartyPrison.NativeVerification
             for (int i = 0; i < 10; ++i) players.Add(new PrisonPlayerRow { AccountId = "probe-account-" + i,
                 Name = "Игрок <b>" + i + "</b>", Online = i != 1, Sentenced = i == 1, RemainingSeconds = i == 1 ? 77 : 0 });
             SentenceState state = new SentenceState { RemainingSeconds = 77, Reason = "Причина <b>без разметки</b>" };
+            object actualPlugin = Chainloader.PluginInfos[Plugin.Id].Instance;
+            FieldInfo pendingPlacement = typeof(Plugin).GetField("pendingPlacement", All);
+            Check(pendingPlacement != null, "production host retains an explicit placement snapshot for UI confirmation");
+            object previousPlacement = pendingPlacement.GetValue(actualPlugin);
+            var placementFixture = new Harmony("valheimmodpack.partyprison.nativeprobe.placementfixture");
+            placementHost = new PrisonPoint(10, 50, 20); placementLook = new PrisonPoint(0, 0, 1);
+            placementCaptures = placementBuilds = 0; capturedPlacement = constructedPlacement = null;
+            simulatePlacement = true; failPlacement = false;
+            placementFixture.Patch(typeof(Plugin).GetMethod("CapturePlacement", All), prefix:
+                new HarmonyMethod(typeof(NativeChecks).GetMethod("PlacementCaptureFixture", All)));
+            placementFixture.Patch(typeof(Plugin).GetMethod("BuildPrisonCore", All, null, new[] { typeof(PrisonPlacementPlan) }, null), prefix:
+                new HarmonyMethod(typeof(NativeChecks).GetMethod("PlacementBuildFixture", All)));
             var bindings = new PrisonUiBindings {
                 CanUse = () => true, IsHost = () => true, CanFight = () => canFight, Players = () => players, LocalSentence = () => state,
                 Translate = (ru, en) => ru, Notice = () => "Статус сервера",
-                Build = () => ++builds, Kit = () => ++kits, CustodyStatus = () => custody,
+                PrepareBuild = () => Call(actualPlugin, "PrepareBuild"), Build = () => Call(actualPlugin, "BuildConfirmedPrison"),
+                Kit = () => ++kits, CustodyStatus = () => custody,
                 Impose = (account, minutes, reason) => { ++imposed; imposedAccount = account; imposedMinutes = minutes; imposedReason = reason; },
                 Release = account => { ++releases; released = account; }, Wave = tier => chosenTier = tier, Move = arena => { }
             };
@@ -385,10 +419,26 @@ namespace ValheimModPack.PartyPrison.NativeVerification
                 Call(window, "Select", 1);
                 Check(!((Button)Field(window, "impose")).interactable && ((Button)Field(window, "release")).interactable, "offline sentence enables release and disables new imprisonment");
                 Call(window, "Release"); Check(releases == 1 && released == "probe-account-1", "offline release targets selected account");
+                Check(((Button)Field(window, "build")).GetComponentInChildren<Text>().text.Contains("возле меня")
+                    && ((Text)Field(window, "buildHint")).text.Contains("32 м") && !((Text)Field(window, "buildHint")).text.Contains("алтар"),
+                    "host construction controls explain a fixed look-relative site rather than altar search");
                 Call(window, "BuildPrison");
-                Check(builds == 0 && (bool)Field(window, "buildArmed") && ((Text)Field(window, "buildHint")).text.Contains("алтарей"), "first build click asks for altar-site confirmation without construction");
-                Check(!((Text)Field(window, "buildHint")).text.Contains("перед вами"), "construction instructions no longer use the host forward position");
-                Call(window, "BuildPrison"); Check(builds == 1 && !(bool)Field(window, "buildArmed"), "second build click invokes construction once");
+                Check(placementCaptures == 1 && placementBuilds == 0 && (bool)Field(window, "buildArmed")
+                    && ((Text)Field(window, "buildHint")).text.Contains("Перед вами"), "first build click captures the placement and asks for confirmation before construction");
+                Check(ReferenceEquals(pendingPlacement.GetValue(actualPlugin), capturedPlacement)
+                    && capturedPlacement.Origin.X == 10 && capturedPlacement.Origin.Z == 52,
+                    "the actual production PrepareBuild stores the first click's immutable host-look snapshot");
+                PrisonPlacementPlan firstPlacement = capturedPlacement;
+                placementHost = new PrisonPoint(777, 50, 888); placementLook = new PrisonPoint(-1, 0, 0);
+                Call(window, "BuildPrison");
+                Check(placementBuilds == 1 && placementCaptures == 1 && !(bool)Field(window, "buildArmed")
+                    && ReferenceEquals(constructedPlacement, firstPlacement) && pendingPlacement.GetValue(actualPlugin) == null,
+                    "the actual confirmed build consumes the original snapshot once despite later host or look changes");
+                failPlacement = true; bool preparationFailed = false;
+                try { Call(window, "BuildPrison"); } catch (InvalidOperationException) { preparationFailed = true; }
+                failPlacement = false;
+                Check(preparationFailed && !(bool)Field(window, "buildArmed") && placementBuilds == 1,
+                    "a failed first-click capture cannot arm construction or reach the destructive build route");
                 Set(window, "page", 1); Call(window, "Repaint");
                 Check(rows[0].interactable && rows[1].interactable && !rows[2].interactable && rows[2].GetComponentInChildren<Text>().text == "", "last page clears stale rows");
 
@@ -436,8 +486,11 @@ namespace ValheimModPack.PartyPrison.NativeVerification
                 finally { simulateInputRequests = false; inputFixture.UnpatchSelf(); }
                 Check(InputCount() == baseline, "synthetic UI restores the initial input counter");
             }
-            finally { window.Hide(); }
-            report.AppendLine("PASS: Native wooden host/prisoner panels, eight-row pagination, offline release, reason/duration, altar construction confirmation, equipment offer, difficulty selection, custody preparation and chest retrieval, plain names and independent input leases.");
+            finally {
+                window.Hide(); simulatePlacement = failPlacement = false; placementFixture.UnpatchSelf();
+                pendingPlacement.SetValue(actualPlugin, previousPlacement); capturedPlacement = constructedPlacement = null;
+            }
+            report.AppendLine("PASS: Native wooden host/prisoner panels, eight-row pagination, offline release, reason/duration, actual captured host-look construction confirmation, equipment offer, difficulty selection, custody preparation and chest retrieval, plain names and independent input leases.");
         }
 
         private void CheckPrefabs()
@@ -690,6 +743,310 @@ namespace ValheimModPack.PartyPrison.NativeVerification
         }
         private static List<ItemDrop.ItemData> RawInventory(Inventory inventory)
         { return (List<ItemDrop.ItemData>)typeof(Inventory).GetField("m_inventory", All).GetValue(inventory); }
+
+        private void CheckForcedTerrainHeights()
+        {
+            Type codec = typeof(Plugin).Assembly.GetType("ValheimModPack.PartyPrison.TerrainOverrides", true);
+            MethodInfo encode = codec.GetMethod("Encode", All), decode = codec.GetMethod("Decode", All);
+            string key = (string)codec.GetField("Key", All).GetRawConstantValue();
+            Check(encode != null && decode != null && key == "VMP_PP_ForcedGround", "native terrain uses the versioned saved override codec");
+            MethodInfo apply = typeof(TerrainComp).GetMethod("ApplyToHeightmap", All, null,
+                new[] { typeof(Texture2D), typeof(List<float>), typeof(float[]), typeof(float[]), typeof(Heightmap) }, null);
+            var fixture = new Harmony("valheimmodpack.partyprison.nativeprobe.terrainfixture");
+            GameObject detached = null; ZDO zdo = null, receivedZdo = null;
+            try {
+                var awake = new HarmonyMethod(typeof(NativeChecks).GetMethod("RegistryFixtureAwake", All)); awake.priority = Priority.First;
+                foreach (Type component in new[] { typeof(ZNetView), typeof(Heightmap), typeof(TerrainComp) })
+                    fixture.Patch(component.GetMethod("Awake", All), prefix: awake);
+                fixture.Patch(typeof(ZDO).GetMethod("IncreaseDataRevision", All),
+                    prefix: new HarmonyMethod(typeof(NativeChecks).GetMethod("RegistryFixtureRevision", All)));
+                detached = new GameObject("PartyPrison.DetachedTerrainFixture"); detached.SetActive(false);
+                registryFixtureObjects.Add(detached); detached.transform.position = new Vector3(500, 100, -500);
+                ZNetView view = detached.AddComponent<ZNetView>();
+                Heightmap map = detached.AddComponent<Heightmap>(); TerrainComp compiler = detached.AddComponent<TerrainComp>();
+                zdo = new ZDO(); zdo.m_uid = new ZDOID(-492103719, 20); registryFixtureZdos.Add(zdo);
+                typeof(ZDO).GetField("m_prefab", All).SetValue(zdo, "PartyPrison.DetachedTerrainFixture".GetStableHashCode());
+                typeof(ZNetView).GetField("m_zdo", All).SetValue(view, zdo);
+                Check(view.IsValid() && zdo.IsValid(), "terrain fixture has valid detached native ZDO metadata without registering a world object");
+                Set(map, "m_width", 2); Set(map, "m_scale", 1f);
+                Set(compiler, "m_initialized", true); Set(compiler, "m_width", 2); Set(compiler, "m_pitch", 3);
+                Set(compiler, "m_nview", view); Set(compiler, "m_hmap", map);
+                float[] levels = new float[9]; levels[4] = 100f;
+                Set(compiler, "m_levelDelta", levels); Set(compiler, "m_smoothDelta", new float[9]);
+                Set(compiler, "m_modifiedHeight", new bool[9]); Set(compiler, "m_modifiedPaint", new bool[9]); Set(compiler, "m_paintMask", new Color[9]);
+                float[] baseHeights = Enumerable.Repeat(40f, 9).ToArray();
+                List<float> native = Enumerable.Repeat(40f, 9).ToList();
+                apply.Invoke(compiler, new object[] { null, native, baseHeights, baseHeights, map });
+                Check(native[4] == 48f && native.Where((height, index) => index != 4).All(height => height == 40f),
+                    "actual native ApplyToHeightmap retains its eight-metre clamp on an ordinary untagged compiler");
+
+                var forced = new Dictionary<int, float> { { 4, 90f }, { 8, 52f } };
+                byte[] record = (byte[])encode.Invoke(null, new object[] { 3, forced });
+                var restored = (IDictionary<int, float>)decode.Invoke(null, new object[] { (byte[])record.Clone(), 3 });
+                Check(restored.Count == 2 && restored[4] == 90f && restored[8] == 52f,
+                    "serialized terrain override clone retains only the selected native vertex indices and absolute local heights");
+                zdo.Set(key, record);
+                List<float> tagged = Enumerable.Repeat(40f, 9).ToList();
+                apply.Invoke(compiler, new object[] { null, tagged, baseHeights, baseHeights, map });
+                Check(tagged[4] == 90f && tagged[8] == 52f && tagged.Where((height, index) => index != 4 && index != 8).All(height => height == 40f),
+                    "actual registered terrain postfix overrides the native clamp for tagged vertices while preserving every other vertex");
+                Check(tagged[4] + map.transform.position.y == 190f, "saved overrides use local height rather than applying the heightmap's world offset twice");
+
+                MethodInfo serialize = typeof(ZDO).GetMethod("Serialize", All, null, new[] { typeof(ZPackage) }, null);
+                MethodInfo deserialize = typeof(ZDO).GetMethod("Deserialize", All, null, new[] { typeof(ZPackage) }, null);
+                Check(serialize != null && deserialize != null, "native ZDO network serialization methods exist for detached reload verification");
+                ZPackage wire = new ZPackage(); serialize.Invoke(zdo, new object[] { wire });
+                receivedZdo = new ZDO(); receivedZdo.m_uid = new ZDOID(-492103719, 21); registryFixtureZdos.Add(receivedZdo);
+                deserialize.Invoke(receivedZdo, new object[] { new ZPackage(wire.GetArray()) });
+                Check(receivedZdo.GetByteArray(key, null) != null && receivedZdo.GetByteArray(key, null).SequenceEqual(record),
+                    "the actual native ZDO serialization/deserialization retains the complete saved terrain byte record");
+                typeof(ZNetView).GetField("m_zdo", All).SetValue(view, receivedZdo);
+                List<float> peerHeights = Enumerable.Repeat(40f, 9).ToList();
+                apply.Invoke(compiler, new object[] { null, peerHeights, baseHeights, baseHeights, map });
+                Check(peerHeights.SequenceEqual(tagged), "a separately deserialized ZDO reconstructs the same forced terrain as the original host record");
+                typeof(ZNetView).GetField("m_zdo", All).SetValue(view, zdo);
+                List<float> originalAgain = Enumerable.Repeat(40f, 9).ToList();
+                apply.Invoke(compiler, new object[] { null, originalAgain, baseHeights, baseHeights, map });
+                Check(originalAgain.SequenceEqual(tagged), "switching the detached view back to the original record preserves the same forced terrain");
+
+                object cacheTable = typeof(TerrainLeveler).GetField("OverrideCaches", All).GetValue(null);
+                MethodInfo lookup = cacheTable.GetType().GetMethod("TryGetValue"); object[] lookupArgs = { compiler, null };
+                Check((bool)lookup.Invoke(cacheTable, lookupArgs), "native terrain postfix stores its decoded record in a weak compiler cache");
+                object cache = lookupArgs[1], previousValues = Field(cache, "Values");
+                for (int i = 0; i < 3; ++i) {
+                    List<float> again = Enumerable.Repeat(40f, 9).ToList();
+                    apply.Invoke(compiler, new object[] { null, again, baseHeights, baseHeights, map });
+                    Check(again[4] == 90f && ReferenceEquals(previousValues, Field(cache, "Values")),
+                        "unchanged native terrain reconstructions reuse the decoded height record");
+                }
+                forced[4] = 130f; forced.Remove(8);
+                byte[] changed = (byte[])encode.Invoke(null, new object[] { 3, forced }); zdo.Set(key, changed);
+                List<float> updated = Enumerable.Repeat(40f, 9).ToList();
+                apply.Invoke(compiler, new object[] { null, updated, baseHeights, baseHeights, map });
+                Check(updated[4] == 130f && updated[8] == 40f && !ReferenceEquals(previousValues, Field(cache, "Values")),
+                    "a new saved record refreshes the cache and stops overriding a removed vertex");
+                zdo.Set(key, (byte[])record.Clone()); List<float> reloaded = Enumerable.Repeat(40f, 9).ToList();
+                apply.Invoke(compiler, new object[] { null, reloaded, baseHeights, baseHeights, map });
+                Check(reloaded[4] == 90f && reloaded[8] == 52f, "restoring a previous serialized record immediately restores the same native forced heights");
+                Set(map, "m_width", 3); List<float> incompatible = Enumerable.Repeat(40f, 9).ToList();
+                apply.Invoke(compiler, new object[] { null, incompatible, baseHeights, baseHeights, map });
+                Check(incompatible[4] == 48f && incompatible[8] == 40f,
+                    "an incompatible reconstructed heightmap size preserves native heights instead of writing tagged indices into a different layout");
+                Set(map, "m_width", 2);
+                zdo.Set(key, new byte[0]); List<float> cleared = Enumerable.Repeat(40f, 9).ToList();
+                apply.Invoke(compiler, new object[] { null, cleared, baseHeights, baseHeights, map });
+                Check(cleared[4] == 48f && cleared[8] == 40f, "removing the saved override returns the compiler to normal native terrain behavior");
+            }
+            finally {
+                if (detached != null) { UnityEngine.Object.DestroyImmediate(detached); registryFixtureObjects.Remove(detached); }
+                if (zdo != null) { typeof(ZDO).GetMethod("Reset", All).Invoke(zdo, null); registryFixtureZdos.Remove(zdo); }
+                if (receivedZdo != null) { typeof(ZDO).GetMethod("Reset", All).Invoke(receivedZdo, null); registryFixtureZdos.Remove(receivedZdo); }
+                fixture.UnpatchSelf();
+            }
+            Check(Player.m_localPlayer == null && Game.instance == null, "detached terrain reconstruction and serialization never register a user player or world");
+            report.AppendLine("PASS: Actual native ApplyToHeightmap plus the registered postfix preserve tagged absolute heights beyond the native clamp, leave untagged terrain unchanged, reuse cached records and restore/remove serialized records without a user world.");
+        }
+        private static GameObject ClearanceChild(GameObject parent, string name, bool active)
+        {
+            var child = new GameObject(name); child.SetActive(active);
+            child.transform.SetParent(parent.transform, false); return child;
+        }
+        private static object ClearanceEntry(Type entryType, GameObject root, ZNetView view, string action, Collider collider)
+        {
+            Type actionType = typeof(SiteClearer).GetNestedType("ForceAction", All);
+            return Activator.CreateInstance(entryType, All, null,
+                new object[] { root, view, Enum.Parse(actionType, action), new Bounds(root.transform.position, Vector3.one), collider }, null);
+        }
+        private static object ClearanceEntries(Type entryType, params object[] entries)
+        {
+            var list = (System.Collections.IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(entryType));
+            foreach (object entry in entries) list.Add(entry); return list;
+        }
+        private static byte[] ClearanceMask(IEnumerable<string> paths)
+        {
+            string[] values = paths.ToArray(); var package = new ZPackage(); package.Write(1); package.Write(values.Length);
+            foreach (string value in values) package.Write(value); return package.GetArray();
+        }
+        private static string[] ClearanceMaskPaths(byte[] bytes)
+        {
+            var package = new ZPackage(bytes);
+            if (package.ReadInt() != 1) throw new InvalidDataException("Unexpected prepared static-mask version");
+            int count = package.ReadInt(); var paths = new List<string>();
+            for (int i = 0; i < count; ++i) paths.Add(package.ReadString());
+            if (package.GetPos() != package.Size()) throw new InvalidDataException("Unexpected prepared static-mask trailing bytes");
+            return paths.ToArray();
+        }
+        private static bool ClearancePreparationRejected(MethodInfo prepare, object entries)
+        {
+            try { prepare.Invoke(null, new[] { entries }); return false; }
+            catch (TargetInvocationException error) { if (error.InnerException is InvalidDataException) return true; throw; }
+        }
+
+        private void CheckForceClearance()
+        {
+            Type clearer = typeof(SiteClearer), entryType = clearer.GetNestedType("ForceEntry", All);
+            MethodInfo pathFor = clearer.GetMethod("StaticPath", All), resolve = clearer.GetMethod("ResolvePath", All),
+                prepare = clearer.GetMethod("PrepareMasks", All), replay = clearer.GetMethod("ApplyStaticMasks", All),
+                preserve = clearer.GetMethod("PreserveRoot", All);
+            string maskKey = (string)clearer.GetField("StaticMaskKey", All).GetRawConstantValue();
+            Check(entryType != null && pathFor != null && resolve != null && prepare != null && replay != null && preserve != null,
+                "production force-clearance staging, paths, cumulative masks and preservation helpers are available");
+            var fixture = new Harmony("valheimmodpack.partyprison.nativeprobe.clearancefixture");
+            var objects = new List<GameObject>(); RegistryFixtureContainer proxy = null, container = null;
+            try {
+                var awake = new HarmonyMethod(typeof(NativeChecks).GetMethod("RegistryFixtureAwake", All)); awake.priority = Priority.First;
+                foreach (Type component in new[] { typeof(ZNetView), typeof(Container) }) fixture.Patch(component.GetMethod("Awake", All), prefix: awake);
+                fixture.Patch(typeof(ZDO).GetMethod("IncreaseDataRevision", All),
+                    prefix: new HarmonyMethod(typeof(NativeChecks).GetMethod("RegistryFixtureRevision", All)));
+
+                var solid = new GameObject("PartyPrison.DetachedStaticColliders"); objects.Add(solid);
+                solid.transform.position = new Vector3(1200, 100, 1200);
+                BoxCollider first = solid.AddComponent<BoxCollider>(), second = solid.AddComponent<BoxCollider>(), disabled = solid.AddComponent<BoxCollider>(), trigger = solid.AddComponent<BoxCollider>();
+                disabled.enabled = false; trigger.isTrigger = true;
+                GameObject inactiveChild = ClearanceChild(solid, "inactive child", false);
+                BoxCollider inactiveSolid = inactiveChild.AddComponent<BoxCollider>();
+                object colliders = ClearanceEntry(entryType, solid, null, "StaticCollider", first);
+                Call(colliders, "Check", false); Call(colliders, "Stage"); Call(colliders, "Check", true);
+                report.AppendLine("STATIC COLLIDER STAGE: root=" + solid.activeSelf + " first=" + first.enabled + " second=" + second.enabled
+                    + " disabled=" + disabled.enabled + " trigger=" + trigger.enabled + " childActive=" + inactiveChild.activeSelf + " childSolid=" + inactiveSolid.enabled);
+                Check(solid.activeSelf && !first.enabled && !second.enabled && !disabled.enabled && trigger.enabled
+                    && !inactiveChild.activeSelf && inactiveSolid.enabled,
+                    "native static-collider staging disables every local solid, keeps trigger state and leaves inactive descendants untouched");
+                Call(colliders, "Restore"); Call(colliders, "Check", false);
+                Check(solid.activeSelf && first.enabled && second.enabled && !disabled.enabled && trigger.enabled
+                    && !inactiveChild.activeSelf && inactiveSolid.enabled && !(bool)Field(colliders, "Staged"),
+                    "rollback restores exact mixed enabled states without enabling an originally disabled collider or child");
+                Call(colliders, "Stage"); Call(colliders, "Restore");
+                Check(first.enabled && second.enabled && !disabled.enabled && trigger.enabled,
+                    "repeated native static staging and rollback do not drift the original collider state");
+
+                var part = new GameObject("PartyPrison.DetachedStaticPart"); objects.Add(part);
+                GameObject activePartChild = ClearanceChild(part, "active child", true), inactivePartChild = ClearanceChild(part, "inactive child", false);
+                object partEntry = ClearanceEntry(entryType, part, null, "StaticPart", null);
+                Call(partEntry, "Stage"); Call(partEntry, "Check", true);
+                Check(!part.activeSelf && activePartChild.activeSelf && !inactivePartChild.activeSelf,
+                    "static-subtree staging changes only the selected root's active state");
+                Call(partEntry, "Restore"); Call(partEntry, "Check", false);
+                Check(part.activeSelf && activePartChild.activeSelf && !inactivePartChild.activeSelf,
+                    "static-subtree rollback retains each descendant's original activeSelf state");
+                part.SetActive(false); object inactiveEntry = ClearanceEntry(entryType, part, null, "StaticPart", null);
+                Call(inactiveEntry, "Stage"); Call(inactiveEntry, "Restore");
+                Check(!part.activeSelf, "rollback never activates a static root that was already inactive");
+
+                proxy = RegistryContainer(40, null); proxy.Object.SetActive(true);
+                BoxCollider proxySolid = proxy.Object.AddComponent<BoxCollider>(), proxyTrigger = proxy.Object.AddComponent<BoxCollider>(); proxyTrigger.isTrigger = true;
+                GameObject duplicateA = ClearanceChild(proxy.Object, "same name", true), duplicateB = ClearanceChild(proxy.Object, "same name", true);
+                duplicateA.transform.localPosition = new Vector3(1, 0, 0); duplicateB.transform.localPosition = new Vector3(2, 0, 0);
+                // U+FFFF produces '/' in ordinary base64; nested names also contain path punctuation.
+                GameObject nested = ClearanceChild(duplicateB, "\uffff\uffff/section:+ Снег", true);
+                string pathA = (string)pathFor.Invoke(null, new object[] { proxy.Object.transform, duplicateA.transform });
+                string pathB = (string)pathFor.Invoke(null, new object[] { proxy.Object.transform, nested.transform });
+                Check(pathA != pathB && ReferenceEquals(resolve.Invoke(null, new object[] { proxy.Object.transform, pathA }), duplicateA.transform)
+                    && ReferenceEquals(resolve.Invoke(null, new object[] { proxy.Object.transform, pathB }), nested.transform),
+                    "actual static paths distinguish same-name siblings and round-trip nested Unicode/punctuation names");
+                Check(pathB.Split('/').Length == 2 && !pathB.Contains("+"),
+                    "URL-safe name encoding cannot inject hierarchy separators into a static path");
+                nested.name = "changed child";
+                Check(resolve.Invoke(null, new object[] { proxy.Object.transform, pathB }) == null,
+                    "a stale stored name cannot target a renamed child at the same sibling index");
+                nested.name = "\uffff\uffff/section:+ Снег";
+                duplicateA.transform.SetSiblingIndex(1);
+                Check(ReferenceEquals(resolve.Invoke(null, new object[] { proxy.Object.transform, pathB }), nested.transform),
+                    "a changed sibling index resolves the unique original name and local position instead of a neighboring same-name object");
+                duplicateA.transform.SetSiblingIndex(0);
+                nested.transform.localPosition = new Vector3(.1f, 0, 0);
+                Check(resolve.Invoke(null, new object[] { proxy.Object.transform, pathB }) == null,
+                    "a moved static child cannot be selected solely because its old name and sibling index still match");
+                nested.transform.localPosition = Vector3.zero;
+                string legacyPath = String.Join("/", pathB.Split('/').Select(segment => String.Join(":", segment.Split(':').Take(2).ToArray())).ToArray());
+                Check(ReferenceEquals(resolve.Invoke(null, new object[] { proxy.Object.transform, legacyPath }), nested.transform),
+                    "the production path resolver keeps existing two-field stored hierarchy paths readable");
+                GameObject ambiguous = ClearanceChild(proxy.Object, "same name", true), padding = ClearanceChild(proxy.Object, "different name", true);
+                ambiguous.transform.localPosition = duplicateB.transform.localPosition; padding.transform.SetSiblingIndex(0);
+                Check(resolve.Invoke(null, new object[] { proxy.Object.transform, pathB }) == null,
+                    "ambiguous fallback matches never guess which same-name and same-position static subtree should be hidden");
+                UnityEngine.Object.DestroyImmediate(padding); UnityEngine.Object.DestroyImmediate(ambiguous);
+                replay.Invoke(null, new object[] { proxy.Object, new[] { "P:", "X:" + pathA, "P:" + pathB } });
+                Check(proxy.Object.activeSelf && duplicateA.activeSelf && !nested.activeSelf,
+                    "production mask replay preserves the proxy root and unknown-prefix sibling while hiding only its selected nested subtree");
+                replay.Invoke(null, new object[] { proxy.Object, new[] { "C:" } });
+                Check(proxy.Object.activeSelf && !proxySolid.enabled && proxyTrigger.enabled,
+                    "a root collider mask keeps the proxy active and leaves its native trigger enabled");
+                nested.SetActive(true); proxySolid.enabled = true;
+
+                object entryA = ClearanceEntry(entryType, duplicateA, proxy.View, "StaticPart", null),
+                    entryB = ClearanceEntry(entryType, nested, proxy.View, "StaticCollider", null);
+                byte[] originalMask = ClearanceMask(new[] { "P:legacy" }); proxy.Zdo.Set(maskKey, originalMask);
+                uint beforeRevision = proxy.Zdo.DataRevision;
+                var merged = (IDictionary<ZDO, byte[]>)prepare.Invoke(null, new[] { ClearanceEntries(entryType, entryA, entryB, entryA) });
+                string[] mergedPaths = ClearanceMaskPaths(merged[proxy.Zdo]);
+                Check(merged.Count == 1 && mergedPaths.Length == 3 && mergedPaths.Contains("P:legacy")
+                    && mergedPaths.Contains("P:" + pathA) && mergedPaths.Contains("C:" + pathB),
+                    "multiple entries on one native proxy prepare one cumulative record, retaining old paths and deduplicating repeated entries");
+                Check(ReferenceEquals(proxy.Zdo.GetByteArray(maskKey, null), originalMask) && proxy.Zdo.DataRevision == beforeRevision,
+                    "preparing cumulative masks performs no native ZDO write or revision change");
+
+                proxy.Zdo.Set(maskKey, ClearanceMask(Enumerable.Range(0, 8190).Select(i => "P:old-" + i)));
+                merged = (IDictionary<ZDO, byte[]>)prepare.Invoke(null, new[] { ClearanceEntries(entryType, entryA, entryB, entryA) });
+                Check(ClearanceMaskPaths(merged[proxy.Zdo]).Length == 8192,
+                    "cumulative proxy preparation accepts exactly 8192 distinct paths and a duplicate entry consumes no capacity");
+                byte[] countEdge = ClearanceMask(Enumerable.Range(0, 8191).Select(i => "P:old-" + i)); proxy.Zdo.Set(maskKey, countEdge); beforeRevision = proxy.Zdo.DataRevision;
+                Check(ClearancePreparationRejected(prepare, ClearanceEntries(entryType, entryA, entryB))
+                    && ReferenceEquals(proxy.Zdo.GetByteArray(maskKey, null), countEdge) && proxy.Zdo.DataRevision == beforeRevision,
+                    "combined additions crossing the 8192-path limit fail before changing the shared proxy record");
+
+                GameObject longChild = ClearanceChild(proxy.Object, new string('a', 6135), false); longChild.transform.localPosition = new Vector3(100, 0, 0);
+                object longEntry = ClearanceEntry(entryType, longChild, proxy.View, "StaticPart", null);
+                Check(("P:" + (string)Field(longEntry, "Path")).Length == 8192, "native hierarchy produces the exact accepted static-path length boundary");
+                proxy.Zdo.Set(maskKey, new byte[0]); merged = (IDictionary<ZDO, byte[]>)prepare.Invoke(null, new[] { ClearanceEntries(entryType, longEntry) });
+                Check(ClearanceMaskPaths(merged[proxy.Zdo]).Single().Length == 8192, "prepared masks retain an exactly 8192-character native hierarchy path");
+                longChild.name = new string('a', 6136); object tooLongEntry = ClearanceEntry(entryType, longChild, proxy.View, "StaticPart", null);
+                Check(ClearancePreparationRejected(prepare, ClearanceEntries(entryType, tooLongEntry)),
+                    "an overlong encoded hierarchy path is rejected before commit instead of truncating or selecting a different subtree");
+                longChild.name = new string('a', 6135);
+
+                var byteEdgePaths = Enumerable.Range(0, 126).Select(i => "P:" + i.ToString("D3") + new string('b', 8187)).ToList();
+                byteEdgePaths.Add("P:" + new string('c', 7926));
+                byte[] byteEdge = ClearanceMask(byteEdgePaths); proxy.Zdo.Set(maskKey, byteEdge);
+                merged = (IDictionary<ZDO, byte[]>)prepare.Invoke(null, new[] { ClearanceEntries(entryType, longEntry) });
+                Check(merged[proxy.Zdo].Length == 1024 * 1024, "native ZPackage preparation accepts the exact one-MiB cumulative byte boundary");
+                beforeRevision = proxy.Zdo.DataRevision;
+                Check(ClearancePreparationRejected(prepare, ClearanceEntries(entryType, longEntry, entryA))
+                    && ReferenceEquals(proxy.Zdo.GetByteArray(maskKey, null), byteEdge) && proxy.Zdo.DataRevision == beforeRevision,
+                    "another shared-proxy addition exceeding one MiB fails before any native record or revision mutation");
+
+                container = RegistryContainer(41, null);
+                ItemDrop.ItemData savedItem = NativeItem("Iron", 9, 2, 3); savedItem.m_customData["vmp_clearance_preserved"] = "exact personal metadata";
+                RawInventory(container.Inventory).Add(savedItem); byte[] personalBytes = SaveDetached(container.Inventory); container.Zdo.Set(ZDOVars.s_items, personalBytes);
+                Check((bool)preserve.Invoke(null, new object[] { container.Object, container.Zdo }),
+                    "a native container root is preserved intact instead of selected for deletion");
+                var savedOnly = new GameObject("PartyPrison.DetachedSavedInventory"); objects.Add(savedOnly); savedOnly.SetActive(false);
+                Check((bool)preserve.Invoke(null, new object[] { savedOnly, container.Zdo }),
+                    "saved native inventory bytes protect a root even when no Container component is present");
+                Check(ReferenceEquals(container.Zdo.GetByteArray(ZDOVars.s_items, null), personalBytes)
+                    && personalBytes.SequenceEqual(SaveDetached(container.Inventory)) && RawInventory(container.Inventory).Count == 1
+                    && ReferenceEquals(RawInventory(container.Inventory)[0], savedItem) && savedItem.m_stack == 9
+                    && savedItem.m_customData["vmp_clearance_preserved"] == "exact personal metadata",
+                    "classification leaves exact native saved bytes, item identity, stack and custom metadata untouched");
+                container.Zdo.Set(ZDOVars.s_items, new byte[0]); container.Zdo.Set(ZDOVars.s_items, "legacy saved inventory");
+                Check((bool)preserve.Invoke(null, new object[] { savedOnly, container.Zdo }), "legacy native string inventory records receive the same preservation decision");
+                container.Zdo.Set(ZDOVars.s_items, String.Empty);
+                Check(!(bool)preserve.Invoke(null, new object[] { savedOnly, container.Zdo }), "an ordinary empty root remains eligible for removal");
+            }
+            finally {
+                foreach (GameObject value in objects) if (value != null) UnityEngine.Object.DestroyImmediate(value);
+                foreach (RegistryFixtureContainer value in new[] { proxy, container }) if (value != null) {
+                    if (value.Object != null) UnityEngine.Object.DestroyImmediate(value.Object);
+                    registryFixtureObjects.Remove(value.Object);
+                    typeof(ZDO).GetMethod("Reset", All).Invoke(value.Zdo, null); registryFixtureZdos.Remove(value.Zdo);
+                }
+                fixture.UnpatchSelf();
+            }
+            Check(Player.m_localPlayer == null && Game.instance == null,
+                "detached clearance staging, native mask preparation and item preservation never register a player or user world");
+            report.AppendLine("PASS: Detached native collider/subtree staging rolls back exact original states; production mask replay preserves proxy roots; Unicode/sibling paths and cumulative count/path/byte boundaries are checked before mutation; native inventories and saved item bytes retain exact contents.");
+        }
+
         private void CheckCustodyRegistry()
         {
             MethodInfo register = typeof(CustodyInventory).GetMethod("RegisterContainer", All);

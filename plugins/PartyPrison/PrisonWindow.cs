@@ -22,7 +22,7 @@ namespace ValheimModPack.PartyPrison
         public Func<SentenceState> LocalSentence;
         public Action<string, double, string> Impose;
         public Action<string> Release;
-        public Action Build, Kit;
+        public Action PrepareBuild, Build, Kit;
         public Action<int> Wave;
         public Action<bool> Move;
         public Func<string> Notice, CustodyStatus;
@@ -181,7 +181,7 @@ namespace ValheimModPack.PartyPrison
             WaveButtons(255, -92, 140, 44, 150);
             Label(T("Волны появляются сами, когда заключённый на арене. Добычу с мобов он сохраняет.",
                 "Waves spawn automatically while the prisoner is in the arena. The prisoner keeps enemy loot."), 255, -151, 440, 50, 16, false);
-            build = ButtonAt(T("Построить у алтарей боссов", "Build near boss altars"), 0, -235, 580, 45, BuildPrison);
+            build = ButtonAt(T("Построить тюрьму возле меня", "Build prison near me"), 0, -235, 580, 45, BuildPrison);
             buildHint = Label("", 0, -283, 984, 48, 16, false);
             status = Label("", 0, -345, 984, 56, 17, false);
             int created = generation;
@@ -242,12 +242,12 @@ namespace ValheimModPack.PartyPrison
                 previous.interactable = page > 0; next.interactable = page + 1 < pageCount;
                 PrisonPlayerRow selected = Selected();
                 selection.text = selected == null ? T("Выберите игрока слева", "Select a player on the left") : Safe(selected.Name, 72);
-                build.GetComponentInChildren<Text>().text = buildArmed ? T("Подтвердить постройку", "Confirm construction") : T("Построить у алтарей боссов", "Build near boss altars");
+                build.GetComponentInChildren<Text>().text = buildArmed ? T("Подтвердить постройку", "Confirm construction") : T("Построить тюрьму возле меня", "Build prison near me");
                 buildHint.text = buildArmed
-                    ? T("Площадка у алтарей будет расчищена и выровнена: камни, деревья, дикие мобы и постройки игроков будут удалены. Esc — отмена.",
-                        "The site near the altars will be cleared and levelled: rocks, trees, wild creatures and player buildings will be removed. Esc cancels.")
-                    : T("Постройка привязана к алтарям с трофеями боссов. Ваше текущее положение не влияет на её место.",
-                        "Construction is placed near the boss trophy altars. Your current position does not choose the site.");
+                    ? T("Перед вами будут удалены препятствия и постройки, земля выровнена. Вещи и питомцы переместятся наружу. Esc — отмена.",
+                        "Obstacles and buildings in front of you will be removed; ground levelled. Belongings and pets move outside. Esc cancels.")
+                    : T("Центр тюрьмы — в 32 м перед вами по направлению взгляда. Вход обращён к вам. Пустую тюрьму можно перенести.",
+                        "Prison center: 32 m ahead in your look direction; entrance faces you. An empty prison can be relocated.");
                 RepaintActions();
             }
             else
@@ -334,7 +334,7 @@ namespace ValheimModPack.PartyPrison
         private void BuildPrison()
         {
             if (!hostPanel || bindings.Build == null) return;
-            if (!buildArmed) { buildArmed = true; localNotice = ""; Repaint(); return; }
+            if (!buildArmed) { if (bindings.PrepareBuild != null) bindings.PrepareBuild(); buildArmed = true; localNotice = ""; Repaint(); return; }
             buildArmed = false; localNotice = ""; bindings.Build(); Repaint();
         }
 

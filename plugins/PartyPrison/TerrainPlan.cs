@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 
 namespace ValheimModPack.PartyPrison
 {
@@ -38,6 +39,38 @@ namespace ValheimModPack.PartyPrison
         public const int MaximumSamples = 4096;
         private const double MaximumCoordinate = 20000d;
         private const double MaximumHeight = 10000d;
+
+        /// <summary>The administrator supplies the plateau height; water and slope are intentionally unrestricted.</summary>
+        public static TerrainLevelPlan CreateAnywhere(double centerX, double centerZ, double targetHeight,
+            IList<double> groundHeights, int touchedCompilers)
+        {
+            RequireCoordinate(centerX); RequireCoordinate(centerZ); RequireHeight(targetHeight);
+            if (groundHeights == null || groundHeights.Count < 4 || groundHeights.Count > MaximumSamples)
+                throw new InvalidOperationException("Не удалось полностью проверить высоту площадки под тюрьму.");
+            if (touchedCompilers < 1 || touchedCompilers > MaximumCompilers)
+                throw new InvalidOperationException("Площадка затрагивает слишком много участков земли.");
+            double low = Double.MaxValue, high = Double.MinValue, largest = 0d;
+            for (int i = 0; i < groundHeights.Count; ++i) {
+                double ground = groundHeights[i]; RequireHeight(ground);
+                low = Math.Min(low, ground); high = Math.Max(high, ground);
+                largest = Math.Max(largest, Math.Abs(targetHeight - ground));
+            }
+            return new TerrainLevelPlan(centerX, centerZ, targetHeight, low, high, largest, groundHeights.Count, touchedCompilers);
+        }
+
+        public static double EnclosingExtent(double yawDegrees)
+        {
+            if (!Finite(yawDegrees)) throw new ArgumentException("Неверное направление постройки.");
+            double radians = yawDegrees * Math.PI / 180d;
+            return (HalfWidth + FootprintPadding) * (Math.Abs(Math.Cos(radians)) + Math.Abs(Math.Sin(radians)));
+        }
+
+        /// <summary>A virtual interior has physical floors, without an exterior terrain compiler to level.</summary>
+        public static TerrainLevelPlan CreateInterior(double centerX, double centerZ, double targetHeight)
+        {
+            RequireCoordinate(centerX); RequireCoordinate(centerZ); RequireHeight(targetHeight);
+            return new TerrainLevelPlan(centerX, centerZ, targetHeight, targetHeight, targetHeight, 0d, 0, 0);
+        }
 
         /// <summary>All values must describe every vertex that the native square level operation can touch.</summary>
         public static TerrainLevelPlan Create(double centerX, double centerZ, double altarX, double altarZ,
@@ -101,5 +134,59 @@ namespace ValheimModPack.PartyPrison
         }
 
         private static bool Finite(double value) { return !Double.IsNaN(value) && !Double.IsInfinity(value); }
+    }
+
+    /// <summary>Small versioned per-compiler record. Absolute local heights survive native terrain's +/-8 m clamp.</summary>
+    internal static class TerrainOverrides
+    {
+        internal const string Key = "VMP_PP_ForcedGround";
+        internal const int MaximumPitch = 129;
+        internal const int MaximumEntries = MaximumPitch * MaximumPitch;
+        private const int Version = 1;
+
+        internal static SortedDictionary<int, float> Decode(byte[] data, int pitch)
+        {
+            RequirePitch(pitch);
+            SortedDictionary<int, float> values = new SortedDictionary<int, float>();
+            if (data == null || data.Length == 0) return values;
+            if (data.Length < 12 || data.Length > 12 + MaximumEntries * 8)
+                throw new InvalidOperationException("Повреждена запись высот земли под тюрьмой.");
+            using (BinaryReader reader = new BinaryReader(new MemoryStream(data, false))) {
+                int version = reader.ReadInt32(), savedPitch = reader.ReadInt32(), count = reader.ReadInt32();
+                if (version != Version || savedPitch != pitch || count < 0 || count > pitch * pitch || data.Length != 12 + count * 8)
+                    throw new InvalidOperationException("Неподдерживаемая запись высот земли под тюрьмой.");
+                int previous = -1;
+                for (int i = 0; i < count; ++i) {
+                    int index = reader.ReadInt32(); float height = reader.ReadSingle();
+                    if (index <= previous || index >= pitch * pitch || !ValidHeight(height))
+                        throw new InvalidOperationException("Повреждена вершина земли под тюрьмой.");
+                    values.Add(index, height); previous = index;
+                }
+            }
+            return values;
+        }
+
+        internal static byte[] Encode(int pitch, IDictionary<int, float> values)
+        {
+            RequirePitch(pitch);
+            if (values == null || values.Count > pitch * pitch) throw new ArgumentException("Неверное число вершин земли.");
+            SortedDictionary<int, float> sorted = new SortedDictionary<int, float>(values);
+            using (MemoryStream stream = new MemoryStream()) {
+                using (BinaryWriter writer = new BinaryWriter(stream)) {
+                    writer.Write(Version); writer.Write(pitch); writer.Write(sorted.Count);
+                    foreach (KeyValuePair<int, float> item in sorted) {
+                        if (item.Key < 0 || item.Key >= pitch * pitch || !ValidHeight(item.Value))
+                            throw new ArgumentException("Неверная вершина земли.");
+                        writer.Write(item.Key); writer.Write(item.Value);
+                    }
+                    writer.Flush(); return stream.ToArray();
+                }
+            }
+        }
+
+        private static void RequirePitch(int pitch)
+        { if (pitch < 2 || pitch > MaximumPitch) throw new InvalidOperationException("Неподдерживаемый размер компилятора земли."); }
+        private static bool ValidHeight(float value)
+        { return !Single.IsNaN(value) && !Single.IsInfinity(value) && Math.Abs(value) <= 10000f; }
     }
 }

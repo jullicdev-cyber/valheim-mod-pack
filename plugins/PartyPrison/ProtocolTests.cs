@@ -63,7 +63,7 @@ namespace ValheimModPack.PartyPrison
         private static void Headers()
         {
             const long world = -98765432123456789L;
-            for (int kind = PrisonProtocol.State; kind <= PrisonProtocol.WithdrawalAck; ++kind)
+            for (int kind = PrisonProtocol.State; kind <= PrisonProtocol.WorldClearance; ++kind)
             {
                 int expected = kind;
                 byte[] bytes = Write(delegate(BinaryWriter writer) { PrisonProtocol.WriteHeader(writer, world, expected); });
@@ -84,7 +84,7 @@ namespace ValheimModPack.PartyPrison
                 Reject(delegate { Read(wrong, delegate(BinaryReader reader) { PrisonProtocol.ReadHeader(reader, world); }); }, "different or uninitialized packet world");
             }
             Reject(delegate { Read(valid, delegate(BinaryReader reader) { PrisonProtocol.ReadHeader(reader, 0); }); }, "uninitialized expected world");
-            foreach (int kind in new[] { -1, 0, 11, Int32.MaxValue })
+            foreach (int kind in new[] { -1, 0, 12, Int32.MaxValue })
             {
                 byte[] wrong = (byte[])valid.Clone(); Buffer.BlockCopy(BitConverter.GetBytes(kind), 0, wrong, 12, 4);
                 Reject(delegate { Read(wrong, delegate(BinaryReader reader) { PrisonProtocol.ReadHeader(reader, world); }); }, "unknown incoming message kind");
