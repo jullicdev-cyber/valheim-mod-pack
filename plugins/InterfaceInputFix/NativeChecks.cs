@@ -17,20 +17,26 @@ namespace ValheimModPack.InterfaceInputFix
         {
             checks = 0;
             var plugin = (Plugin)Chainloader.PluginInfos[Plugin.Id].Instance;
-            Assert(plugin.PortalPatched && plugin.BackpackPatched, "both version-checked integrations active");
+            Assert(plugin.PortalPatched, "version-checked portal integration active");
+            bool hasBackpacks = Chainloader.PluginInfos.ContainsKey("vapok.mods.adventurebackpacks");
+            Assert(plugin.BackpackPatched == hasBackpacks, "backpack integration matches the copied optional plugin");
             Type portalType = Chainloader.PluginInfos["yay.spikehimself.xportal"].Instance.GetType().Assembly
                 .GetType("XPortal.UI.PortalConfigurationPanel", true);
-            Type backpackType = Chainloader.PluginInfos["vapok.mods.adventurebackpacks"].Instance.GetType().Assembly
-                .GetType("AdventureBackpacks.Patches.InventoryGuiPatches", true);
             var show = AccessTools.Method(portalType, "SetActive");
             var hide = AccessTools.Method(portalType, "Hide");
             var dispose = AccessTools.Method(portalType, "Dispose");
             var focus = AccessTools.Method(portalType, "ActivateInputField");
             var block = AccessTools.Method(typeof(GUIManager), "BlockInput");
             Assert(HasPatch(show) && HasPatch(hide) && HasPatch(dispose), "real XPortal methods patched");
-            Assert(HasPatch(AccessTools.Method(typeof(InventoryGui), "Hide")), "native inventory close patched");
-            Assert(AccessTools.Method(backpackType, "HideBackpack", new[] { typeof(InventoryGui) }) != null
-                && AccessTools.Field(backpackType, "BackpackIsOpen").FieldType == typeof(bool), "actual backpack API shape");
+            Assert(HasPatch(AccessTools.Method(typeof(InventoryGui), "Hide")) == hasBackpacks,
+                "optional backpack close hook matches plugin availability");
+            if (hasBackpacks)
+            {
+                Type backpackType = Chainloader.PluginInfos["vapok.mods.adventurebackpacks"].Instance.GetType().Assembly
+                    .GetType("AdventureBackpacks.Patches.InventoryGuiPatches", true);
+                Assert(AccessTools.Method(backpackType, "HideBackpack", new[] { typeof(InventoryGui) }) != null
+                    && AccessTools.Field(backpackType, "BackpackIsOpen").FieldType == typeof(bool), "actual backpack API shape");
+            }
             var test = new Harmony("valheimmodpack.interfaceinputfix.nativeprobe");
             object instance = Activator.CreateInstance(portalType, true);
             var panel = new GameObject("InterfaceInputFix.IsolatedNativeProbe"); panel.SetActive(false);
@@ -60,7 +66,8 @@ namespace ValheimModPack.InterfaceInputFix
                 try { hide.Invoke(instance, new object[] { false, null }); dispose.Invoke(instance, null); }
                 finally { test.UnpatchSelf(); if (panel != null) UnityEngine.Object.DestroyImmediate(panel); }
             }
-            return "InterfaceInputFix native PASS: " + checks + " assertions; real patched XPortal lifecycle with isolated panel/counter; backpack API and Harmony hook verified (no player inventory mutated).";
+            return "InterfaceInputFix native PASS: " + checks + " assertions; real patched XPortal lifecycle with isolated panel/counter (no player inventory mutated)."
+                + (hasBackpacks ? " Backpack API and Harmony hook verified." : "\nSKIP: Adventure Backpacks API checks; optional plugin is absent.");
         }
         private static bool HasPatch(MethodInfo method)
         {

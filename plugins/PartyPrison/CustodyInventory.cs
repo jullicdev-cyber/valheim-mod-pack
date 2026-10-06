@@ -33,6 +33,9 @@ namespace ValheimModPack.PartyPrison
         private static readonly ConditionalWeakTable<Inventory, Container> InventoryContainers = new ConditionalWeakTable<Inventory, Container>();
         private static readonly MethodInfo NativeAdd = AccessTools.Method(typeof(Inventory), "AddItem",
             new[] { typeof(ItemDrop.ItemData), typeof(int), typeof(int), typeof(int), typeof(bool) });
+        private static readonly BackpackAccessCache<ItemDrop.ItemData, Inventory> BackpackAdapterCache = new BackpackAccessCache<ItemDrop.ItemData, Inventory>();
+        private static readonly Func<BackpackAccess<ItemDrop.ItemData, Inventory>> ResolveBackpackAdapter = ResolveBackpackApi;
+        private static readonly List<BackpackGearEntry> EmptyBackpackPlan = new List<BackpackGearEntry>(0);
 
         public static byte[] Capture(Player player)
         {
@@ -85,24 +88,10 @@ namespace ValheimModPack.PartyPrison
         private static void SyncBackpack(ItemDrop.ItemData item)
         {
             if (item == null || item.m_dropPrefab == null || item.m_stack < 1) throw new InvalidDataException("Invalid item in personal inventory.");
-            Type api = AccessTools.TypeByName("AdventureBackpacks.API.ABAPI");
-            if (api == null) return;
-            MethodInfo get = AccessTools.Method(api, "TryGetBackpackInventory");
-            if (get == null) throw new MissingMethodException("AdventureBackpacks", "TryGetBackpackInventory");
-            object[] args = { item, null };
-            if (!(bool)get.Invoke(null, args)) return;
-            if (!(args[1] is Inventory)) throw new InvalidDataException("Backpack inventory is unavailable.");
-            Type extensions = AccessTools.TypeByName("Vapok.Common.Managers.ItemExtensions");
-            Type componentType = AccessTools.TypeByName("AdventureBackpacks.Components.BackpackComponent");
-            MethodInfo data = extensions == null ? null : AccessTools.Method(extensions, "Data", new[] { typeof(ItemDrop.ItemData) });
-            if (componentType == null || data == null) throw new NotSupportedException("Backpack persistence API is unavailable.");
-            object holder = data.Invoke(null, new object[] { item });
-            MethodInfo generic = holder.GetType().GetMethods().FirstOrDefault(m => m.Name == "GetOrCreate" && m.IsGenericMethodDefinition && m.GetParameters().Length == 1);
-            if (generic == null) throw new MissingMethodException("Backpack", "GetOrCreate");
-            object component = generic.MakeGenericMethod(componentType).Invoke(holder, new object[] { "" });
-            MethodInfo serialize = component.GetType().GetMethod("Serialize", Type.EmptyTypes);
-            if (serialize == null) throw new MissingMethodException("Backpack", "Serialize");
-            serialize.Invoke(component, null);
+            BackpackAccess<ItemDrop.ItemData, Inventory> access = BackpackApi();
+            if (access == null || !access.IsBackpack(item)) return;
+            if (access.Inventory(item) == null) throw new InvalidDataException("Backpack inventory is unavailable.");
+            access.Serialize(access.Component(item));
             // Contents stay inside the bag's native custom-data payload. They
             // must never also be added as independent stacks to custody chests.
         }
@@ -139,7 +128,7 @@ namespace ValheimModPack.PartyPrison
         {
             internal Inventory Inventory;
             internal object Component;
-            internal MethodInfo Serialize;
+            internal Action<object> Serialize;
         }
         // Use the same installed backpack API as custody capture. Plan the
         // complete bounded tree before removing anything, then serialize from
@@ -153,7 +142,7 @@ namespace ValheimModPack.PartyPrison
             for (int i = plan.Count - 1; i >= 0; --i)
                 removed += ArenaBuilder.RemoveObsoleteInventoryGear(plan[i].Inventory, world, activeToken, activeRevision);
             if (removed != 0)
-                for (int i = plan.Count - 1; i >= 0; --i) plan[i].Serialize.Invoke(plan[i].Component, null);
+                for (int i = plan.Count - 1; i >= 0; --i) plan[i].Serialize(plan[i].Component);
             return removed;
         }
         public static bool HasObsoleteBackpackGear(Inventory root, long world, string activeToken, int activeRevision)
@@ -165,43 +154,55 @@ namespace ValheimModPack.PartyPrison
         }
         private static List<BackpackGearEntry> BackpackGearPlan(Inventory root)
         {
+            if (root == null) return EmptyBackpackPlan;
+            BackpackAccess<ItemDrop.ItemData, Inventory> access = BackpackApi();
+            if (access == null) return EmptyBackpackPlan;
+            List<ItemDrop.ItemData> items = root.GetAllItems(); bool hasBag = false;
+            for (int i = 0; i < items.Count; ++i) if (access.IsBackpack(items[i])) { hasBag = true; break; }
+            if (!hasBag) return EmptyBackpackPlan;
             var plan = new List<BackpackGearEntry>();
-            if (root == null) return plan;
-            Type api = AccessTools.TypeByName("AdventureBackpacks.API.ABAPI");
-            if (api == null) return plan;
-            MethodInfo get = AccessTools.Method(api, "TryGetBackpackInventory");
-            if (get == null) throw new MissingMethodException("AdventureBackpacks", "TryGetBackpackInventory");
             var visited = new HashSet<Inventory>(); visited.Add(root);
-            int itemCount = 0; PlanBackpackGear(root, get, 0, visited, plan, ref itemCount);
+            int itemCount = 0; PlanBackpackGear(root, access, 0, visited, plan, ref itemCount);
             return plan;
         }
-        private static void PlanBackpackGear(Inventory root, MethodInfo get, int depth, HashSet<Inventory> visited, List<BackpackGearEntry> plan, ref int itemCount)
+        private static void PlanBackpackGear(Inventory root, BackpackAccess<ItemDrop.ItemData, Inventory> access, int depth, HashSet<Inventory> visited, List<BackpackGearEntry> plan, ref int itemCount)
         {
             ItemDrop.ItemData[] items = root.GetAllItems().ToArray();
             itemCount += items.Length;
             if (itemCount > 8192) throw new InvalidDataException("Backpack equipment cleanup exceeds its item limit; inventories retained.");
             foreach (ItemDrop.ItemData item in items)
             {
-                if (item == null) continue;
-                object[] args = { item, null };
-                if (!(bool)get.Invoke(null, args)) continue;
-                Inventory contents = args[1] as Inventory;
+                if (item == null || !access.IsBackpack(item)) continue;
+                Inventory contents = access.Inventory(item);
                 if (contents == null) throw new InvalidDataException("Backpack inventory is unavailable; contents retained.");
                 if (!visited.Add(contents)) continue;
                 if (depth >= 4 || plan.Count >= 128) throw new InvalidDataException("Backpack equipment cleanup exceeds its nesting or bag limit; inventories retained.");
-                Type extensions = AccessTools.TypeByName("Vapok.Common.Managers.ItemExtensions");
-                Type componentType = AccessTools.TypeByName("AdventureBackpacks.Components.BackpackComponent");
-                MethodInfo data = extensions == null ? null : AccessTools.Method(extensions, "Data", new[] { typeof(ItemDrop.ItemData) });
-                if (componentType == null || data == null) throw new NotSupportedException("Backpack persistence API is unavailable; contents retained.");
-                object holder = data.Invoke(null, new object[] { item });
-                MethodInfo generic = holder.GetType().GetMethods().FirstOrDefault(m => m.Name == "GetOrCreate" && m.IsGenericMethodDefinition && m.GetParameters().Length == 1);
-                if (generic == null) throw new MissingMethodException("Backpack", "GetOrCreate");
-                object component = generic.MakeGenericMethod(componentType).Invoke(holder, new object[] { "" });
-                MethodInfo serialize = component.GetType().GetMethod("Serialize", Type.EmptyTypes);
-                if (serialize == null) throw new MissingMethodException("Backpack", "Serialize");
-                plan.Add(new BackpackGearEntry { Inventory = contents, Component = component, Serialize = serialize });
-                PlanBackpackGear(contents, get, depth + 1, visited, plan, ref itemCount);
+                plan.Add(new BackpackGearEntry { Inventory = contents, Component = access.Component(item), Serialize = access.Serialize });
+                PlanBackpackGear(contents, access, depth + 1, visited, plan, ref itemCount);
             }
+        }
+        private static BackpackAccess<ItemDrop.ItemData, Inventory> BackpackApi()
+        {
+            BackpackAccess<ItemDrop.ItemData, Inventory> cached = BackpackAdapterCache.Value;
+            return cached ?? BackpackAdapterCache.Get(Time.realtimeSinceStartup, ResolveBackpackAdapter);
+        }
+        private static BackpackAccess<ItemDrop.ItemData, Inventory> ResolveBackpackApi()
+        {
+            // An optional plugin can load after this class. Retry absence at a
+            // bounded interval, using exact assembly lookup rather than AllTypes.
+            Type api = LoadedType("AdventureBackpacks.API.ABAPI");
+            if (api == null) return null;
+            // Several mods embed independent Vapok copies. The holder must be
+            // the exact copy used by AdventureBackpacks, never a namesake.
+            Type extensions = api.Assembly.GetType("Vapok.Common.Managers.ItemExtensions", false);
+            Type component = api.Assembly.GetType("AdventureBackpacks.Components.BackpackComponent", false);
+            return BackpackAccess<ItemDrop.ItemData, Inventory>.Create(api, extensions, component);
+        }
+        private static Type LoadedType(string name)
+        {
+            foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
+            { Type type = assembly.GetType(name, false); if (type != null) return type; }
+            return null;
         }
 
         public static bool HasClearReceipt(Player player, long world, string token, string hash)

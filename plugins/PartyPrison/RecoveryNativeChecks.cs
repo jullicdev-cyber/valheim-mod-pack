@@ -15,9 +15,13 @@ namespace ValheimModPack.PartyPrison.NativeVerification
     {
         private const BindingFlags All = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance;
         private static readonly HashSet<GameObject> DetachedPlayers = new HashSet<GameObject>();
+        private static Type backpackApi;
+        public static bool BackpackFixtureSkipped { get; private set; }
 
         public static void Run(Action<bool, string> check)
         {
+            BackpackFixtureSkipped = false;
+            backpackApi = AppDomain.CurrentDomain.GetAssemblies().Select(assembly => assembly.GetType("AdventureBackpacks.API.ABAPI", false)).FirstOrDefault(type => type != null);
             CheckEmergencyState(check);
             CheckDurableReceipt(check);
             CheckNestedBackpackGear(check);
@@ -106,7 +110,8 @@ namespace ValheimModPack.PartyPrison.NativeVerification
 
         private static object Backpack(ItemDrop.ItemData item)
         {
-            Type extensions = AccessTools.TypeByName("Vapok.Common.Managers.ItemExtensions"), component = AccessTools.TypeByName("AdventureBackpacks.Components.BackpackComponent");
+            if (backpackApi == null) throw new InvalidOperationException("Actual AdventureBackpacks API is unavailable for its optional fixture.");
+            Type extensions = backpackApi.Assembly.GetType("Vapok.Common.Managers.ItemExtensions", true), component = backpackApi.Assembly.GetType("AdventureBackpacks.Components.BackpackComponent", true);
             object holder = extensions.GetMethod("Data", new[] { typeof(ItemDrop.ItemData) }).Invoke(null, new object[] { item });
             return holder.GetType().GetMethod("GetOrCreate").MakeGenericMethod(component).Invoke(holder, new object[] { "" });
         }
@@ -124,6 +129,10 @@ namespace ValheimModPack.PartyPrison.NativeVerification
 
         private static void CheckNestedBackpackGear(Action<bool, string> check)
         {
+            if (backpackApi == null) { BackpackFixtureSkipped = true; return; }
+            check(backpackApi.Assembly.GetType("Vapok.Common.Managers.ItemExtensions", false) != null
+                && backpackApi.Assembly.GetType("AdventureBackpacks.Components.BackpackComponent", false) != null,
+                "optional recovery backpack fixture uses the exact AdventureBackpacks embedded persistence API");
             GameObject prefab = null;
             foreach (GameObject candidate in ObjectDB.instance.m_items.Where(item => item != null && item.name.StartsWith("Backpack", StringComparison.Ordinal) && item.GetComponent<ItemDrop>() != null))
             {

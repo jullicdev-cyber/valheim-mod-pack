@@ -37,8 +37,19 @@ function Graph($entry) {
         if (-not $visited.Add($current.FullName) -or -not $current.HasBody) { continue }
         $result.Add($current)
         foreach ($instruction in $current.Body.Instructions) {
-            if ($instruction.OpCode.Name -notin @('call','callvirt','newobj')) { continue }
-            if ($methods.ContainsKey($instruction.Operand.FullName)) { $pending.Enqueue($methods[$instruction.Operand.FullName]) }
+            if ($instruction.OpCode.Name -notin @('call','callvirt','newobj','ldftn','ldvirtftn')) { continue }
+            $target = $instruction.Operand
+            if ($methods.ContainsKey($target.FullName)) { $pending.Enqueue($methods[$target.FullName]); continue }
+            # Closed generic references have a different FullName from their
+            # production definition. Include them without resolving game DLLs.
+            if ($target -is [Mono.Cecil.GenericInstanceMethod]) { $target = $target.ElementMethod }
+            $owner = $target.DeclaringType
+            if ($owner -is [Mono.Cecil.GenericInstanceType]) { $owner = $owner.ElementType }
+            $definition = @($types | Where-Object FullName -eq $owner.FullName | ForEach-Object Methods | Where-Object {
+                $_.Name -eq $target.Name -and $_.Parameters.Count -eq $target.Parameters.Count -and
+                $_.GenericParameters.Count -eq $target.GenericParameters.Count
+            })
+            if ($definition.Count -eq 1) { $pending.Enqueue($definition[0]) }
         }
     }
     return $result.ToArray()
@@ -195,6 +206,115 @@ try {
     Check ([bool](Calls (Method $arenaType 'InvalidateLayoutCache' 0) 'ArenaBuilder::InvalidateStoredGearCache')) (
         'A build or layout upgrade must invalidate the shared chest cache immediately.')
     No-WorldScan $chestCache
+
+    $custodyType = 'ValheimModPack.PartyPrison.CustodyInventory'
+    $adapterType = 'ValheimModPack.PartyPrison.BackpackAccess`2'
+    $cacheType = 'ValheimModPack.PartyPrison.BackpackAccessCache`2'
+    $bagPlan = Method $custodyType 'BackpackGearPlan' 1
+    $walkBags = Method $custodyType 'PlanBackpackGear' 6
+    foreach ($method in @(Graph $bagPlan)) {
+        Check (-not [bool](Calls $method 'HarmonyLib\.AccessTools::(TypeByName|AllTypes)|System\.Reflection\.Assembly::GetTypes')) (
+            'Equipment expiry must never enumerate every loaded type: ' + $method.FullName)
+    }
+    foreach ($method in @($bagPlan, $walkBags)) {
+        Check (-not [bool](Calls $method 'System\.Reflection\.(MethodBase|MethodInfo)::Invoke|HarmonyLib\.AccessTools::')) (
+            'The recurring backpack traversal must use the cached typed adapter: ' + $method.FullName)
+    }
+    $bagTest = @($walkBags.Body.Instructions | Where-Object {
+        $_.OpCode.Name -eq 'ldfld' -and $_.Operand.Name -eq 'IsBackpack'
+    })
+    $bagInventory = @($walkBags.Body.Instructions | Where-Object {
+        $_.OpCode.Name -eq 'ldfld' -and $_.Operand.Name -eq 'Inventory'
+    })
+    Check ($bagTest.Count -eq 1 -and $bagInventory.Count -eq 1 -and $bagTest[0].Offset -lt $bagInventory[0].Offset) (
+        'Ordinary items must be classified before calling the real backpack inventory API.')
+    Check ([bool]($walkBags.Body.Instructions | Where-Object {
+        $_.OpCode.FlowControl -eq [Mono.Cecil.Cil.FlowControl]::Cond_Branch -and
+        $_.Offset -gt $bagTest[0].Offset -and $_.Offset -lt $bagInventory[0].Offset -and
+        $_.Operand -is [Mono.Cecil.Cil.Instruction] -and $_.Operand.Offset -gt $bagInventory[0].Offset
+    })) 'The ordinary-item branch must skip backpack component and inventory access.'
+    Check ([bool]($bagPlan.Body.Instructions | Where-Object {
+        $_.OpCode.Name -eq 'ldsfld' -and $_.Operand.Name -eq 'EmptyBackpackPlan'
+    })) 'A backpack-free inventory must reuse the empty plan without allocating a traversal.'
+    foreach ($limit in @(8192, 128, 4)) {
+        Check ([bool]($walkBags.Body.Instructions | Where-Object {
+            ($_.OpCode.Name -eq ('ldc.i4.' + $limit)) -or ($_.OpCode.Name -in @('ldc.i4','ldc.i4.s') -and [int]$_.Operand -eq $limit)
+        })) ('Typed traversal must retain its bounded item, bag and depth limits: ' + $limit)
+    }
+    $adapterCache = Method $cacheType 'Get' 2
+    $resolution = @(Calls $adapterCache 'System\.Func.*::Invoke')
+    Check ($resolution.Count -eq 1) 'The optional backpack adapter must have one cold resolution call.'
+    Check ([bool]($adapterCache.Body.Instructions | Where-Object {
+        $_.OpCode.Name -eq 'ldfld' -and $_.Operand.Name -eq 'value' -and $_.Offset -lt $resolution[0].Offset
+    }) -and [bool]($adapterCache.Body.Instructions | Where-Object {
+        $_.OpCode.Name -eq 'ret' -and $_.Offset -lt $resolution[0].Offset
+    })) 'A bound backpack adapter must return before any API resolution.'
+    Check ([bool]($adapterCache.Body.Instructions | Where-Object {
+        $_.OpCode.Name -eq 'ldc.r4' -and [single]$_.Operand -eq 10
+    }) -and [bool]($adapterCache.Body.Instructions | Where-Object {
+        $_.OpCode.Name -eq 'stfld' -and $_.Operand.Name -eq 'nextResolution' -and $_.Offset -lt $resolution[0].Offset
+    })) 'An absent or incompatible optional API must use a ten-second cold retry budget.'
+    $resolveAdapter = Method $custodyType 'ResolveBackpackApi' 0
+    Check (@(Calls $resolveAdapter 'CustodyInventory::LoadedType').Count -eq 1 -and
+        @(Calls $resolveAdapter 'System\.Reflection\.Assembly::GetType').Count -eq 2) (
+        'Only ABAPI may use loaded-assembly lookup; holder and component types must come from its assembly.')
+    foreach ($name in @('Vapok.Common.Managers.ItemExtensions','AdventureBackpacks.Components.BackpackComponent')) {
+        Check ([bool]($resolveAdapter.Body.Instructions | Where-Object { $_.OpCode.Name -eq 'ldstr' -and $_.Operand -eq $name })) (
+            'The typed backpack resolver must bind its exact owner-assembly type: ' + $name)
+    }
+    $loadedType = Method $custodyType 'LoadedType' 1
+    Check ([bool](Calls $loadedType 'System\.Reflection\.Assembly::GetType') -and
+        -not [bool](Calls $loadedType '::GetTypes|AccessTools::TypeByName|AccessTools::AllTypes')) (
+        'The bounded optional-plugin lookup must use exact type names without global type-array allocation.')
+    foreach ($name in @('Create','Bind')) {
+        Check ([bool](Calls (Method $adapterType $name) 'System\.Delegate::CreateDelegate')) (
+            'Backpack API binding must produce typed delegates once: ' + $name)
+    }
+    $settled = Method $arenaType 'RemoveObsoleteGearWhenSettled' 4
+    Check ([bool](@(Graph $settled) | ForEach-Object Body | ForEach-Object Instructions | Where-Object {
+        $_.OpCode.Name -eq 'ldc.r4' -and [single]$_.Operand -eq 2
+    })) 'The backpack optimization must retain the two-second grace for newly observed public chest equipment.'
+
+    # Validate the ABI against the installed plugin without loading Unity or
+    # activating its components. Vapok types must be AdventureBackpacks' own copy.
+    $abPath = Join-Path $GameDirectory 'BepInEx/plugins/Vapok-AdventureBackpacks/AdventureBackpacks.dll'
+    if (Test-Path -LiteralPath $abPath -PathType Leaf) {
+    $ab = [Mono.Cecil.AssemblyDefinition]::ReadAssembly($abPath)
+    try {
+        $api = @($ab.MainModule.Types | Where-Object FullName -eq 'AdventureBackpacks.API.ABAPI')
+        $extensions = @($ab.MainModule.Types | Where-Object FullName -eq 'Vapok.Common.Managers.ItemExtensions')
+        $component = @($ab.MainModule.Types | Where-Object FullName -eq 'AdventureBackpacks.Components.BackpackComponent')
+        Check ($api.Count -eq 1 -and $extensions.Count -eq 1 -and $component.Count -eq 1) 'Installed AB must own all three adapter ABI types.'
+        Check ([Object]::ReferenceEquals($api[0].Module, $extensions[0].Module) -and
+            [Object]::ReferenceEquals($api[0].Module, $component[0].Module)) 'Backpack adapter types must share the exact same owner assembly.'
+        foreach ($entry in @(@('IsBackpack','System.Boolean'), @('GetBackpackInventory','Inventory'))) {
+            $method = @($api[0].Methods | Where-Object {
+                $_.Name -eq $entry[0] -and $_.IsPublic -and $_.IsStatic -and $_.Parameters.Count -eq 1 -and
+                $_.Parameters[0].ParameterType.FullName -eq 'ItemDrop/ItemData' -and $_.ReturnType.FullName -eq $entry[1]
+            })
+            Check ($method.Count -eq 1) ('Installed AB typed static ABI changed: ' + $entry[0])
+        }
+        $data = @($extensions[0].Methods | Where-Object {
+            $_.Name -eq 'Data' -and $_.IsPublic -and $_.IsStatic -and $_.Parameters.Count -eq 1 -and
+            $_.Parameters[0].ParameterType.FullName -eq 'ItemDrop/ItemData'
+        })
+        Check ($data.Count -eq 1) 'Installed AB must have one exact native ItemData-to-holder overload.'
+        $holder = @($ab.MainModule.Types | Where-Object FullName -eq $data[0].ReturnType.FullName)
+        Check ($holder.Count -eq 1 -and [Object]::ReferenceEquals($api[0].Module, $holder[0].Module)) 'AB Data return type must resolve in the API owner assembly.'
+        $getComponent = @($holder[0].Methods | Where-Object {
+            $_.Name -eq 'GetOrCreate' -and $_.IsPublic -and -not $_.IsStatic -and $_.GenericParameters.Count -eq 1 -and
+            $_.Parameters.Count -eq 1 -and $_.Parameters[0].ParameterType.FullName -eq 'System.String' -and
+            $_.ReturnType -is [Mono.Cecil.GenericParameter] -and $_.ReturnType.Position -eq 0
+        })
+        Check ($getComponent.Count -eq 1) 'AB holder must expose the open-instance GetOrCreate<TComponent>(string) typed return ABI.'
+        $serialize = @($component[0].Methods | Where-Object {
+            $_.Name -eq 'Serialize' -and $_.IsPublic -and -not $_.IsStatic -and $_.Parameters.Count -eq 0 -and $_.ReturnType.FullName -eq 'System.String'
+        })
+        Check ($serialize.Count -eq 1) 'Installed AB Serialize ABI must remain an open-instance zero-argument string return.'
+    } finally { $ab.Dispose() }
+    } else {
+        Write-Output 'SKIP: Installed AdventureBackpacks ABI fixture; optional plugin absent. All production adapter and traversal performance contracts still run.'
+    }
 
     $progress = Method $pluginType 'ProgressCustody' 0
     Check ([bool]($progress.Body.Instructions | Where-Object { $_.Operand -is [Mono.Cecil.FieldReference] -and $_.Operand.Name -eq 'cachedOffer' })) 'Admission retries must reuse the initial inventory offer instead of repeatedly serializing backpacks.'

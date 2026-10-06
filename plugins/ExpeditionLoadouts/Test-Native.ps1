@@ -1,8 +1,8 @@
 [CmdletBinding()]
-param([Parameter(Mandatory=$true)][string]$GameDirectory, [switch]$WithGraphics, [switch]$CompileOnly)
+param([Parameter(Mandatory=$true)][string]$GameDirectory, [switch]$WithGraphics, [Alias('BuildOnly')][switch]$CompileOnly)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
-if (Get-Process -Name valheim,valheim_server -ErrorAction SilentlyContinue) { throw 'Close Valheim before native verification.' }
+if (-not $CompileOnly -and (Get-Process -Name valheim,valheim_server -ErrorAction SilentlyContinue)) { throw 'Close Valheim before native verification.' }
 $smoke = [IO.Path]::GetFullPath((Join-Path $root ('.cache/qol-native-' + [guid]::NewGuid().ToString('N').Substring(0,8))))
 if (-not $smoke.StartsWith([IO.Path]::GetFullPath((Join-Path $root '.cache')) + '\', [StringComparison]::OrdinalIgnoreCase)) {
     throw 'Native probe directory must stay inside the workspace cache.'
@@ -26,7 +26,12 @@ foreach ($path in @('Game/BepInEx/plugins/Jotunn.dll','Game/BepInEx/plugins/Valh
     Copy-Item -LiteralPath (Join-Path $root $path) -Destination (Join-Path $smoke ('BepInEx/plugins/' + (Split-Path $path -Leaf)))
 }
 foreach ($folder in @('XPortal','Vapok-AdventureBackpacks')) {
-    Copy-Item -LiteralPath (Join-Path $root ('Game/BepInEx/plugins/'+$folder)) -Destination (Join-Path $smoke ('BepInEx/plugins/'+$folder)) -Recurse
+    $source = Join-Path $root ('Game/BepInEx/plugins/'+$folder)
+    if ($folder -eq 'Vapok-AdventureBackpacks' -and -not (Test-Path -LiteralPath $source -PathType Container)) {
+        Write-Output 'SKIP: Adventure Backpacks fixture copy; optional plugin is absent.'
+        continue
+    }
+    Copy-Item -LiteralPath $source -Destination (Join-Path $smoke ('BepInEx/plugins/'+$folder)) -Recurse
 }
 # Prefer the just-built fork over a previous packaged XPortal binary in this fixture.
 $portalBuild = Join-Path $root 'local-plugins/XPortal.dll'
@@ -69,6 +74,24 @@ $mapProbe = Join-Path $smoke 'PinHistoryNativeChecks.dll'
 & (Join-Path $root 'plugins/InventoryAdmin/Build-NativeChecks.ps1') -GameDirectory $GameDirectory -PluginAssembly (Join-Path $root 'local-plugins/InventoryAdmin.dll') -OutputDirectory $smoke
 & (Join-Path $root 'plugins/NordicRadio/Build-PersonalAudioChecks.ps1') -GameDirectory $GameDirectory -PluginAssembly (Join-Path $root 'local-plugins/NordicRadio.dll') -OutputDirectory $smoke
 & (Join-Path $root 'plugins/AnyPortalPlus/Build-UiNativeChecks.ps1') -GameDirectory $GameDirectory -OutputDirectory $smoke
+# The full-pack contract follows exactly the DLLs copied above, including an
+# optional vendor's absence. Native execution verifies these GUIDs and versions.
+[void][Reflection.Assembly]::LoadFrom((Join-Path $root 'Game/BepInEx/core/Mono.Cecil.dll'))
+$expected = New-Object 'System.Collections.Generic.List[string]'
+$guids = New-Object 'System.Collections.Generic.HashSet[string]'
+foreach ($dll in Get-ChildItem -LiteralPath (Join-Path $smoke 'BepInEx/plugins') -Filter '*.dll' -File -Recurse) {
+    $assembly = [Mono.Cecil.AssemblyDefinition]::ReadAssembly($dll.FullName)
+    try {
+        foreach ($type in $assembly.MainModule.GetTypes()) {
+            foreach ($attribute in $type.CustomAttributes | Where-Object { $_.AttributeType.FullName -eq 'BepInEx.BepInPlugin' }) {
+                $guid = [string]$attribute.ConstructorArguments[0].Value
+                if (-not $guids.Add($guid)) { throw "Duplicate plugin GUID in native fixture: $guid" }
+                $expected.Add($guid + "`t" + [string]$attribute.ConstructorArguments[2].Value)
+            }
+        }
+    } finally { $assembly.Dispose() }
+}
+[IO.File]::WriteAllLines((Join-Path $smoke 'expected-plugins.txt'), $expected, [Text.UTF8Encoding]::new($false))
 $managed = Join-Path $GameDirectory 'valheim_Data/Managed'
 $refs = @((Join-Path $root 'Game/BepInEx/core/BepInEx.dll'),(Join-Path $root 'Game/BepInEx/plugins/Jotunn.dll'),(Join-Path $root 'local-plugins/ExpeditionLoadouts.dll'),(Join-Path $root 'local-plugins/ChestSearch.dll'))
 $refs += @('Game/BepInEx/core/0Harmony.dll','local-plugins/InterfaceInputFix.dll','local-plugins/RenewableResourceTimers.dll','Game/BepInEx/plugins/isimp-Bindrune/Bindrune.dll') | ForEach-Object { Join-Path $root $_ }

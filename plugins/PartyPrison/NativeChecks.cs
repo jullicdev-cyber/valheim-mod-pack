@@ -125,6 +125,8 @@ namespace ValheimModPack.PartyPrison.NativeVerification
             report.AppendLine("PASS: Required confinement, death, protection and input-reset Harmony patches bind; native creature loot generation remains available.");
             CheckCommandRouting(); CheckGroupRadiusCompatibility(); CheckUi(); CheckInventoryIsolation(); CheckCustodyInventory(); CheckAdmissionEquivalence(); CheckExactWithdrawalInsertion(); CheckCustodyMask(); CheckCustodyRegistry(); CheckCustodyTransitions(); CheckForcedTerrainHeights(); CheckForceClearance(); CheckLootPickupGuard(); CheckGeometry(); CheckLayoutPlan(); CheckPrefabs();
             CombatNativeChecks.Run(Check); LayoutNativeChecks.Run(Check); RecoveryNativeChecks.Run(Check);
+            if (CombatNativeChecks.BackpackFixtureSkipped) report.AppendLine("SKIP: Adventure Backpacks is absent; native backpack replacement fixture was omitted.");
+            if (RecoveryNativeChecks.BackpackFixtureSkipped) report.AppendLine("SKIP: Adventure Backpacks is absent; native nested-backpack equipment expiry fixture was omitted.");
             Check(Player.m_localPlayer == null && Game.instance == null, "probe leaves no game or local player registration");
         }
 
@@ -692,9 +694,10 @@ namespace ValheimModPack.PartyPrison.NativeVerification
 
         private static object Backpack(ItemDrop.ItemData item)
         {
-            Type extensions = AccessTools.TypeByName("Vapok.Common.Managers.ItemExtensions");
-            Type component = AccessTools.TypeByName("AdventureBackpacks.Components.BackpackComponent");
-            if (extensions == null || component == null) throw new InvalidOperationException("Actual backpack component API is absent.");
+            Type api = AppDomain.CurrentDomain.GetAssemblies().Select(assembly => assembly.GetType("AdventureBackpacks.API.ABAPI", false)).FirstOrDefault(type => type != null);
+            if (api == null) throw new InvalidOperationException("Actual backpack component API is absent.");
+            Type extensions = api.Assembly.GetType("Vapok.Common.Managers.ItemExtensions", true);
+            Type component = api.Assembly.GetType("AdventureBackpacks.Components.BackpackComponent", true);
             object data = extensions.GetMethod("Data", new[] { typeof(ItemDrop.ItemData) }).Invoke(null, new object[] { item });
             return data.GetType().GetMethod("GetOrCreate").MakeGenericMethod(component).Invoke(data, new object[] { "" });
         }
@@ -720,21 +723,28 @@ namespace ValheimModPack.PartyPrison.NativeVerification
             armor.m_customData["vmp_prison_enchantment_fixture"] = "retained custom enchantment \u2603";
             source.GetAllItems().Add(wood); source.GetAllItems().Add(armor);
             Check(ObjectDB.instance != null, "native custody fixture has the menu item database");
-            GameObject bagPrefab = ObjectDB.instance.m_items.FirstOrDefault(prefab => prefab != null && prefab.name.StartsWith("Backpack", StringComparison.Ordinal) && prefab.GetComponent<ItemDrop>() != null);
-            Check(bagPrefab != null, "actual Adventure Backpacks item is available for custody fixture");
-            ItemDrop.ItemData bag = NativeItem(bagPrefab.name, 1, 1, 6);
-            var nested = new Inventory("Party Prison custody nested bag", null, 4, 4); nested.GetAllItems().Add(NativeItem("Iron", 12, 0, 0));
-            object component = Backpack(bag); component.GetType().GetMethod("SetInventory").Invoke(component, new object[] { nested });
-            component.GetType().GetMethod("Serialize").Invoke(component, null);
-            string bagKey = bag.m_customData.Keys.Single(key => key.Contains("AdventureBackpacks.Components.BackpackComponent"));
-            string bagValue = bag.m_customData[bagKey]; source.GetAllItems().Add(bag);
+            Type backpackApi = AppDomain.CurrentDomain.GetAssemblies().Select(assembly => assembly.GetType("AdventureBackpacks.API.ABAPI", false)).FirstOrDefault(type => type != null);
+            GameObject bagPrefab = null; ItemDrop.ItemData bag = null; string bagKey = null, bagValue = null;
+            if (backpackApi != null)
+            {
+                bagPrefab = ObjectDB.instance.m_items.FirstOrDefault(prefab => prefab != null && prefab.name.StartsWith("Backpack", StringComparison.Ordinal) && prefab.GetComponent<ItemDrop>() != null);
+                Check(bagPrefab != null, "actual Adventure Backpacks item is available for custody fixture");
+                bag = NativeItem(bagPrefab.name, 1, 1, 6);
+                var nested = new Inventory("Party Prison custody nested bag", null, 4, 4); nested.GetAllItems().Add(NativeItem("Iron", 12, 0, 0));
+                object component = Backpack(bag); component.GetType().GetMethod("SetInventory").Invoke(component, new object[] { nested });
+                component.GetType().GetMethod("Serialize").Invoke(component, null);
+                bagKey = bag.m_customData.Keys.Single(key => key.Contains("AdventureBackpacks.Components.BackpackComponent"));
+                bagValue = bag.m_customData[bagKey]; source.GetAllItems().Add(bag);
+            }
+            else report.AppendLine("SKIP: Adventure Backpacks is absent; native custody backpack roundtrip omitted. Ordinary custody and encoded legacy bag validation still run.");
+            int rootStacks = bag == null ? 2 : 3;
             byte[] original = CustodyInventory.Capture(source);
-            Check(CustodyInventory.Count(original) == 3 && CustodyInventory.Decode(original).GetAllItems().Any(item => item.m_gridPos.y == 6),
-                "custody capture includes native hidden equipment rows and counts the backpack once");
+            Check(CustodyInventory.Count(original) == rootStacks && CustodyInventory.Decode(original).GetAllItems().Any(item => item.m_gridPos.y == 6),
+                "custody capture includes native hidden equipment rows and counts every root stack once");
             Check(CustodyInventory.Fingerprint(original).Length == 64, "original belongings have a stable SHA256 custody fingerprint");
             byte[][] chests = CustodyInventory.PrepareChestPayloads(original, 6, 4);
             var belongings = chests.SelectMany(payload => CustodyInventory.Decode(payload).GetAllItems()).ToList();
-            Check(chests.Length == 4 && chests.Sum(payload => CustodyInventory.Count(payload)) == 3, "exactly four detached chest payloads retain every root stack without duplicating bag contents");
+            Check(chests.Length == 4 && chests.Sum(payload => CustodyInventory.Count(payload)) == rootStacks, "exactly four detached chest payloads retain every root stack without duplication");
             ItemDrop.ItemData restoredArmor = belongings.Single(item => item.m_dropPrefab.name == "HelmetLeather");
             Check(!restoredArmor.m_equipped && restoredArmor.m_quality == armor.m_quality && restoredArmor.m_durability == armor.m_durability
                 && restoredArmor.m_crafterID == armor.m_crafterID && restoredArmor.m_crafterName == armor.m_crafterName,
@@ -742,15 +752,18 @@ namespace ValheimModPack.PartyPrison.NativeVerification
             Check(restoredArmor.m_customData["vmp_prison_enchantment_fixture"] == armor.m_customData["vmp_prison_enchantment_fixture"]
                 && !new[] { "eaqs_slot", "eaqs_player", "eaqs_parked", "eaqs_weaponshield" }.Any(key => restoredArmor.m_customData.ContainsKey(key)),
                 "custody chest gear preserves custom metadata and removes only temporary equipment slot bookkeeping");
-            Check(source.GetAllItems().Count == 3 && armor.m_equipped && armor.m_customData["eaqs_slot"] == "head"
-                && armor.m_customData["eaqs_player"] == "44" && bag.m_customData[bagKey] == bagValue,
-                "preparing detached chest payloads leaves original character items and backpack metadata intact");
-            ItemDrop.ItemData restoredBag = belongings.Single(item => item.m_dropPrefab.name == bagPrefab.name);
-            Check(restoredBag.m_customData[bagKey] == bagValue, "custody preserves the actual serialized backpack inventory bytes");
-            object restoredComponent = Backpack(restoredBag);
-            Inventory restoredContents = (Inventory)restoredComponent.GetType().GetMethod("GetInventory").Invoke(restoredComponent, null);
-            Check(restoredContents.GetAllItems().Count == 1 && restoredContents.GetAllItems()[0].m_dropPrefab.name == "Iron" && restoredContents.GetAllItems()[0].m_stack == 12,
-                "released native backpack component restores its twelve iron rather than creating separate chest stacks");
+            Check(source.GetAllItems().Count == rootStacks && armor.m_equipped && armor.m_customData["eaqs_slot"] == "head"
+                && armor.m_customData["eaqs_player"] == "44" && (bag == null || bag.m_customData[bagKey] == bagValue),
+                "preparing detached chest payloads leaves original character items and optional backpack metadata intact");
+            if (bag != null)
+            {
+                ItemDrop.ItemData restoredBag = belongings.Single(item => item.m_dropPrefab.name == bagPrefab.name);
+                Check(restoredBag.m_customData[bagKey] == bagValue, "custody preserves the actual serialized backpack inventory bytes");
+                object restoredComponent = Backpack(restoredBag);
+                Inventory restoredContents = (Inventory)restoredComponent.GetType().GetMethod("GetInventory").Invoke(restoredComponent, null);
+                Check(restoredContents.GetAllItems().Count == 1 && restoredContents.GetAllItems()[0].m_dropPrefab.name == "Iron" && restoredContents.GetAllItems()[0].m_stack == 12,
+                    "released native backpack component restores its twelve iron rather than creating separate chest stacks");
+            }
             var tooMany = new Inventory("Party Prison custody capacity fixture", null, 8, 4);
             for (int i = 0; i < 5; ++i) tooMany.GetAllItems().Add(NativeItem("Wood", 1, i, 0));
             byte[] full = CustodyInventory.Capture(tooMany);
@@ -758,7 +771,7 @@ namespace ValheimModPack.PartyPrison.NativeVerification
             Check(tooMany.GetAllItems().Count == 5 && CustodyInventory.Count(full) == 5, "insufficient chest capacity leaves all original belongings untouched");
             ItemDrop.ItemData loan = NativeItem("SwordBronze", 1, 2, 6); loan.m_customData[ArenaBuilder.LoanKey] = "1"; source.GetAllItems().Add(loan);
             Reject(() => CustodyInventory.Capture(source), "prison loan mixed into personal custody");
-            Check(source.GetAllItems().Count == 4 && source.GetAllItems().Contains(loan), "rejected loan capture clears no items");
+            Check(source.GetAllItems().Count == rootStacks + 1 && source.GetAllItems().Contains(loan), "rejected loan capture clears no items");
             source.GetAllItems().Remove(loan);
             var empty = new Inventory("Party Prison emptied protected character fixture", null, 8, 10);
             Check(CustodyInventory.Count(CustodyInventory.Capture(empty)) == 0, "empty post-confiscation inventory has a valid native durable payload");
@@ -771,7 +784,8 @@ namespace ValheimModPack.PartyPrison.NativeVerification
             malformed.m_customData["prison_fixture#AdventureBackpacks.Components.BackpackComponent"] = "not valid base64";
             corruptBag.GetAllItems().Add(malformed); byte[] invalidBag = SaveDetached(corruptBag);
             Reject(() => CustodyInventory.Decode(invalidBag), "invalid embedded backpack bytes");
-            report.AppendLine("PASS: Detached native custody capture/chest allocation retains hidden equipment rows, item quality/wear/crafter/custom metadata and a real backpack with twelve iron; overflow, loans, trailing/truncated payloads and malformed embedded bags fail without clearing personal items.");
+            report.AppendLine("PASS: Detached native custody capture/chest allocation retains hidden equipment rows and item quality/wear/crafter/custom metadata; overflow, loans, trailing/truncated payloads and malformed embedded bags fail without clearing personal items.");
+            if (bag != null) report.AppendLine("PASS: Optional native custody backpack roundtrip preserves twelve iron in its serialized contents.");
         }
 
         private void CheckCustodyMask()

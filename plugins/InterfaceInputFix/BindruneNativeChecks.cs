@@ -76,7 +76,9 @@ namespace ValheimModPack.InterfaceInputFix
             Check(BindRegistry.All.Any(b => b.OwnerGuid == "org.bepinex.plugins.valheim_plus" && b.Editable), "Valheim Plus keys discovered");
             if (SystemInfo.graphicsDeviceType != UnityEngine.Rendering.GraphicsDeviceType.Null)
                 Check(BindRegistry.All.Any(b => b.OwnerGuid == "advize.PlantEasily" && b.Editable), "PlantEasily keys discovered");
-            Check(BindRegistry.All.Any(b => b.OwnerGuid == "vapok.mods.adventurebackpacks" && b.Editable), "backpack keys discovered");
+            bool hasBackpacks = Chainloader.PluginInfos.ContainsKey("vapok.mods.adventurebackpacks");
+            Check(BindRegistry.All.Any(b => b.OwnerGuid == "vapok.mods.adventurebackpacks" && b.Editable) == hasBackpacks,
+                "backpack key discovery matches the copied optional plugin");
             MapKeyChecks();
 
             var test = new Harmony("valheimmodpack.bindrune.nativeprobe");
@@ -102,7 +104,8 @@ namespace ValheimModPack.InterfaceInputFix
                 SettingsChecks(compat);
             }
             finally { BindrunePanel.Close(true); test.UnpatchSelf(); }
-            return "Bindrune PASS " + checks + ": real discovery/rebind/personal persistence, guarded sorting, actual panel lifecycle; restart=" + restart + "; registry=" + BindRegistry.All.Count + ".";
+            return "Bindrune PASS " + checks + ": real discovery/rebind/personal persistence, guarded sorting, actual panel lifecycle; restart=" + restart + "; registry=" + BindRegistry.All.Count + "."
+                + (hasBackpacks ? "" : "\nSKIP: Adventure Backpacks binding checks; optional plugin is absent.");
         }
         private static void MapKeyChecks()
         {

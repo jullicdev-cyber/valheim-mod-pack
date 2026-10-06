@@ -1,5 +1,5 @@
 {
-  "packVersion": "1.26.0",
+  "packVersion": "1.26.1",
   "created": "2026-09-25",
   "targetGameVersion": "1.0.17",
   "packages": [
@@ -123,21 +123,6 @@
       "dependencies": [],
       "sourceSubdirectory": "plugins",
       "destination": "BepInEx/plugins/ValheimModding-JsonDotNET"
-    },
-    {
-      "id": "Vapok-AdventureBackpacks",
-      "version": "2.1.13",
-      "source": "Thunderstore",
-      "page": "https://thunderstore.io/package/Vapok/AdventureBackpacks/",
-      "downloadUrl": "https://thunderstore.io/package/download/Vapok/AdventureBackpacks/2.1.13/",
-      "sha256": "6936a742e396fbe9e71d100dff9d58e405c3a3ddfdbc5ba37370c4a0efac9d3e",
-      "dependencies": [
-        "denikson-BepInExPack_Valheim-5.4.2350",
-        "ValheimModding-Jotunn-2.30.2",
-        "ValheimModding-YamlDotNet-16.3.1"
-      ],
-      "sourceSubdirectory": "plugins",
-      "destination": "BepInEx/plugins/Vapok-AdventureBackpacks"
     },
     {
       "id": "RandyKnapp-EquipmentAndQuickSlots",
@@ -479,10 +464,10 @@
     },
     {
       "id": "ValheimModPack-PartyPrison",
-      "version": "1.4.0",
+      "version": "1.4.1",
       "source": "local-plugins/PartyPrison.dll",
       "destination": "BepInEx/plugins/ValheimModPack-PartyPrison/PartyPrison.dll",
-      "sha256": "57e99bec0d01333876453b7328822a34be5a3ea7c02053ade21e1a7e963659ae",
+      "sha256": "62e5490c94e7d096ce02bdc7d106a55376e0307853f417ae7e9eae95d72397b2",
       "dependencies": [
         "denikson-BepInExPack_Valheim-5.4.2351",
         "ValheimModding-Jotunn-2.30.2",

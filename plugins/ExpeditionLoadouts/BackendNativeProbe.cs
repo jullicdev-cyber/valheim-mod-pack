@@ -55,6 +55,13 @@ namespace ValheimModPack.LoadoutSmoke
             yield return null;
             try
             {
+                foreach (string expected in File.ReadAllLines(Path.Combine(Root, "expected-plugins.txt")))
+                {
+                    string[] parts = expected.Split('\t');
+                    Check(parts.Length == 2 && Chainloader.PluginInfos.ContainsKey(parts[0])
+                        && Chainloader.PluginInfos[parts[0]].Metadata.Version.ToString() == parts[1],
+                        "exact copied pack plugin loaded: " + expected);
+                }
                 foreach (string id in new[] { "valheimmodpack.expeditionloadouts", "valheimmodpack.chestsearch", "valheimmodpack.confirmpinremoval", "valheimmodpack.nordicradio" })
                 {
                     Check(Chainloader.PluginInfos.ContainsKey(id), "Loaded " + id);

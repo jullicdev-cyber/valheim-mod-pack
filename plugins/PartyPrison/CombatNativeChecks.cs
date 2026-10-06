@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using Jotunn.Managers;
 using UnityEngine;
 
@@ -9,6 +10,8 @@ namespace ValheimModPack.PartyPrison.NativeVerification
 {
     public static class CombatNativeChecks
     {
+        public static bool BackpackFixtureSkipped { get; private set; }
+
         private static GameObject Prefab(string name)
         {
             GameObject value = ZNetScene.instance == null ? null : ZNetScene.instance.GetPrefab(name);
@@ -36,6 +39,7 @@ namespace ValheimModPack.PartyPrison.NativeVerification
 
         public static void Run(Action<bool, string> check)
         {
+            BackpackFixtureSkipped = false;
             var inspected = new HashSet<string>();
             for (int family = 0; family < CombatCatalog.FamilyCount; ++family)
                 for (int difficulty = 0; difficulty < CombatCatalog.DifficultyCount; ++difficulty) {
@@ -89,6 +93,80 @@ namespace ValheimModPack.PartyPrison.NativeVerification
                 && restored.GetAllItems().Any(item => item.m_dropPrefab.name == "ArrowWood" && item.m_stack == 61),
                 "native save/reload preserves all farm loot and personal equipment after release");
             check(ArenaBuilder.RemoveObsoleteInventoryGear(restored, world, "", 0) == 0, "release cleanup is idempotent after native persistence");
+            CheckBackpackReplacement(check);
+        }
+
+        private static byte[] Save(Inventory inventory)
+        { var package = new ZPackage(); inventory.Save(package); return package.GetArray(); }
+
+        private static void CheckBackpackReplacement(Action<bool, string> check)
+        {
+            Type api = AppDomain.CurrentDomain.GetAssemblies().Select(assembly => assembly.GetType("AdventureBackpacks.API.ABAPI", false)).FirstOrDefault(type => type != null);
+            if (api == null) { BackpackFixtureSkipped = true; return; }
+            Type extensions = api.Assembly.GetType("Vapok.Common.Managers.ItemExtensions", true);
+            Type componentType = api.Assembly.GetType("AdventureBackpacks.Components.BackpackComponent", true);
+            MethodInfo data = extensions.GetMethod("Data", new[] { typeof(ItemDrop.ItemData) });
+            check(extensions.Assembly == api.Assembly && componentType.Assembly == api.Assembly && data.ReturnType.Assembly == api.Assembly,
+                "native backpack holder and component use the API's embedded Vapok copy");
+            var nativeInventory = (Func<ItemDrop.ItemData, Inventory>)Delegate.CreateDelegate(typeof(Func<ItemDrop.ItemData, Inventory>), api.GetMethod("GetBackpackInventory", new[] { typeof(ItemDrop.ItemData) }));
+            ItemDrop.ItemData bag = null;
+            foreach (GameObject prefab in ObjectDB.instance.m_items.Where(value => value != null && value.name.StartsWith("Backpack", StringComparison.Ordinal) && value.GetComponent<ItemDrop>() != null))
+            {
+                var initializing = new Inventory("Combat backpack initialization", null, 8, 4);
+                if (!initializing.AddItem(Item(prefab.name, 1))) continue;
+                initializing.Load(new ZPackage(Save(initializing)));
+                ItemDrop.ItemData candidate = initializing.GetAllItems().Single();
+                Inventory capacity = nativeInventory(candidate);
+                if (capacity != null && capacity.GetWidth() * capacity.GetHeight() >= 4) { bag = candidate; break; }
+            }
+            check(bag != null, "replacement fixture uses an initialized native backpack with sufficient capacity");
+            var root = new Inventory("Combat backpack root", null, 8, 4);
+            check(root.AddItem(bag), "replacement fixture inserts the native backpack into its root inventory");
+            const long world = 6789; string token = new string('3', 32);
+            check(CustodyInventory.ExpireBackpackGear(root, world, token, 2) == 0, "initial empty native backpack warms the production adapter without removal");
+
+            object adapter = typeof(CustodyInventory).GetMethod("BackpackApi", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, null);
+            Func<ItemDrop.ItemData, Inventory> typedInventory = (Func<ItemDrop.ItemData, Inventory>)adapter.GetType().GetField("Inventory", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(adapter);
+            Func<ItemDrop.ItemData, object> typedComponent = (Func<ItemDrop.ItemData, object>)adapter.GetType().GetField("Component", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(adapter);
+            Action<object> typedSerialize = (Action<object>)adapter.GetType().GetField("Serialize", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(adapter);
+            Inventory first = nativeInventory(bag);
+            check(System.Object.ReferenceEquals(first, typedInventory(bag)), "cached typed getter initially returns the native API's current storage reference");
+            object component = typedComponent(bag);
+            check(component.GetType() == componentType, "cached open-instance component getter binds the exact installed native component");
+            var replacement = new Inventory("Combat replaced backpack", null, first.GetWidth(), first.GetHeight());
+            ItemDrop.ItemData farm = Item("Wood", 13), personal = Item("SwordBronze", 1);
+            personal.m_customData["combat_bag_personal"] = "preserve";
+            foreach (ItemDrop.ItemData item in new[] { farm, personal, Gear("HelmetLeather", world, token, 3), Gear("AxeBronze", world, token, 1) })
+                check(replacement.AddItem(item), "replacement inventory admits each ordinary and issued item");
+            replacement.Load(new ZPackage(Save(replacement)));
+            componentType.GetMethod("SetInventory", new[] { typeof(Inventory) }).Invoke(component, new object[] { replacement });
+            typedSerialize(component);
+            check(!System.Object.ReferenceEquals(first, nativeInventory(bag)) && System.Object.ReferenceEquals(replacement, typedInventory(bag)),
+                "a warm adapter observes SetInventory replacement without retaining the old inventory reference");
+            check(CustodyInventory.HasObsoleteBackpackGear(root, world, token, 2) && CustodyInventory.ExpireBackpackGear(root, world, token, 2) == 1,
+                "fresh traversal removes obsolete gear from replaced native storage");
+            check(typedInventory(bag).GetAllItems().Count == 3 && typedInventory(bag).GetAllItems().Any(item => item.m_customData.ContainsKey(ArenaBuilder.GearKey)),
+                "newer issued equipment arriving before its state revision survives backpack replacement");
+            check(replacement.AddItem(Gear("MaceBronze", world, token, 1)), "the existing backpack inventory accepts newly inserted obsolete gear");
+            typedSerialize(typedComponent(bag));
+            check(CustodyInventory.ExpireBackpackGear(root, world, token, 2) == 1 && !CustodyInventory.HasObsoleteBackpackGear(root, world, token, 2),
+                "in-place bag content mutation is seen on the next full traversal without a root inventory change event");
+
+            byte[] snapshot = Save(root);
+            root.Load(new ZPackage(snapshot)); ItemDrop.ItemData loadedBag = root.GetAllItems().Single();
+            Inventory loaded = typedInventory(loadedBag);
+            check(!System.Object.ReferenceEquals(bag, loadedBag) && !System.Object.ReferenceEquals(replacement, loaded) && loaded.GetAllItems().Count == 3,
+                "the cached adapter resolves fresh item and storage references after native load");
+            check(loaded.AddItem(Gear("SwordBronze", world, token, 1)), "loaded backpack storage accepts stale issued gear");
+            typedSerialize(typedComponent(loadedBag));
+            check(CustodyInventory.ExpireBackpackGear(root, world, token, 2) == 1, "stale gear inserted after Deserialize is removed with the existing bound adapter");
+            check(CustodyInventory.ExpireBackpackGear(root, world, "", 0) == 1, "release immediately removes remaining issued armor after bag replacement and reload");
+            var persisted = new Inventory("Combat replaced backpack persisted", null, 8, 4); persisted.Load(new ZPackage(Save(root)));
+            Inventory retained = typedInventory(persisted.GetAllItems().Single());
+            check(retained.GetAllItems().Count == 2 && retained.GetAllItems().Any(item => item.m_dropPrefab.name == "Wood" && item.m_stack == 13)
+                && retained.GetAllItems().Any(item => item.m_customData.ContainsKey("combat_bag_personal")),
+                "native serialization after replacement and release preserves farmed resources and personal weapons");
+            check(CustodyInventory.ExpireBackpackGear(persisted, world, "", 0) == 0, "warm adapter release cleanup remains idempotent after replacement persistence");
         }
     }
 }

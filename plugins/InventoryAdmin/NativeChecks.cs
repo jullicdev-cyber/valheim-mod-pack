@@ -26,6 +26,7 @@ namespace ValheimModPack.InventoryAdmin
         private static readonly BindingFlags All = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance;
         private static int checks;
         private static Type adapter;
+        private static string skips;
         private static void Check(bool value, string reason)
         { ++checks; if (!value) throw new InvalidOperationException("Inventory administration native check: " + reason); }
         private static object Field(object target, string name)
@@ -137,30 +138,38 @@ namespace ValheimModPack.InventoryAdmin
             Check((string)WorldCharacters("GetAdministrativeOwner", new object[] { null }) == String.Empty,
                 "unknown connection cannot supply an approved account identity");
             Reject(() => WorldCharacters("RequestAdministrativeSave"), "unloaded character cannot produce an administrative save acknowledgement");
-            return "PASS: " + checks + " inventory administration native assertions. Detached inventories only; live multiplayer transaction/disconnect flows require a cooperative client test.\n"
+            return "PASS: " + checks + " inventory administration native assertions. Detached inventories only; live multiplayer transaction/disconnect flows require a cooperative client test.\n" + skips
                 + InventoryAdminUiNativeChecks.Run() + "\n" + InventoryAdminInputNativeChecks.Run()
                 + "\n" + GroupRadiusUiNativeChecks.Run() + "\n" + GroupRadiusMotionNativeChecks.Run();
         }
 
         private static void CheckBackpackBusyGuard()
         {
-            Assembly assembly = Chainloader.PluginInfos["vapok.mods.adventurebackpacks"].Instance.GetType().Assembly;
-            FieldInfo opened = assembly.GetType("AdventureBackpacks.Patches.InventoryGuiPatches", true).GetField("BackpackIsOpen", All);
-            Check(opened != null && opened.FieldType == typeof(bool), "installed backpack exposes its actual open-inventory state");
-            object original = opened.GetValue(null);
+            FieldInfo opened = null; object original = null;
+            if (Chainloader.PluginInfos.ContainsKey("vapok.mods.adventurebackpacks"))
+            {
+                Assembly assembly = Chainloader.PluginInfos["vapok.mods.adventurebackpacks"].Instance.GetType().Assembly;
+                opened = assembly.GetType("AdventureBackpacks.Patches.InventoryGuiPatches", true).GetField("BackpackIsOpen", All);
+                Check(opened != null && opened.FieldType == typeof(bool), "installed backpack exposes its actual open-inventory state");
+                original = opened.GetValue(null);
+            }
             GameObject holder = new GameObject("InventoryAdmin inactive busy-state fixture"); holder.SetActive(false);
             try
             {
                 Player player = holder.AddComponent<InventoryAdminProbePlayer>();
-                opened.SetValue(null, false);
+                if (opened != null) opened.SetValue(null, false);
                 Check((bool)Invoke("Safe", player), "idle detached player is eligible when backpack UI is closed");
-                opened.SetValue(null, true);
-                Check(!(bool)Invoke("Safe", player), "an open backpack blocks native inventory administration");
+                if (opened != null)
+                {
+                    opened.SetValue(null, true);
+                    Check(!(bool)Invoke("Safe", player), "an open backpack blocks native inventory administration");
+                }
+                else skips += "SKIP: Adventure Backpacks open-window guard checks; optional plugin is absent.\n";
                 Check(Player.m_localPlayer == null && !holder.activeSelf, "busy-state fixture never registers a live local player");
             }
             finally
             {
-                opened.SetValue(null, original);
+                if (opened != null) opened.SetValue(null, original);
                 UnityEngine.Object.DestroyImmediate(holder);
             }
         }
@@ -168,6 +177,7 @@ namespace ValheimModPack.InventoryAdmin
         private static void RunDetached()
         {
             checks = 0;
+            skips = "";
             Check(Player.m_localPlayer == null, "fixture runs without a live character or user world");
             Check(Chainloader.PluginInfos.ContainsKey("valheimmodpack.inventoryadmin"), "administration plugin loaded with the full pack");
             object plugin = Chainloader.PluginInfos["valheimmodpack.inventoryadmin"].Instance;
@@ -188,28 +198,38 @@ namespace ValheimModPack.InventoryAdmin
             helmet.m_customData["eaqs_parked"] = "1"; helmet.m_customData["eaqs_weaponshield"] = "1";
             helmet.m_customData["probe.enchantment"] = "Enchantments \u2603";
             source.GetAllItems().Add(helmet);
-            GameObject backpackPrefab = ObjectDB.instance.m_items.FirstOrDefault(p => p && p.name.StartsWith("Backpack") && p.GetComponent<ItemDrop>());
-            Check(backpackPrefab != null, "real Adventure Backpacks prefab is present");
-            ItemDrop.ItemData bag = Item(backpackPrefab.name, 1, 1, 2);
-            var contents = new Inventory("Admin fixture backpack", null, 4, 4);
-            ItemDrop.ItemData iron = Item("Iron", 5, 0, 0); contents.GetAllItems().Add(iron);
-            object backpack = Backpack(bag);
-            backpack.GetType().GetMethod("SetInventory").Invoke(backpack, new object[] { contents });
-            backpack.GetType().GetMethod("Serialize").Invoke(backpack, null);
-            source.GetAllItems().Add(bag);
-            string bagKey = bag.m_customData.Keys.Single(k => k.Contains("AdventureBackpacks.Components.BackpackComponent"));
+            bool hasBackpacks = Chainloader.PluginInfos.ContainsKey("vapok.mods.adventurebackpacks");
+            ItemDrop.ItemData bag = null, iron = null; string bagKey = null;
+            if (hasBackpacks)
+            {
+                GameObject backpackPrefab = ObjectDB.instance.m_items.FirstOrDefault(p => p && p.name.StartsWith("Backpack") && p.GetComponent<ItemDrop>());
+                Check(backpackPrefab != null, "real Adventure Backpacks prefab is present");
+                bag = Item(backpackPrefab.name, 1, 1, 2);
+                var contents = new Inventory("Admin fixture backpack", null, 4, 4);
+                iron = Item("Iron", 5, 0, 0); contents.GetAllItems().Add(iron);
+                object backpack = Backpack(bag);
+                backpack.GetType().GetMethod("SetInventory").Invoke(backpack, new object[] { contents });
+                backpack.GetType().GetMethod("Serialize").Invoke(backpack, null);
+                source.GetAllItems().Add(bag);
+                bagKey = bag.m_customData.Keys.Single(k => k.Contains("AdventureBackpacks.Components.BackpackComponent"));
+            }
+            else
+            {
+                Check(Invoke("Bag", wood) == null, "without the optional backpack API ordinary items expose no nested inventory");
+                skips += "SKIP: Adventure Backpacks native view/transfer/persistence checks; optional plugin is absent.\n";
+            }
             byte[] original = Save(source);
             object view = Capture(source, 5, 77, 44);
             Check(original.SequenceEqual(Save(source)), "viewing the main inventory and nested backpack does not move or replace items");
-            object woodRow = Row(view, "Wood"), helmetRow = Row(view, "HelmetLeather"), ironRow = Row(view, "Iron");
+            object woodRow = Row(view, "Wood"), helmetRow = Row(view, "HelmetLeather");
             object inventoryView = Field(view, "View");
             Type codec = plugin.GetType().Assembly.GetType("ValheimModPack.InventoryAdmin.InventoryCodec", true);
             byte[] wireView = (byte[])codec.GetMethod("EncodeInventoryView").Invoke(null, new[] { inventoryView });
             object decodedView = codec.GetMethod("DecodeInventoryView").Invoke(null, new object[] { wireView });
-            Check(((ICollection)Field(decodedView, "Items")).Count == 4,
+            Check(((ICollection)Field(decodedView, "Items")).Count == (hasBackpacks ? 4 : 2),
                 "actual captured main, equipment and backpack rows survive the bounded protocol codec");
             Check((int)Field(helmetRow, "Y") == 6, "equipment in hidden EAQS rows remains visible to the administrator");
-            Check((int)Field(ironRow, "Stack") == 5, "nested backpack contents are visible");
+            if (hasBackpacks) Check((int)Field(Row(view, "Iron"), "Stack") == 5, "nested backpack contents are visible");
             byte[] woodBlob = Prepare(view, woodRow, 3);
             Check(wood.m_stack == 7 && source.GetAllItems().Contains(wood), "preparing a transfer does not remove the source");
             ItemDrop.ItemData woodCopy = (ItemDrop.ItemData)Invoke("ReadBlob", woodBlob);
@@ -254,34 +274,38 @@ namespace ValheimModPack.InventoryAdmin
             Check(receivedHelmet.m_customData["probe.enchantment"] == "Enchantments \u2603", "receipt retains item metadata");
             Remove(view, helmetRow, 1);
             Check(!source.GetAllItems().Contains(helmet), "full hidden-row item removal does not leave an orphan slot item");
-            view = Capture(source, 5, 77, 44); ironRow = Row(view, "Iron");
-            byte[] ironBlob = Prepare(view, ironRow, 2); Remove(view, ironRow, 2);
-            Check(iron.m_stack == 3, "nested backpack partial removal changes the live child inventory");
-            Check(!String.IsNullOrEmpty(bag.m_customData[bagKey]), "changed nested inventory is serialized into the backpack item");
-            ItemDrop.ItemData loadedBag = bag.Clone();
-            object loadedComponent = Backpack(loadedBag);
-            var loadedContents = (Inventory)loadedComponent.GetType().GetMethod("GetInventory").Invoke(loadedComponent, null);
-            Check(loadedContents.GetAllItems().Any(i => i.m_dropPrefab.name == "Iron" && i.m_stack == 3),
-                "native backpack clone reconstructs the persisted remaining child count");
-            view = Capture(source, 5, 77, 44);
-            ironRow = Row(view, "Iron");
-            source.GetAllItems().Remove(bag);
-            try { Reject(() => Prepare(view, ironRow, 1), "contents of a backpack no longer owned by the target cannot be taken"); }
-            finally { source.GetAllItems().Add(bag); }
-            Check(iron.m_stack == 3, "a moved-backpack rejection leaves its child items intact");
-            view = Capture(source, 5, 77, 44);
-            byte[] bagBlob = Prepare(view, Row(view, bag.m_dropPrefab.name), 1);
-            ItemDrop.ItemData receivedBag = (ItemDrop.ItemData)Invoke("ReadBlob", bagBlob);
-            Check(receivedBag.m_customData[bagKey] == bag.m_customData[bagKey], "whole-backpack transfer retains the exact child inventory payload");
-            object receivedBackpack = Backpack(receivedBag);
-            Inventory receivedContents = (Inventory)receivedBackpack.GetType().GetMethod("GetInventory").Invoke(receivedBackpack, null);
-            Check(receivedContents.GetAllItems().Any(i => i.m_dropPrefab.name == "Iron" && i.m_stack == 3),
-                "whole-backpack transfer retains playable child inventory");
+            byte[] capacityBlob = woodBlob;
+            if (hasBackpacks)
+            {
+                view = Capture(source, 5, 77, 44); object ironRow = Row(view, "Iron");
+                byte[] ironBlob = Prepare(view, ironRow, 2); Remove(view, ironRow, 2); capacityBlob = ironBlob;
+                Check(iron.m_stack == 3, "nested backpack partial removal changes the live child inventory");
+                Check(!String.IsNullOrEmpty(bag.m_customData[bagKey]), "changed nested inventory is serialized into the backpack item");
+                ItemDrop.ItemData loadedBag = bag.Clone();
+                object loadedComponent = Backpack(loadedBag);
+                var loadedContents = (Inventory)loadedComponent.GetType().GetMethod("GetInventory").Invoke(loadedComponent, null);
+                Check(loadedContents.GetAllItems().Any(i => i.m_dropPrefab.name == "Iron" && i.m_stack == 3),
+                    "native backpack clone reconstructs the persisted remaining child count");
+                view = Capture(source, 5, 77, 44);
+                ironRow = Row(view, "Iron");
+                source.GetAllItems().Remove(bag);
+                try { Reject(() => Prepare(view, ironRow, 1), "contents of a backpack no longer owned by the target cannot be taken"); }
+                finally { source.GetAllItems().Add(bag); }
+                Check(iron.m_stack == 3, "a moved-backpack rejection leaves its child items intact");
+                view = Capture(source, 5, 77, 44);
+                byte[] bagBlob = Prepare(view, Row(view, bag.m_dropPrefab.name), 1);
+                ItemDrop.ItemData receivedBag = (ItemDrop.ItemData)Invoke("ReadBlob", bagBlob);
+                Check(receivedBag.m_customData[bagKey] == bag.m_customData[bagKey], "whole-backpack transfer retains the exact child inventory payload");
+                object receivedBackpack = Backpack(receivedBag);
+                Inventory receivedContents = (Inventory)receivedBackpack.GetType().GetMethod("GetInventory").Invoke(receivedBackpack, null);
+                Check(receivedContents.GetAllItems().Any(i => i.m_dropPrefab.name == "Iron" && i.m_stack == 3),
+                    "whole-backpack transfer retains playable child inventory");
+            }
             for (int y = 0; y < 5; ++y) for (int x = 0; x < 8; ++x)
                 if (destination.GetItemAt(x, y) == null) destination.GetAllItems().Add(Item("Stone", 50, x, y));
-            Check(!(bool)Invoke("CanAdd", destination, 5, ironBlob), "empty hidden equipment rows cannot satisfy destination capacity");
+            Check(!(bool)Invoke("CanAdd", destination, 5, capacityBlob), "empty hidden equipment rows cannot satisfy destination capacity");
             byte[] full = Save(destination);
-            Reject(() => Invoke("Add", destination, 5, ironBlob), "a full destination rejects a transfer");
+            Reject(() => Invoke("Add", destination, 5, capacityBlob), "a full destination rejects a transfer");
             Check(full.SequenceEqual(Save(destination)), "failed receipt does not partially mutate a full inventory");
         }
     }

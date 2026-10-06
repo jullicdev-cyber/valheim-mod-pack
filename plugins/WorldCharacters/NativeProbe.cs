@@ -70,15 +70,20 @@ namespace ValheimModPack.WorldCharactersProbe
                 source.GetAllItems()[1].m_customData["eaqs_slot"] = "head";
                 source.GetAllItems()[1].m_customData["eaqs_player"] = "44";
                 source.GetAllItems()[1].m_customData["wc_epic_fixture"] = "enchanted payload \u2603";
-                var bagPrefab = ObjectDB.instance.m_items.FirstOrDefault(p => p && p.name.StartsWith("Backpack") && p.GetComponent<ItemDrop>());
-                Check(bagPrefab != null, "Adventure Backpacks actual prefab available");
-                var bag = Item(bagPrefab.name,1,1,6);
-                var nested = new Inventory("WC nested",null,4,4); nested.GetAllItems().Add(Item("Iron",12,0,0));
-                object component = Backpack(bag);
-                component.GetType().GetMethod("SetInventory").Invoke(component,new object[]{nested});
-                component.GetType().GetMethod("Serialize").Invoke(component,null);
-                string backpackKey = bag.m_customData.Keys.Single(k => k.Contains("AdventureBackpacks.Components.BackpackComponent"));
-                string backpackValue = bag.m_customData[backpackKey]; source.GetAllItems().Add(bag);
+                bool hasBackpacks = Chainloader.PluginInfos.ContainsKey("vapok.mods.adventurebackpacks");
+                GameObject bagPrefab = null; string backpackKey = null, backpackValue = null;
+                if (hasBackpacks)
+                {
+                    bagPrefab = ObjectDB.instance.m_items.FirstOrDefault(p => p && p.name.StartsWith("Backpack") && p.GetComponent<ItemDrop>());
+                    Check(bagPrefab != null, "Adventure Backpacks actual prefab available");
+                    var bag = Item(bagPrefab.name,1,1,6);
+                    var nested = new Inventory("WC nested",null,4,4); nested.GetAllItems().Add(Item("Iron",12,0,0));
+                    object component = Backpack(bag);
+                    component.GetType().GetMethod("SetInventory").Invoke(component,new object[]{nested});
+                    component.GetType().GetMethod("Serialize").Invoke(component,null);
+                    backpackKey = bag.m_customData.Keys.Single(k => k.Contains("AdventureBackpacks.Components.BackpackComponent"));
+                    backpackValue = bag.m_customData[backpackKey]; source.GetAllItems().Add(bag);
+                }
                 var saved = new ZPackage(); source.Save(saved);
                 using (var reader = new BinaryReader(new MemoryStream(saved.GetArray())))
                 {
@@ -92,12 +97,15 @@ namespace ValheimModPack.WorldCharactersProbe
                 using (var before = new BinaryReader(new MemoryStream(saved.GetArray())))
                 using (var after = new BinaryReader(new MemoryStream(roundTrip.GetArray())))
                     NativeInventory.RequireSameItems(NativeInventory.ReadInventory(before), NativeInventory.ReadInventory(after));
-                Check(restored.GetAllItems().Count == 3 && restored.GetAllItems().Any(i => i.m_gridPos.y == 6), "native hidden-row inventory round trip with all pack patches");
-                var restoredBag = restored.GetAllItems().Single(i => i.m_dropPrefab.name == bagPrefab.name);
-                Check(restoredBag.m_customData[backpackKey] == backpackValue, "actual Adventure Backpacks inventory bytes retained");
-                object restoredComponent = Backpack(restoredBag);
-                Inventory restoredContents = (Inventory)restoredComponent.GetType().GetMethod("GetInventory").Invoke(restoredComponent,null);
-                Check(restoredContents.GetAllItems().Any(i => i.m_dropPrefab.name == "Iron" && i.m_stack == 12), "actual BackpackComponent deserializes its iron stack");
+                Check(restored.GetAllItems().Count == (hasBackpacks ? 3 : 2) && restored.GetAllItems().Any(i => i.m_gridPos.y == 6), "native hidden-row inventory round trip with all pack patches");
+                if (hasBackpacks)
+                {
+                    var restoredBag = restored.GetAllItems().Single(i => i.m_dropPrefab.name == bagPrefab.name);
+                    Check(restoredBag.m_customData[backpackKey] == backpackValue, "actual Adventure Backpacks inventory bytes retained");
+                    object restoredComponent = Backpack(restoredBag);
+                    Inventory restoredContents = (Inventory)restoredComponent.GetType().GetMethod("GetInventory").Invoke(restoredComponent,null);
+                    Check(restoredContents.GetAllItems().Any(i => i.m_dropPrefab.name == "Iron" && i.m_stack == 12), "actual BackpackComponent deserializes its iron stack");
+                }
                 // Exercise PlayerProfile migration through the real native profile and WorldPlayerData types.
                 var profile = new PlayerProfile("WorldCharactersProbe", FileHelpers.FileSource.Local); profile.SetName("Миграция");
                 AccessTools.Field(typeof(PlayerProfile),"m_playerID").SetValue(profile,44L);
@@ -124,7 +132,9 @@ namespace ValheimModPack.WorldCharactersProbe
                     Check(uiResult.Contains("native UI PASS"), "native administration window assertions executed without skip");
                 }
                 string result = "PASS: " + checks + " native assertions. Full pack loaded; Harmony hooks, inventory/custom metadata and profile migration verified.\n"
-                    + inputResult + "\n" + uiResult + "\nMultiplayer sessions are not covered by this isolated menu probe.";
+                    + inputResult + "\n" + uiResult
+                    + (hasBackpacks ? "" : "\nSKIP: Adventure Backpacks native inventory/component checks; optional plugin is absent.")
+                    + "\nMultiplayer sessions are not covered by this isolated menu probe.";
                 if (Environment.GetEnvironmentVariable("VMP_WORLDCHARACTERS_GRAPHICS") == "1") StartCoroutine(PreviewAndFinish(result));
                 else Finish(result,0);
             }

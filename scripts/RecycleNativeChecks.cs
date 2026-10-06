@@ -41,9 +41,14 @@ public static class RecycleNativeChecks
         Check(BindRegistry.All.Count(b => b.OwnerGuid == "Azumatt.Recycle_N_Reclaim" && b.Handle is ConfigEntryBase) >= 4, "Bindrune discovers shortcut settings");
         Check(Harmony.GetPatchInfo(AccessTools.Method(typeof(InventoryGui), "UpdateCraftingPanel")).Owners.Contains("Azumatt.Recycle_N_Reclaim"), "crafting Harmony hook installed");
 
-        var bags = ObjectDB.instance.m_items.Where(p => p != null && p.GetComponent<ItemDrop>() != null && (p.name.StartsWith("Backpack") || p.name == "CapeIronBackpack" || p.name == "CapeSilverBackpack")).ToArray();
-        Check(bags.Length >= 6, "actual Adventure Backpacks prefabs loaded");
-        foreach (var bag in bags) Check(GroupUtils.IsPrefabExcludedInReclaiming(bag.name), "backpack excluded: " + bag.name);
+        bool hasBackpacks = Chainloader.PluginInfos.ContainsKey("vapok.mods.adventurebackpacks");
+        GameObject[] bags = new GameObject[0];
+        if (hasBackpacks)
+        {
+            bags = ObjectDB.instance.m_items.Where(p => p != null && p.GetComponent<ItemDrop>() != null && (p.name.StartsWith("Backpack") || p.name == "CapeIronBackpack" || p.name == "CapeSilverBackpack")).ToArray();
+            Check(bags.Length >= 6, "actual Adventure Backpacks prefabs loaded");
+            foreach (var bag in bags) Check(GroupUtils.IsPrefabExcludedInReclaiming(bag.name), "backpack excluded: " + bag.name);
+        }
         Check(!GroupUtils.IsPrefabExcludedInReclaiming("Hammer"), "ordinary tools allowed");
         Check(!GroupUtils.GetRecycleRateOverride("ArmorLeatherChest").HasValue, "no example armor rate override");
 
@@ -76,7 +81,8 @@ public static class RecycleNativeChecks
             Check(inventory.CountItems("$item_wood") == 1 && inventory.CountItems("$item_stone") == 1, "real inventory receives expected resources");
         }
         finally { Recycle_N_ReclaimPlugin.ApplyCraftedBy.Value = apply; }
-        return "Recycle N Reclaim 1.4.5 PASS " + checks + ": native load, config, localization, Epic Loot detection, Bindrune, " + bags.Length + " backpack exclusions, recipe yield and isolated inventory mutation. Live workstation UI/multiplayer not simulated.\n";
+        return "Recycle N Reclaim 1.4.5 PASS " + checks + ": native load, config, localization, Epic Loot detection, Bindrune, " + bags.Length + " backpack exclusions, recipe yield and isolated inventory mutation. Live workstation UI/multiplayer not simulated.\n"
+            + (hasBackpacks ? "" : "SKIP: Adventure Backpacks exclusion checks; optional plugin is absent.\n");
     }
     private static ItemDrop.ItemData Item(string name, int count, int x, int y)
     {
