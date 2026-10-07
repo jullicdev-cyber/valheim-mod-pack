@@ -22,7 +22,7 @@ namespace ValheimModPack.PartyPrison
     [NetworkCompatibility(CompatibilityLevel.EveryoneMustHaveMod, VersionStrictness.Patch)]
     public sealed partial class Plugin : BaseUnityPlugin
     {
-        public const string Id = "valheimmodpack.partyprison", Version = "1.5.3";
+        public const string Id = "valheimmodpack.partyprison", Version = "1.5.4";
         internal const string LoanKey = "VMP_PP_Loan", InmateKey = "VMP_PP_Inmate";
         private const string RpcName = PrisonWire.RpcName;
         internal static Plugin Active;

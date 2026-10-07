@@ -30,6 +30,7 @@ namespace ValheimModPack.PartyPrison
         private static readonly FieldInfo PlayerCustom = AccessTools.Field(typeof(Player), "m_customData");
         private static readonly MethodInfo ContainerLoad = AccessTools.Method(typeof(Container), "Load", Type.EmptyTypes);
         private static readonly FieldInfo ContainerInventory = AccessTools.Field(typeof(Container), "m_inventory");
+        private static readonly FieldInfo InventoryItems = AccessTools.Field(typeof(Inventory), "m_inventory");
         private static readonly FieldInfo ContainerView = AccessTools.Field(typeof(Container), "m_nview");
         private static readonly FieldInfo ContainerLoading = AccessTools.Field(typeof(Container), "m_loading");
         private static readonly FieldInfo ContainerRevision = AccessTools.Field(typeof(Container), "m_lastRevision");
@@ -706,7 +707,11 @@ namespace ValheimModPack.PartyPrison
             GameObject instance = ZNetScene.instance.FindInstance(chest.m_uid);
             Container container = instance == null ? null : instance.GetComponent<Container>();
             if (container == null) return;
-            if (ContainerLoading == null || ContainerRevision == null || ContainerInventory == null)
+            ReloadLoadedChestCache(container, chest);
+        }
+        private static void ReloadLoadedChestCache(Container container, ZDO chest)
+        {
+            if (ContainerLoad == null || ContainerLoading == null || ContainerRevision == null || ContainerInventory == null || InventoryItems == null)
                 throw new MissingMemberException("Native custody container transaction ABI is unavailable.");
             if (container.IsInUse()) throw new InvalidOperationException("Custody chest cache is in use; prepared belongings retained.");
             bool loading = (bool)ContainerLoading.GetValue(container);
@@ -716,13 +721,30 @@ namespace ValheimModPack.PartyPrison
                 Inventory inventory = ContainerInventory.GetValue(container) as Inventory;
                 if (inventory == null) throw new InvalidDataException("Native custody chest cache is unavailable.");
                 if (payload == null) {
-                    ContainerLoading.SetValue(container, true); inventory.RemoveAll();
+                    // The private-chest guard also blocks RemoveAll. Loading a
+                    // valid empty native inventory clears the actual cache and
+                    // runs Changed under the usual container loading guard,
+                    // without changing the restored null durable payload.
+                    ContainerLoading.SetValue(container, true);
+                    var empty = new Inventory("PartyPrison.EmptyCustodyCache", null, inventory.GetWidth(), inventory.GetHeight());
+                    inventory.Load(new ZPackage(Save(empty)));
+                    RequireEquivalent(empty.GetAllItems(), NativeCacheItems(inventory));
                     ContainerRevision.SetValue(container, chest.DataRevision); return;
                 }
                 ContainerLoad.Invoke(container, null);
-                RequireEquivalent(Decode(payload).GetAllItems(), inventory.GetAllItems());
+                // Native Load has completed and its temporary scope is closed.
+                // Public GetAllItems deliberately masks a reserved chest, so
+                // validation must inspect a private snapshot of the native
+                // backing list while leaving every player access guard intact.
+                RequireEquivalent(Decode(payload).GetAllItems(), NativeCacheItems(inventory));
             }
             finally { ContainerLoading.SetValue(container, loading); }
+        }
+        private static ItemDrop.ItemData[] NativeCacheItems(Inventory inventory)
+        {
+            var cached = InventoryItems.GetValue(inventory) as List<ItemDrop.ItemData>;
+            if (cached == null) throw new InvalidDataException("Native custody chest item cache is unavailable.");
+            return cached.ToArray();
         }
         private static void RequireHost()
         { if (ZNet.instance == null || !ZNet.instance.IsServer()) throw new UnauthorizedAccessException("Only the host may write custody chests."); }

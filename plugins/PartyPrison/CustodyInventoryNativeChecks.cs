@@ -14,6 +14,10 @@ namespace ValheimModPack.PartyPrison.NativeVerification
     {
         private const BindingFlags All = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
         private static readonly HashSet<ZDO> records = new HashSet<ZDO>();
+        private static readonly HashSet<GameObject> objects = new HashSet<GameObject>();
+        private static readonly Dictionary<ZDO, NativeChest> nativeChests = new Dictionary<ZDO, NativeChest>();
+        private static int nativeLoads, nativeSaves, corruptCacheMode;
+        private static Container corruptCacheTarget;
         private static int identity;
         private const string Account = "Steam_76561198000000031";
         private const string Token = "f1873fdeed404e0f878d37bff8c297d6";
@@ -24,6 +28,25 @@ namespace ValheimModPack.PartyPrison.NativeVerification
             FieldInfo revision = typeof(ZDO).GetField("<DataRevision>k__BackingField", All);
             revision.SetValue(__instance, unchecked((uint)revision.GetValue(__instance) + 1)); return false;
         }
+        private static bool SkipAwake(Component __instance)
+        { return __instance == null || !objects.Contains(__instance.gameObject); }
+        private static bool NativeOwner(Container __instance, ref bool __result)
+        {
+            if (!nativeChests.Values.Any(chest => chest.Container == __instance)) return true;
+            __result = true; return false;
+        }
+        private static void CountSave(Container __instance)
+        { if (nativeChests.Values.Any(chest => chest.Container == __instance)) ++nativeSaves; }
+        private static void LoadedCache(Container __instance)
+        {
+            if (!nativeChests.Values.Any(chest => chest.Container == __instance)) return;
+            ++nativeLoads;
+            if (__instance != corruptCacheTarget || corruptCacheMode == 0) return;
+            int mode = corruptCacheMode; corruptCacheMode = 0;
+            Inventory inventory = (Inventory)typeof(Container).GetField("m_inventory", All).GetValue(__instance);
+            if (mode == 1) ++RawItems(inventory)[0].m_quality;
+            else RawItems(inventory).Clear();
+        }
         public static void Run(Action<bool, string> check)
         {
             check(Player.m_localPlayer == null && Game.instance == null, "custody append fixture never opens a world or live character");
@@ -31,11 +54,23 @@ namespace ValheimModPack.PartyPrison.NativeVerification
             try {
                 harmony.Patch(typeof(ZDO).GetMethod("IncreaseDataRevision", All),
                     prefix: new HarmonyMethod(typeof(CustodyInventoryNativeChecks).GetMethod("DetachedRevision", All)));
+                var awake = new HarmonyMethod(typeof(CustodyInventoryNativeChecks).GetMethod("SkipAwake", All)) { priority = Priority.First };
+                harmony.Patch(typeof(ZNetView).GetMethod("Awake", All), prefix: awake);
+                harmony.Patch(typeof(Container).GetMethod("Awake", All), prefix: awake);
+                harmony.Patch(typeof(Container).GetMethod("IsOwner", All),
+                    prefix: new HarmonyMethod(typeof(CustodyInventoryNativeChecks).GetMethod("NativeOwner", All)));
+                harmony.Patch(typeof(Container).GetMethod("Save", All),
+                    prefix: new HarmonyMethod(typeof(CustodyInventoryNativeChecks).GetMethod("CountSave", All)));
+                harmony.Patch(typeof(Container).GetMethod("Load", All),
+                    postfix: new HarmonyMethod(typeof(CustodyInventoryNativeChecks).GetMethod("LoadedCache", All)));
                 CheckWear(check); CheckAppend(check); CheckPublication(check);
+                CheckMaskedReloadRegression(check); CheckClosedCachePublication(check); CheckClosedCacheRollback(check);
             }
             finally {
+                foreach (GameObject value in objects) if (value != null) UnityEngine.Object.DestroyImmediate(value);
                 foreach (ZDO record in records) typeof(ZDO).GetMethod("Reset", All).Invoke(record, null);
-                records.Clear(); harmony.UnpatchSelf();
+                objects.Clear(); nativeChests.Clear(); records.Clear(); corruptCacheTarget = null; corruptCacheMode = 0;
+                harmony.UnpatchSelf();
             }
             check(Player.m_localPlayer == null && Game.instance == null, "custody fixtures release all detached records without changing a live inventory");
         }
@@ -56,6 +91,16 @@ namespace ValheimModPack.PartyPrison.NativeVerification
             try { action(); return false; }
             catch (Exception error) {
                 if (error is InvalidDataException || error is InvalidOperationException || error is AggregateException || error is EndOfStreamException) return true;
+                throw;
+            }
+        }
+        private static bool RejectedTruncatedNativeLoad(Action action)
+        {
+            try { action(); return false; }
+            catch (Exception error) {
+                Exception cause = error;
+                while (cause is TargetInvocationException && cause.InnerException != null) cause = cause.InnerException;
+                if (cause is EndOfStreamException) return true;
                 throw;
             }
         }
@@ -263,6 +308,163 @@ namespace ValheimModPack.PartyPrison.NativeVerification
             changed[0].Set(ZDOVars.s_inUse, 0);
             CustodyInventory.RequireAdmissionChests(changed);
             check(true, "occupied chests remain eligible for a new transfer once the native open-cache flag clears");
+        }
+        private sealed class NativeChest
+        {
+            internal GameObject Object;
+            internal Container Container;
+            internal Inventory Inventory;
+            internal ZDO Zdo;
+        }
+        private static List<ItemDrop.ItemData> RawItems(Inventory inventory)
+        { return (List<ItemDrop.ItemData>)typeof(Inventory).GetField("m_inventory", All).GetValue(inventory); }
+        private static object Invoke(MethodInfo method, object target, params object[] arguments)
+        {
+            try { return method.Invoke(target, arguments); }
+            catch (TargetInvocationException error) { throw error.InnerException ?? error; }
+        }
+        private static NativeChest LoadedChest(ZDO zdo)
+        {
+            var chest = new NativeChest { Zdo = zdo };
+            chest.Object = new GameObject("PartyPrison.ClosedCustodyFixture." + zdo.m_uid);
+            chest.Object.SetActive(false); objects.Add(chest.Object);
+            ZNetView view = chest.Object.AddComponent<ZNetView>(); chest.Container = chest.Object.AddComponent<Container>();
+            typeof(ZNetView).GetField("m_zdo", All).SetValue(view, zdo);
+            chest.Inventory = Inventory("Closed custody native cache", 2, 1);
+            byte[] initial = zdo.GetByteArray(ZDOVars.s_items, null);
+            if (initial != null) chest.Inventory.Load(new ZPackage(initial));
+            typeof(Container).GetField("m_nview", All).SetValue(chest.Container, view);
+            typeof(Container).GetField("m_inventory", All).SetValue(chest.Container, chest.Inventory);
+            typeof(Container).GetField("m_width", All).SetValue(chest.Container, 2);
+            typeof(Container).GetField("m_height", All).SetValue(chest.Container, 1);
+            typeof(Container).GetField("m_lastRevision", All).SetValue(chest.Container, zdo.DataRevision);
+            nativeChests.Add(zdo, chest);
+            chest.Inventory.m_onChanged += (Action)Delegate.CreateDelegate(typeof(Action), chest.Container, typeof(Container).GetMethod("OnContainerChanged", All));
+            Invoke(typeof(CustodyInventory).GetMethod("RegisterContainer", All), null, chest.Container);
+            if (!view.IsValid() || !ReferenceEquals(CustodyInventory.ChestForInventory(chest.Inventory), zdo))
+                throw new InvalidOperationException("Detached native custody cache was not classified as a closed chest.");
+            return chest;
+        }
+        private static void Reload(ZDO zdo)
+        {
+            MethodInfo reload = typeof(CustodyInventory).GetMethod("ReloadLoadedChestCache", All);
+            if (reload == null) throw new MissingMethodException("Production closed native chest cache validation seam is unavailable.");
+            Invoke(reload, null, nativeChests[zdo].Container, zdo);
+        }
+        private static void RequireCache(byte[] expected, Inventory inventory, bool publicGetter)
+        {
+            Invoke(typeof(CustodyInventory).GetMethod("RequireEquivalent", All), null,
+                CustodyInventory.Decode(expected).GetAllItems(), publicGetter ? (IEnumerable<ItemDrop.ItemData>)inventory.GetAllItems() : RawItems(inventory).ToArray());
+        }
+        private static bool CacheMatches(byte[] expected, Inventory inventory)
+        { return !Rejected(() => RequireCache(expected, inventory, false)); }
+        private static FieldInfo LoadingScope()
+        { return typeof(Plugin).Assembly.GetType("ValheimModPack.PartyPrison.PrisonGuard", true).GetField("LoadingCustody", All); }
+        private static bool Loading(Container container)
+        { return (bool)typeof(Container).GetField("m_loading", All).GetValue(container); }
+        private static void CheckMaskedReloadRegression(Action<bool, string> check)
+        {
+            FieldInfo scope = LoadingScope(); int previousScope = (int)scope.GetValue(null);
+            foreach (int count in new[] { 0, 1, 2 }) {
+                Inventory personal = Inventory("Minimal admission regression");
+                if (count > 0) {
+                    ItemDrop.ItemData item = Item("Iron", 1, 0, 0); item.m_customData["closed_custody_regression"] = "must survive";
+                    personal.GetAllItems().Add(item);
+                }
+                if (count > 1) personal.GetAllItems().Add(Item("HelmetLeather", 1, 1, 0));
+                byte[] payload = CustodyInventory.Capture(personal);
+                ZDO zdo = Chests(new[] { payload, payload, payload, payload })[0]; NativeChest chest = LoadedChest(zdo);
+                nativeLoads = nativeSaves = 0;
+                typeof(Container).GetField("m_lastRevision", All).SetValue(chest.Container, zdo.DataRevision ^ UInt32.MaxValue);
+                check((bool)Invoke(typeof(Container).GetMethod("Load", All), chest.Container), "real native closed chest Load executes for zero, one and multiple personal items");
+                check(RawItems(chest.Inventory).Count == count && CacheMatches(payload, chest.Inventory)
+                    && chest.Inventory.GetAllItems().Count == 0,
+                    "actual native closed cache retains personal items while its ordinary getter deliberately masks them");
+                bool legacyRejected = Rejected(() => RequireCache(payload, chest.Inventory, true));
+                check(legacyRejected == (count != 0),
+                    "legacy post-Load public getter comparison reproduces nonempty admission failure while empty admission passes");
+                check(nativeLoads == 1 && nativeSaves == 0 && !Loading(chest.Container) && (int)scope.GetValue(null) == previousScope,
+                    "patched native inventory load and real Changed callback preserve the save gate and restore the exact private load scope");
+                Reload(zdo);
+                check(CacheMatches(payload, chest.Inventory) && chest.Inventory.GetAllItems().Count == 0
+                    && nativeSaves == 0 && !Loading(chest.Container) && (int)scope.GetValue(null) == previousScope,
+                    "production closed chest reload accepts the actual complete cache without opening ordinary player access");
+            }
+        }
+        private static void CheckClosedCachePublication(Action<bool, string> check)
+        {
+            byte[][] old = Old(false); ZDO[] chests = Chests(old);
+            NativeChest[] caches = chests.Select(LoadedChest).ToArray(); byte[] personal = CustodyInventory.Capture(Current());
+            CustodyRecord plan = Plan(chests, personal); FieldInfo scope = LoadingScope(); int previousScope = (int)scope.GetValue(null);
+            nativeLoads = nativeSaves = 0;
+            Publish(chests, plan, Reload);
+            check(nativeLoads == 4 && nativeSaves == 0 && CustodyInventory.ChestsMatch(chests, plan, 2, 1),
+                "prepared nonempty custody plan publishes through all four real closed native caches with Changed saves suppressed");
+            check(caches.Select((chest, index) => CacheMatches(plan.DepositPayloads[index], chest.Inventory)
+                && chest.Inventory.GetAllItems().Count == 0 && !ReferenceEquals(chest.Container.GetInventory(), chest.Inventory)
+                && !Loading(chest.Container)).All(value => value) && (int)scope.GetValue(null) == previousScope,
+                "four-chest deposit verifies real saved belongings and restores masking plus container and projection scopes");
+            ItemDrop.ItemData[][] identities = caches.Select(chest => RawItems(chest.Inventory).ToArray()).ToArray();
+            nativeLoads = 0; Publish(chests, plan, Reload);
+            check(nativeLoads == 0 && nativeSaves == 0 && caches.Select((chest, index) => identities[index].SequenceEqual(RawItems(chest.Inventory))).All(value => value),
+                "same-token closed deposit retry is a no-op preserving each real native item reference");
+            foreach (ZDO zdo in chests) zdo.Set(CustodyInventory.PublicKey, true);
+            check(caches.All(chest => ReferenceEquals(chest.Container.GetInventory(), chest.Inventory)
+                && chest.Inventory.GetAllItems().Count == RawItems(chest.Inventory).Count),
+                "after handoff all four containers immediately expose their ordinary native inventories");
+            caches[0].Inventory.RemoveAll();
+            check(nativeSaves == 1 && caches[0].Inventory.GetAllItems().Count == 0
+                && CustodyInventory.Count(chests[0].GetByteArray(ZDOVars.s_items, null)) == 0,
+                "ordinary public withdrawal executes the real native save callback and persists empty contents once");
+            plan.PublicAccess = true; string[] withdrawn = CustodyInventory.ChestPayloadFingerprints(chests); int callbacks = 0;
+            check(Rejected(() => Publish(chests, plan, zdo => { ++callbacks; Reload(zdo); })) && callbacks == 0
+                && withdrawn.SequenceEqual(CustodyInventory.ChestPayloadFingerprints(chests)),
+                "public withdrawal or theft never replays original personal belongings or validates an obsolete chest plan");
+            Inventory next = Inventory("Next inmate after theft"); ItemDrop.ItemData nextItem = Item("Iron", 3, 0, 0);
+            nextItem.m_customData["new_owner"] = "second inmate"; next.GetAllItems().Add(nextItem);
+            CustodyRecord nextPlan = Plan(chests, CustodyInventory.Capture(next)); nextPlan.SentenceId = new string('c', 32);
+            foreach (ZDO zdo in chests) zdo.Set(CustodyInventory.PublicKey, false);
+            nativeLoads = nativeSaves = 0; Publish(chests, nextPlan, Reload);
+            List<ItemDrop.ItemData> remaining = Items(chests.Select(zdo => zdo.GetByteArray(ZDOVars.s_items, null)).ToArray());
+            check(nativeLoads == 4 && nativeSaves == 0 && CustodyInventory.ChestsMatch(chests, nextPlan, 2, 1)
+                && remaining.Any(item => item.m_customData.ContainsKey("new_owner") && item.m_customData["new_owner"] == "second inmate")
+                && remaining.All(item => !item.m_customData.ContainsKey("old_owner")),
+                "a later nonempty admission succeeds after theft without resurrecting removed earlier property");
+        }
+        private static void CheckClosedCacheRollback(Action<bool, string> check)
+        {
+            byte[][] old = Old(false); ZDO[] chests = Chests(old); NativeChest[] caches = chests.Select(LoadedChest).ToArray();
+            byte[] personal = CustodyInventory.Capture(Current()); FieldInfo scope = LoadingScope(); int previousScope = (int)scope.GetValue(null);
+            foreach (int mode in new[] { 1, 2 }) {
+                CustodyRecord plan = Plan(chests, personal); corruptCacheTarget = caches[0].Container; corruptCacheMode = mode;
+                nativeLoads = nativeSaves = 0;
+                check(Rejected(() => Publish(chests, plan, Reload)),
+                    "real post-load metadata alteration or missing cached belongings rejects publication rather than weakening item validation");
+                check(chests.Select((zdo, index) => Equal(zdo.GetByteArray(ZDOVars.s_items, null), old[index])
+                    && CacheMatches(old[index], caches[index].Inventory) && !Loading(caches[index].Container)
+                    && caches[index].Inventory.GetAllItems().Count == 0).All(value => value)
+                    && nativeSaves == 0 && (int)scope.GetValue(null) == previousScope,
+                    "failed closed native cache validation restores all original durable contents and actual caches without opening access");
+                check(plan.OriginalPayload.SequenceEqual(personal) && corruptCacheMode == 0,
+                    "rejected real-cache publication leaves the immutable personal backup unchanged");
+            }
+            corruptCacheTarget = null;
+            ZDO empty = Chests(new byte[4][])[0]; NativeChest absent = LoadedChest(empty);
+            RawItems(absent.Inventory).Add(Item("Wood", 9, 0, 0)); nativeSaves = 0;
+            Reload(empty);
+            check(RawItems(absent.Inventory).Count == 0 && empty.GetByteArray(ZDOVars.s_items, null) == null
+                && nativeSaves == 0 && absent.Inventory.GetAllItems().Count == 0 && !Loading(absent.Container)
+                && (int)scope.GetValue(null) == previousScope,
+                "rollback to a missing original payload clears the real private cache without converting null storage or invoking native Save");
+            typeof(Container).GetField("m_loading", All).SetValue(absent.Container, true); Reload(empty);
+            check(Loading(absent.Container) && empty.GetByteArray(ZDOVars.s_items, null) == null
+                && (int)scope.GetValue(null) == previousScope,
+                "empty-cache restoration also preserves an already active native container loading flag");
+            typeof(Container).GetField("m_loading", All).SetValue(absent.Container, false);
+            empty.Set(ZDOVars.s_items, new byte[] { 1, 2 });
+            check(RejectedTruncatedNativeLoad(() => Reload(empty)) && !Loading(absent.Container) && (int)scope.GetValue(null) == previousScope
+                && !absent.Inventory.AddItem(Item("Iron", 2, 0, 0)),
+                "malformed real native Load restores both scopes and keeps subsequent player writes blocked");
         }
     }
 }
