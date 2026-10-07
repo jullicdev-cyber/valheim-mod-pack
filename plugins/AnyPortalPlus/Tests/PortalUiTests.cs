@@ -17,6 +17,11 @@ internal static class PortalUiTests
     static void Set(object o,string field,object value){o.GetType().GetField(field,BindingFlags.Instance|BindingFlags.NonPublic).SetValue(o,value);}
     static void Call(object o,string method,params object[]args){o.GetType().GetMethod(method,BindingFlags.Instance|BindingFlags.NonPublic).Invoke(o,args);}
     static KnownPortal Portal(uint id,string name,int biome,int icon=-1){return new KnownPortal{Id=new ZDOID(1,id),Name=name,Location=new Vector3(id*10,0,0),Biome=biome,Icon=icon};}
+    static void Controls(PortalConfigurationPanel panel,bool enabled,string scenario)
+    {
+        foreach(string field in new[]{"portalNameInputField","searchInputField","sortDropdown","iconDropdown","defaultPortalToggle","groupByBiomeToggle","noneButton","cancelButton","cleanupButton"})
+            Check(((Selectable)Get(panel,field)).IsInteractable()==enabled,scenario+": "+field+" inherits the effective canvas state");
+    }
     public static int Main()
     {
         var panel=(PortalConfigurationPanel)Activator.CreateInstance(typeof(PortalConfigurationPanel),true);
@@ -32,6 +37,25 @@ internal static class PortalUiTests
             panel.ConfigurePortal(current);Check(panel.IsActive()&&GUIManager.Requests==4,"opening owns one input lease");panel.Show();Check(GUIManager.Requests==4,"duplicate show is idempotent");
             ((Toggle)Get(panel,"groupByBiomeToggle")).isOn=false; // Explicit plain-list fixture; Unity's default toggle starts checked.
             var rowButtons=(Button[])Get(panel,"rows");var icons=(Image[])Get(panel,"rowIcons");var search=(InputField)Get(panel,"searchInputField");var sort=(Dropdown)Get(panel,"sortDropdown");var chooser=(Dropdown)Get(panel,"iconDropdown");
+            var main=(GameObject)Get(panel,"mainPanel");var canvas=main.GetComponent<CanvasGroup>();
+            // A visible, higher-priority native group used to overwrite the
+            // portal's parent canvas after HandleInput enabled it for the frame.
+            var foreign=new GameObject("Foreign native UI group");foreign.AddComponent<CanvasGroup>();foreign.AddComponent<UIGroupHandler>().m_groupPriority=100;
+            panel.HandleInput();UIGroupHandler.TickGroups();Controls(panel,true,"open beside another native UI group");
+            Check(main.GetComponent<UIGroupHandler>()==null&&GUIManager.Requests==4,"the panel has one canvas owner and keeps its input lease");
+            UnifiedPopup.Visible=true;panel.HandleInput();UIGroupHandler.TickGroups();Controls(panel,false,"foreign confirmation is visible");
+            int focusBefore=((InputField)Get(panel,"portalNameInputField")).FocusCalls;XPortal.QueuedAction.Flush();
+            Check(((InputField)Get(panel,"portalNameInputField")).FocusCalls==focusBefore,"delayed name focus cannot steal a foreign popup's input");
+            ZInput.Down.Add("JoyButtonB");ZDOID popupSelection=(ZDOID)Get(panel,"selectedTargetId");
+            ((Button)Get(panel,"noneButton")).onClick.Invoke();panel.HandleInput();
+            Check(panel.IsActive()&&(ZDOID)Get(panel,"selectedTargetId")==popupSelection&&ZInput.Down.Contains("JoyButtonB"),"foreign popup suppresses portal actions and leaves its gamepad back input alone");ZInput.Down.Clear();
+            panel.Hide(false);panel.ConfigurePortal(current);UIGroupHandler.TickGroups();Controls(panel,false,"reopen while confirmation remains visible");
+            Check(GUIManager.Requests==4,"close and reopen under a popup retain exactly one owned lease");
+            UnifiedPopup.Visible=false;panel.HandleInput();UIGroupHandler.TickGroups();Controls(panel,true,"confirmation closes");
+            canvas.interactable=false;panel.Hide(false);panel.ConfigurePortal(current);Controls(panel,true,"reopen resets stale disabled canvas immediately");
+            ZInput.Down.Add("JoyButtonB");panel.HandleInput();XPortal.QueuedAction.Flush();
+            Check(!panel.IsActive()&&GUIManager.Requests==3&&!ZInput.Down.Contains("JoyButtonB"),"gamepad back closes the enabled portal and releases only its own lease");
+            panel.ConfigurePortal(current);foreign.SetActive(false);
             Check(rowButtons.Length==10,"bounded reusable portal rows");Check(chooser.options.Count==6&&chooser.value==0&&chooser.options[0].image==null,"default icon is absent and five native choices are available");
             Check(chooser.itemImage!=null&&chooser.captionImage!=null&&chooser.options[5].image!=null,"icon dropdown renders images in options and current caption");
             Check((ZDOID)Get(panel,"selectedTargetId")==selected.Id,"existing destination kept on open");

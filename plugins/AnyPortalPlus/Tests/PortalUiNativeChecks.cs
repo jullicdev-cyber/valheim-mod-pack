@@ -9,6 +9,7 @@ using BepInEx.Bootstrap;
 using HarmonyLib;
 using Jotunn.Managers;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 namespace ValheimModPack.AnyPortalPlus
@@ -18,6 +19,8 @@ namespace ValheimModPack.AnyPortalPlus
         private static int checks;
         private static Sprite fixtureIcon;
         private static object diagnosticPanel;
+        private static bool fixturePopupVisible;
+        private static int inputRequests;
         private static readonly BindingFlags Flags = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
         private static void Check(bool value, string message)
         {
@@ -52,6 +55,14 @@ namespace ValheimModPack.AnyPortalPlus
         private static void Set(object value, string field, object result) { value.GetType().GetField(field, Flags).SetValue(value, result); }
         private static void Call(object value, string method, params object[] arguments) { value.GetType().GetMethod(method, Flags).Invoke(value, arguments); }
         private static bool FixtureSprite(int icon, ref Sprite __result) { __result = icon < 0 ? null : fixtureIcon; return false; }
+        private static bool FixturePopup(ref bool __result) { __result = fixturePopupVisible; return false; }
+        private static bool FixtureInputLease(bool __0) { inputRequests += __0 ? 1 : -1; return false; }
+        private static bool FixtureRegistryRefresh(object __instance) { return !ReferenceEquals(__instance, diagnosticPanel); }
+        private static void Controls(object panel, bool enabled, string scenario)
+        {
+            foreach (string field in new[] { "portalNameInputField", "searchInputField", "sortDropdown", "iconDropdown", "defaultPortalToggle", "groupByBiomeToggle", "noneButton", "cancelButton", "cleanupButton" })
+                Check(((Selectable)Get(panel, field)).IsInteractable() == enabled, scenario + ": effective native interaction for " + field);
+        }
         public static string Run()
         {
             diagnosticPanel = null;
@@ -73,26 +84,65 @@ namespace ValheimModPack.AnyPortalPlus
             var texture = new Texture2D(8, 8); fixtureIcon = Sprite.Create(texture, new Rect(0, 0, 8, 8), new Vector2(.5f, .5f));
             object panel = Activator.CreateInstance(panelType, true);
             diagnosticPanel = panel;
+            GameObject foreignGroup = null, baseline = null;
+            GameObject previousSelection = EventSystem.current == null ? null : EventSystem.current.currentSelectedGameObject;
             try
             {
                 harmony.Patch(AccessTools.Method(markersType, "GetIconSprite"), prefix: new HarmonyMethod(typeof(PortalUiNativeChecks), "FixtureSprite"));
+                harmony.Patch(AccessTools.Method(typeof(UnifiedPopup), "IsVisible"), prefix: new HarmonyMethod(typeof(PortalUiNativeChecks), "FixturePopup"));
+                harmony.Patch(AccessTools.Method(typeof(GUIManager), "BlockInput"), prefix: new HarmonyMethod(typeof(PortalUiNativeChecks), "FixtureInputLease"));
+                // ConfigurePortal runs its real modal/opening lifecycle. Only
+                // registry refresh is supplied by our detached fixture below;
+                // no live network, player, portal registry or world is created.
+                harmony.Patch(AccessTools.Method(panelType, "RefreshRegistry"), prefix: new HarmonyMethod(typeof(PortalUiNativeChecks), "FixtureRegistryRefresh"));
+                fixturePopupVisible = false; inputRequests = 7;
                 Call(panel, "InitialiseUI");
                 var main = (GameObject)Get(panel, "mainPanel"); Check(main != null && !main.activeSelf, "native wood panel constructs without opening gameplay input");
                 RectTransform rect = main.GetComponent<RectTransform>(); Check(rect.rect.width >= 979 && rect.rect.height >= 859, "requested native panel dimensions");
+                // Reproduce the installed native priority arbitration, including
+                // its write to a parent CanvasGroup and actual Unity Selectables.
+                foreignGroup = new GameObject("AnyPortalPlus.ForeignGroup", typeof(RectTransform), typeof(CanvasGroup), typeof(UIGroupHandler));
+                UIGroupHandler foreign = foreignGroup.GetComponent<UIGroupHandler>(); foreign.m_groupPriority = Int32.MaxValue - 1;
+                baseline = new GameObject("AnyPortalPlus.OldDefaultGroup", typeof(RectTransform), typeof(CanvasGroup), typeof(UIGroupHandler));
+                var baselineButton = new GameObject("Button", typeof(RectTransform), typeof(Button)); baselineButton.transform.SetParent(baseline.transform, false);
+                Check(baselineButton.GetComponent<Button>().IsInteractable(), "default native control begins locally enabled");
+                MethodInfo groupUpdate = AccessTools.Method(typeof(UIGroupHandler), "Update");
+                groupUpdate.Invoke(baseline.GetComponent<UIGroupHandler>(), null);
+                Check(!baseline.GetComponent<CanvasGroup>().interactable && !baselineButton.GetComponent<Button>().IsInteractable(),
+                    "installed UIGroupHandler reproduces the old disabled-parent bug after a competing group updates");
+                object origin = Known(portalType, new ZDOID(1L, 1), "Current", 1, -1, Vector3.zero);
+                Call(panel, "ConfigurePortal", origin); Call(panel, "Show");
+                groupUpdate.Invoke(foreign, null);
+                Check(main.activeInHierarchy && main.GetComponent<UIGroupHandler>() == null && inputRequests == 8,
+                    "real opening has one canvas owner and one counted input lease under InterfaceInputFix");
+                Controls(panel, true, "open beside a higher-priority native group");
+                fixturePopupVisible = true; Call(panel, "UpdateModalInput"); groupUpdate.Invoke(foreign, null);
+                Controls(panel, false, "foreign confirmation suspends the portal");
+                if (EventSystem.current != null) EventSystem.current.SetSelectedGameObject(foreignGroup);
+                Call(panel, "ActivateInputField", false, null);
+                Check(EventSystem.current == null || EventSystem.current.currentSelectedGameObject == foreignGroup,
+                    "delayed focus respects the visible foreign popup");
+                Call(panel, "Hide", false, null); Call(panel, "ConfigurePortal", origin);
+                Controls(panel, false, "real close and reopen while the confirmation is still visible");
+                Check(inputRequests == 8, "popup close and reopen retain one lease without consuming foreign requests");
+                fixturePopupVisible = false; Call(panel, "UpdateModalInput");
+                Controls(panel, true, "foreign confirmation closes");
+                main.GetComponent<CanvasGroup>().interactable = false;
+                Call(panel, "Hide", false, null); Call(panel, "ConfigurePortal", origin);
+                Controls(panel, true, "real ConfigurePortal restores a stale disabled canvas before Show is intercepted");
+                Check(inputRequests == 8, "repeated real ConfigurePortal preserves the foreign input baseline");
                 // Jotunn styles Unity's DefaultControls toggle, which starts checked.
                 // Establish the requested view explicitly before testing row count.
                 var grouping = (Toggle)Get(panel, "groupByBiomeToggle"); grouping.isOn = false;
                 ((Dropdown)Get(panel, "sortDropdown")).value = 0;
                 Check(!grouping.isOn, "native fixture explicitly starts with an ungrouped portal view");
-                // Activate only the fixture canvas. There is no gameplay session
-                // or portal interaction, and no shared input request is acquired.
-                main.SetActive(true);
+                // Only this fixture canvas is open, with its input lease counted
+                // above instead of changing the menu's shared input requests.
                 Check(main.activeInHierarchy, "isolated native portal canvas is visible while events are tested");
                 var icons = (Dropdown)Get(panel, "iconDropdown");
                 Check(icons.options.Count == 6 && icons.options[0].image == null, "None plus five map-icon options");
                 Check(icons.itemImage != null && icons.captionImage != null, "dropdown has actual Unity option and caption images");
                 for (int i = 1; i < icons.options.Count; i++) Check(icons.options[i].image == fixtureIcon, "map-icon sprite reaches option " + i);
-                object origin = Known(portalType, new ZDOID(1L, 1), "Current", 1, -1, Vector3.zero);
                 Set(panel, "thisPortal", origin); Set(panel, "selectedTargetId", new ZDOID(1L, 2));
                 var entries = (IList)Get(panel, "entries"); var portals = (IDictionary)Get(panel, "portalsById");
                 portals.Add(new ZDOID(1L, 1).ToString(), origin);
@@ -124,13 +174,25 @@ namespace ValheimModPack.AnyPortalPlus
                 search.text = "Selected"; Check((int)Get(panel, "page") == 0, "search resets native paging");
                 Check(((InputField)Get(panel, "portalNameInputField")).textComponent.supportRichText == false, "name editor is plain text");
                 Check(((Dropdown)Get(panel, "sortDropdown")).options.Count == 3, "all three sort modes available");
+                Call(panel, "Hide", false, null);
+                Check(!main.activeSelf && inputRequests == 7, "native fixture closure releases only its counted input lease");
                 return "AnyPortal+ native UI PASS: " + checks + " checks (isolated menu; real Unity controls; registry and worlds untouched).";
             }
             finally
             {
                 GameObject main = Get(panel, "mainPanel") as GameObject;
-                if (main != null) main.SetActive(false);
-                Call(panel, "Dispose"); harmony.UnpatchSelf();
+                try
+                {
+                    Call(panel, "Hide", false, null); Call(panel, "Dispose");
+                }
+                finally
+                {
+                    harmony.UnpatchSelf();
+                    if (main != null) UnityEngine.Object.DestroyImmediate(main);
+                    if (baseline != null) UnityEngine.Object.DestroyImmediate(baseline);
+                    if (foreignGroup != null) UnityEngine.Object.DestroyImmediate(foreignGroup);
+                    if (EventSystem.current != null) EventSystem.current.SetSelectedGameObject(previousSelection);
+                }
                 diagnosticPanel = null;
                 if (fixtureIcon != null) UnityEngine.Object.DestroyImmediate(fixtureIcon); fixtureIcon = null;
                 UnityEngine.Object.DestroyImmediate(texture);

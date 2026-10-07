@@ -16,7 +16,7 @@ namespace UnityEngine
     public class RectTransform : Transform { public Vector2 anchorMin,anchorMax,pivot,anchoredPosition,sizeDelta,offsetMin,offsetMax; public Rect rect{get{return new Rect{width=sizeDelta.x,height=sizeDelta.y};}} }
     public class GameObject : Object
     { public string name;public int layer;public bool activeSelf=true;public Transform transform;readonly List<Component> components=new List<Component>();public bool activeInHierarchy{get{return activeSelf&&(transform.parent==null||transform.parent.gameObject.activeInHierarchy);}} public GameObject(string name,params Type[] types){this.name=name;transform=new RectTransform{gameObject=this};components.Add(transform);foreach(Type type in types)if(type!=typeof(RectTransform))AddComponent(type);}public void SetActive(bool value){activeSelf=value;}public T AddComponent<T>()where T:Component,new(){return(T)AddComponent(typeof(T));}public Component AddComponent(Type type){var c=(Component)Activator.CreateInstance(type);c.gameObject=this;components.Add(c);return c;}public T GetComponent<T>()where T:Component{foreach(Component c in components)if(c is T)return(T)c;return null;}public T GetComponentInChildren<T>()where T:Component{T c=GetComponent<T>();if(c!=null)return c;foreach(Transform child in transform.children){c=child.gameObject.GetComponentInChildren<T>();if(c!=null)return c;}return null;} }
-    public class CanvasGroup : Component {public bool interactable=true,blocksRaycasts=true;}
+    public class CanvasGroup : Component {public bool interactable=true,blocksRaycasts=true,ignoreParentGroups;}
     public static class Mathf {public static float Min(float a,float b){return Math.Min(a,b);}public static float Max(float a,float b){return Math.Max(a,b);}}
     public static class ColorUtility {public static bool TryParseHtmlString(string s,out Color c){c=Color.white;return s!=null&&s.StartsWith("#");}}
     public enum KeyCode {None,UpArrow,DownArrow,Escape,U,LeftControl}
@@ -36,10 +36,20 @@ namespace UnityEngine.UI
     public class Text:Graphic {public string text="";public UnityEngine.Font font;public int fontSize,resizeTextMinSize,resizeTextMaxSize;public bool supportRichText,resizeTextForBestFit;public UnityEngine.TextAnchor alignment;public UnityEngine.HorizontalWrapMode horizontalOverflow;public UnityEngine.VerticalWrapMode verticalOverflow;public UnityEngine.RectTransform rectTransform{get{return(UnityEngine.RectTransform)transform;}}}
     public class Image:Graphic {public UnityEngine.Sprite sprite;public bool preserveAspect;}
     public struct ColorBlock {public UnityEngine.Color normalColor;}
-    public class Button:UnityEngine.Component {public bool interactable=true;public ColorBlock colors;public Event onClick=new Event();}
-    public class InputField:UnityEngine.Component {public enum ContentType{Standard}public int characterLimit;public Text textComponent;public Graphic placeholder;public bool shouldActivateOnSelect,isFocused;public int FocusCalls;string current="";public Event<string>onValueChanged=new Event<string>();public string text{get{return current;}set{current=value;onValueChanged.Invoke(value);}}public void ActivateInputField(){isFocused=true;FocusCalls++;}}
-    public class Toggle:UnityEngine.Component {bool current=true;public Event<bool>onValueChanged=new Event<bool>();public bool isOn{get{return current;}set{current=value;onValueChanged.Invoke(value);}}}
-    public class Dropdown:UnityEngine.Component {public class OptionData{public string text;public UnityEngine.Sprite image;public OptionData(string text,UnityEngine.Sprite image=null){this.text=text;this.image=image;}}public List<OptionData>options=new List<OptionData>();public Text captionText,itemText;public Image captionImage,itemImage;public UnityEngine.RectTransform template;public Event<int>onValueChanged=new Event<int>();int current;public int value{get{return current;}set{current=value;onValueChanged.Invoke(value);}}public void ClearOptions(){options.Clear();}public void AddOptions(List<string>list){foreach(string item in list)options.Add(new OptionData(item));}public void RefreshShownValue(){}public void Hide(){UnityEngine.Transform list=transform.Find("Dropdown List");if(list!=null){list.SetParent(null,false);list.gameObject.SetActive(false);}}}
+    public class Selectable:UnityEngine.Component
+    {
+        public bool interactable=true;
+        public bool IsInteractable()
+        {
+            if(!interactable)return false;
+            for(UnityEngine.Transform t=transform;t!=null;t=t.parent){var group=t.gameObject.GetComponent<UnityEngine.CanvasGroup>();if(group==null)continue;if(!group.interactable)return false;if(group.ignoreParentGroups)break;}
+            return true;
+        }
+    }
+    public class Button:Selectable {public ColorBlock colors;public Event onClick=new Event();}
+    public class InputField:Selectable {public enum ContentType{Standard}public int characterLimit;public Text textComponent;public Graphic placeholder;public bool shouldActivateOnSelect,isFocused;public int FocusCalls;string current="";public Event<string>onValueChanged=new Event<string>();public string text{get{return current;}set{current=value;onValueChanged.Invoke(value);}}public void ActivateInputField(){if(IsInteractable()){isFocused=true;FocusCalls++;}}}
+    public class Toggle:Selectable {bool current=true;public Event<bool>onValueChanged=new Event<bool>();public bool isOn{get{return current;}set{current=value;onValueChanged.Invoke(value);}}}
+    public class Dropdown:Selectable {public class OptionData{public string text;public UnityEngine.Sprite image;public OptionData(string text,UnityEngine.Sprite image=null){this.text=text;this.image=image;}}public List<OptionData>options=new List<OptionData>();public Text captionText,itemText;public Image captionImage,itemImage;public UnityEngine.RectTransform template;public Event<int>onValueChanged=new Event<int>();int current;public int value{get{return current;}set{current=value;onValueChanged.Invoke(value);}}public void ClearOptions(){options.Clear();}public void AddOptions(List<string>list){foreach(string item in list)options.Add(new OptionData(item));}public void RefreshShownValue(){}public void Hide(){UnityEngine.Transform list=transform.Find("Dropdown List");if(list!=null){list.SetParent(null,false);list.gameObject.SetActive(false);}}}
 }
 namespace BepInEx.Configuration
 { public class ConfigEntry<T>{public T Value;public ConfigEntry(T value){Value=value;}}public struct KeyboardShortcut{public UnityEngine.KeyCode MainKey;public KeyboardShortcut(UnityEngine.KeyCode key){MainKey=key;}public override string ToString(){return MainKey.ToString();}} }
@@ -72,7 +82,16 @@ public class Game{public static Game instance=new Game();public bool m_shuttingD
 public class Minimap{public static Minimap instance=new Minimap();}
 public class ZoneSystem{public static ZoneSystem instance=new ZoneSystem();public bool NoMap;public bool GetGlobalKey(string key){return key=="nomap"&&NoMap;}}
 public class UnifiedPopup{public static bool Visible;public static bool IsVisible(){return Visible;}}
-public class UIGroupHandler:UnityEngine.Component{}
+// Installed UIGroupHandler.Update overwrites its CanvasGroup using priority
+// across every visible group. Calling this after HandleInput reproduces the
+// frame-order bug instead of treating every control's local flag as sufficient.
+public class UIGroupHandler:UnityEngine.Component
+{
+    static readonly List<UIGroupHandler>groups=new List<UIGroupHandler>();
+    public int m_groupPriority;public bool m_userActive=true;
+    public UIGroupHandler(){groups.Add(this);}
+    public static void TickGroups(){foreach(var group in groups.ToArray()){if(group.gameObject==null||!group.gameObject.activeInHierarchy)continue;bool active=group.m_userActive;foreach(var other in groups)if(other!=group&&other.gameObject!=null&&other.gameObject.activeInHierarchy&&other.m_groupPriority>group.m_groupPriority)active=false;var canvas=group.GetComponent<UnityEngine.CanvasGroup>();if(canvas!=null)canvas.interactable=active;}}
+}
 public class Heightmap{public enum Biome{None=0,Meadows=1,Swamp=2,Mountain=4,BlackForest=8,Plains=16,AshLands=32,DeepNorth=64,Ocean=256,Mistlands=512}}
 public class Localization{public static Localization instance=new Localization();public string Language="English";public string GetSelectedLanguage(){return Language;}public string Localize(string s){return s;}}
 namespace XPortal

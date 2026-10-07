@@ -305,7 +305,7 @@
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-InterfaceInputFix/InterfaceInputFix.dll",
-    "sha256": "4df11c1fce9a87eef1c9c750da31d5b428769a0868f3f992b9981ed2ccce220f"
+    "sha256": "0f549f498f28952dc1b9b01eee85833c00355eae61fdacdab59837647bdd556f"
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-InventoryAdmin/InventoryAdmin.dll",
@@ -405,7 +405,7 @@
   },
   {
     "path": "BepInEx/plugins/XPortal/XPortal.dll",
-    "sha256": "cb47f03e7a3cc8f20622253eee58f7d4ca2a7718509f7bf95399e222e183ee95"
+    "sha256": "634eea6b4e97cd28a0b3bd321a0c7cdd7f8c3861975fa54e8ca689079b367dfe"
   },
   {
     "path": "changelog.txt",

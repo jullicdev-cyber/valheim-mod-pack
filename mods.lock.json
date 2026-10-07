@@ -1,5 +1,5 @@
 {
-  "packVersion": "1.27.4",
+  "packVersion": "1.27.5",
   "created": "2026-09-25",
   "targetGameVersion": "1.0.17",
   "packages": [
@@ -235,10 +235,10 @@
   "localPlugins": [
     {
       "id": "ValheimModPack-AnyPortalPlus",
-      "version": "1.3.0",
+      "version": "1.3.1",
       "source": "local-plugins/XPortal.dll",
       "destination": "BepInEx/plugins/XPortal/XPortal.dll",
-      "sha256": "cb47f03e7a3cc8f20622253eee58f7d4ca2a7718509f7bf95399e222e183ee95",
+      "sha256": "634eea6b4e97cd28a0b3bd321a0c7cdd7f8c3861975fa54e8ca689079b367dfe",
       "dependencies": [
         "denikson-BepInExPack_Valheim-5.4.2351",
         "ValheimModding-Jotunn-2.30.2"
@@ -391,8 +391,8 @@
         "denikson-BepInExPack_Valheim-5.4.2351",
         "ValheimModding-Jotunn-2.30.2"
       ],
-      "version": "1.1.1",
-      "sha256": "4df11c1fce9a87eef1c9c750da31d5b428769a0868f3f992b9981ed2ccce220f"
+      "version": "1.1.2",
+      "sha256": "0f549f498f28952dc1b9b01eee85833c00355eae61fdacdab59837647bdd556f"
     },
     {
       "id": "ValheimModPack-RenewableResourceTimers",

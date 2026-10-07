@@ -10,7 +10,7 @@ namespace Mod
         public const string Author = "SpikeHimself; Valheim Mod Pack contributors";
         public const string Name = "AnyPortal+";
         public const string GitHubRepo = "jullicdev-cyber/valheim-mod-pack";
-        public const string Version = "1.3.0";
+        public const string Version = "1.3.1";
         public const string Description = "AnyPortal+ fork of XPortal: search, sorting, biomes, portal icons and tracked map markers.";
         public const string WebsiteUrl = "https://github.com/" + GitHubRepo;
         // The fork has no independent Nexus release; do not advertise upstream updates.

@@ -87,13 +87,13 @@ namespace XPortal.UI
             if (active) generation++; // A new Show cancels an older delayed close/focus.
             if (!active) { CloseDropdowns(); ClearSelectedControl(); generation++; }
             mainPanel.SetActive(active);
-            if (active) { mainPanel.transform.SetAsLastSibling(); ActivateInputField(); }
+            if (active) { mainPanel.transform.SetAsLastSibling(); UpdateModalInput(); ActivateInputField(); }
         }
         private void ActivateInputField(bool delayed = true, object state = null)
         {
             if (delayed) { QueuedAction.Queue(ActivateInputField, state: generation); return; }
             if (state is int && (int)state != generation) return;
-            if (IsActive() && portalNameInputField != null) portalNameInputField.ActivateInputField();
+            if (IsActive() && portalNameInputField != null && !UnifiedPopup.IsVisible()) portalNameInputField.ActivateInputField();
         }
         public void Show() { SetActive(true); }
         public void Hide(bool delayed = true, object state = null)
@@ -120,7 +120,7 @@ namespace XPortal.UI
             }
             finally { rebuilding = false; }
             notice = ""; page = 0; snapshotSignature = "";
-            UpdateLocalization(); RefreshRegistry(true); Scale(); Show();
+            UpdateLocalization(); RefreshRegistry(true); Scale(); UpdateModalInput(); Show();
         }
         private bool ValidSession()
         {
@@ -140,9 +140,7 @@ namespace XPortal.UI
             if (Time.unscaledTime >= nextRegistryRefresh) {
                 nextRegistryRefresh = Time.unscaledTime + 2f; UpdateLocalization(); RefreshRegistry(false); UpdateNavigationHint();
             }
-            bool popup = UnifiedPopup.IsVisible();
-            CanvasGroup group = mainPanel.GetComponent<CanvasGroup>(); if (group != null) group.interactable = !popup;
-            if (popup) return;
+            if (UpdateModalInput()) return;
             if (Input.GetKeyDown(KeyCode.Escape) || ZInput.GetButtonDown("JoyButtonB")) {
                 if (ZInput.GetButtonDown("JoyButtonB")) ZInput.ResetButtonStatus("JoyButtonB");
                 if (AnyDropdownExpanded()) CloseDropdowns(); else Hide(); return;
@@ -151,6 +149,13 @@ namespace XPortal.UI
             if (portalNameInputField.isFocused || searchInputField.isFocused || AnyDropdownExpanded()) return;
             if (uiDropdownScrollUpButton != null && ZInput.GetButtonUp(uiDropdownScrollUpButton.Name)) SelectAdjacent(-1);
             else if (uiDropdownScrollDownButton != null && ZInput.GetButtonUp(uiDropdownScrollDownButton.Name)) SelectAdjacent(1);
+        }
+        private bool UpdateModalInput()
+        {
+            bool popup = UnifiedPopup.IsVisible();
+            CanvasGroup group = mainPanel == null ? null : mainPanel.GetComponent<CanvasGroup>();
+            if (group != null) group.interactable = !popup;
+            return popup;
         }
         private void RefreshRegistry(bool force)
         {
@@ -336,7 +341,10 @@ namespace XPortal.UI
             GameObject hook = GUIManager.CustomGUIFront; if (hook == null) { Log.Error("AnyPortal+ GUI canvas is not ready"); return; }
             Vector2 center = new Vector2(.5f, .5f);
             mainPanel = GUIManager.Instance.CreateWoodpanel(hook.transform, center, center, Vector2.zero, PanelWidth, PanelHeight, false);
-            mainPanel.name = GO_MAINPANEL; mainPanel.AddComponent<CanvasGroup>(); mainPanel.AddComponent<UIGroupHandler>();
+            mainPanel.name = GO_MAINPANEL; mainPanel.AddComponent<CanvasGroup>();
+            // Native UIGroupHandler also writes CanvasGroup.interactable each
+            // frame. Its default priority loses to other native UI groups, so it
+            // must not compete with this panel's own popup/input lifecycle.
             heading = Label("", 0, 389, 890, 50, 30, true, TextAnchor.MiddleCenter);
             nameLabel = Label("", -395, 326, 140, 34, 18, true);
             portalNameInputField = InputAt("AnyPortalPlus.Name", -84, 326, 470, ""); portalNameInputField.characterLimit = 256;
