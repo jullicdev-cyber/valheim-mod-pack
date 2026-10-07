@@ -22,7 +22,7 @@ namespace ValheimModPack.PartyPrison
     [NetworkCompatibility(CompatibilityLevel.EveryoneMustHaveMod, VersionStrictness.Patch)]
     public sealed partial class Plugin : BaseUnityPlugin
     {
-        public const string Id = "valheimmodpack.partyprison", Version = "1.5.4";
+        public const string Id = "valheimmodpack.partyprison", Version = "1.5.5";
         internal const string LoanKey = "VMP_PP_Loan", InmateKey = "VMP_PP_Inmate";
         private const string RpcName = PrisonWire.RpcName;
         internal static Plugin Active;
@@ -244,7 +244,9 @@ namespace ValheimModPack.PartyPrison
             {
                 nextMobCleanup = now + 5;
                 bool empty = !store.All().Any(s => !s.PendingRelease);
-                if (empty) { ArenaBuilder.CancelPendingWave(); if (ArenaBuilder.ClearSentenceKit(region)) network.Save(true, false, false); }
+                // Kit removal is already published by the native container and
+                // ZDO sync; a global synchronous save stalls unrelated players.
+                if (empty) { ArenaBuilder.CancelPendingWave(); ArenaBuilder.ClearSentenceKit(region); }
                 ArenaBuilder.CleanupMobs(region, empty);
             }
         }

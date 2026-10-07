@@ -346,7 +346,7 @@ namespace ValheimModPack.PartyPrison
             admissionReserved = false;
             try { ArenaBuilder.SetExitLocked(region, false); }
             catch (Exception e) { Report("Release saved; exit gate cleanup deferred: " + e.Message); }
-            ReopenEmergencyChests(); return true;
+            ReopenPublicChests(); return true;
         }
         private void ForceRelease(string account)
         { RequireHost(); SaveEmergencyRelease(account); }
@@ -411,6 +411,13 @@ namespace ValheimModPack.PartyPrison
         {
             try { CustodyInventory.SetPublic(Chests(), true); network.Save(true, false, false); emergencyChestsPending = false; }
             catch (Exception e) { emergencyChestsPending = true; nextEmergencyChests = Time.realtimeSinceStartup + 3; Report("Emergency release finished; native chests reopen when loaded: " + e.Message); }
+        }
+        private void ReopenPublicChests()
+        {
+            // Public handoff is already durable. Refresh native access without
+            // another whole-world checkpoint on the ordinary release path.
+            try { CustodyInventory.SetPublic(Chests(), true); emergencyChestsPending = false; }
+            catch (Exception e) { emergencyChestsPending = true; nextEmergencyChests = Time.realtimeSinceStartup + 3; Report("Release saved; native chests reopen when loaded: " + e.Message); }
         }
         private string CustodyBackupPath(string token)
         { return Path.Combine(Path.GetDirectoryName(store.StatePath), "custody-world-" + world.ToString("x16"), token + ".custody"); }

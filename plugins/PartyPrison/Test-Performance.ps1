@@ -261,6 +261,41 @@ try {
     Check ($refresh.Count -eq 1 -and $custodyTick.Count -eq 1 -and $peerState.Count -gt 0 -and
         $custodyTick[0].Offset -lt $refresh[0].Offset -and $refresh[0].Offset -lt $peerState[0].Offset) (
         'The host must refresh combat once after custody changes and before all peer snapshots.')
+    Check (@(Calls $hostTick 'ZNet::Save').Count -eq 0) (
+        'Routine post-release kit cleanup must not block the host with a whole-world save.')
+    $publicRelease = Method $pluginType 'CompleteHostRelease' 4
+    Check (@(Calls $publicRelease 'Plugin::ReopenEmergencyChests|ZNet::Save').Count -eq 0) (
+        'An already-public custody release must not use the emergency world-checkpoint path.')
+    $publicReopen = @(Calls $publicRelease 'Plugin::ReopenPublicChests')
+    $custodyCompletion = @(Calls $publicRelease 'CustodyStore::MarkCollected')
+    Check ($publicReopen.Count -eq 1 -and $custodyCompletion.Count -eq 1 -and
+        $custodyCompletion[0].Offset -lt $publicReopen[0].Offset) (
+        'The ordinary release must finish its custody journal before refreshing public chest access.')
+    Check (@(Calls $publicRelease 'Plugin::CompleteEmergencyCustodyRelease').Count -eq 2) (
+        'Emergency sentences and private/recovery custody must retain the separate durable release path.')
+    $reopenPublic = Method $pluginType 'ReopenPublicChests' 0
+    Check (@(Calls $reopenPublic 'CustodyInventory::SetPublic').Count -eq 1) (
+        'Ordinary release must still restore the native public chest access flags.')
+    foreach ($method in @(Graph $reopenPublic)) {
+        Check (@(Calls $method 'ZNet::Save').Count -eq 0) (
+            'Ordinary public chest access must not hide a whole-world checkpoint in a helper: ' + $method.FullName)
+    }
+    foreach ($field in @('emergencyChestsPending','nextEmergencyChests')) {
+        Check ([bool]($reopenPublic.Body.Instructions | Where-Object {
+            $_.OpCode.Name -eq 'stfld' -and $_.Operand.Name -eq $field
+        })) ('A temporarily unavailable public chest must preserve its deferred reopen recovery: ' + $field)
+    }
+    Check (@(Calls (Method $pluginType 'ReopenEmergencyChests' 0) 'ZNet::Save').Count -eq 1) (
+        'Private/emergency chest recovery must preserve its world durability checkpoint.')
+    Check (@(Calls (Method $pluginType 'HostCustodyTick' 0) 'ZNet::Save').Count -ge 3) (
+        'Admission and private-to-public custody handoff must preserve their world durability barriers.')
+    $clearKit = Method $arenaType 'ClearSentenceKit' 1
+    Check ([bool](Calls $clearKit 'PrisonKitStorage::Publish') -and [bool](Calls $clearKit 'ZDOMan::ForceSendZDO')) (
+        'Released equipment stock must still publish native chest contents and sync the cleared kit identity.')
+    foreach ($method in @(Graph $clearKit)) {
+        Check (@(Calls $method 'ZNet::Save').Count -eq 0) (
+            'Released equipment cleanup must not hide a whole-world checkpoint in a helper: ' + $method.FullName)
+    }
     $maintenance = Method $pluginType 'MaintainCombatGear' 0
     Clock-Gate $maintenance 'nextGearMaintenance' 0.5 'ArenaBuilder::RemoveObsoleteGearWhenSettled'
     Clock-Gate $maintenance 'nextStoredGearMaintenance' 1 'ArenaBuilder::ExpireStoredPrisonGear'
