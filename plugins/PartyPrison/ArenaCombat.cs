@@ -43,13 +43,22 @@ namespace ValheimModPack.PartyPrison
             // Resolve every definition before touching the live native chest.
             var stock = new List<GameObject>();
             foreach (string name in loadout.GearPrefabs) stock.Add(RequireItemPrefab(name));
+            var food = new List<GameObject>();
+            for (int i = 0; i < loadout.FoodPrefabs.Length; ++i) {
+                GameObject prefab = RequireItemPrefab(loadout.FoodPrefabs[i]);
+                ItemDrop.ItemData definition = prefab.GetComponent<ItemDrop>().m_itemData;
+                if (!IsFoodLoanType(definition) || definition.m_shared.m_maxStackSize != 1)
+                    throw new InvalidOperationException("Некорректный паёк арены: " + prefab.name);
+                bool healthFood = definition.m_shared.m_food > definition.m_shared.m_foodStamina;
+                if (healthFood != (i < 2)) throw new InvalidOperationException("Неверный тип пайка арены: " + prefab.name);
+                food.Add(prefab);
+            }
             if (ContainerLoad == null) throw new MissingMethodException("Container", "Load");
+            var storage = new PrisonKitStorage(kit, chest.GetInventory());
             chest.GetComponent<ZNetView>().ClaimOwnership(); ContainerLoad.Invoke(chest, null);
             Inventory native = chest.GetInventory();
             if (native == null) throw new InvalidOperationException("Не открыт инвентарь сундука снаряжения.");
-            var before = new ZPackage(); native.Save(before);
-            var candidate = new Inventory("PartyPrison.KitReplacement", null, native.GetWidth(), native.GetHeight());
-            candidate.Load(new ZPackage(before.GetArray()));
+            Inventory candidate = storage.WorkingCopy(native);
             var remove = new List<ItemDrop.ItemData>();
             foreach (ItemDrop.ItemData item in candidate.GetAllItems()) if (IsGeneratedGear(item)) remove.Add(item);
             foreach (ItemDrop.ItemData item in remove) candidate.RemoveItem(item);
@@ -72,9 +81,15 @@ namespace ValheimModPack.PartyPrison
                 }
                 if (!candidate.AddItem(item)) throw new InvalidOperationException("Освободите место в сундуке снаряжения. Личные вещи в нём сохранены.");
             }
-            var replacement = new ZPackage(); candidate.Save(replacement);
-            try { native.Load(new ZPackage(replacement.GetArray())); }
-            catch { native.Load(new ZPackage(before.GetArray())); throw; }
+            foreach (GameObject prefab in food)
+                for (int serving = 0; serving < loadout.FoodServings; ++serving) {
+                    ItemDrop.ItemData item = prefab.GetComponent<ItemDrop>().m_itemData.Clone();
+                    item.m_dropPrefab = prefab; item.m_stack = item.m_quality = 1; item.m_equipped = false;
+                    item.m_customData = item.m_customData == null ? new Dictionary<string, string>() : new Dictionary<string, string>(item.m_customData);
+                    item.m_customData[GearKey] = tag; item.m_customData[KitStockKey] = token;
+                    if (!candidate.AddItem(item)) throw new InvalidOperationException("Освободите место для пайков в сундуке снаряжения. Личные вещи в нём сохранены.");
+                }
+            storage.Publish(chest, candidate);
             kit.Set(CustodyInventory.PublicKey, true);
             kit.Set(KitFamilyKey, family); kit.Set(KitDifficultyKey, difficulty); kit.Set(KitRevisionKey, revision);
             kit.Set(KitTokenKey, token); ZDOMan.instance.ForceSendZDO(kit.m_uid);
@@ -92,6 +107,7 @@ namespace ValheimModPack.PartyPrison
         private static bool IsGearType(ItemDrop.ItemData item)
         {
             if (item == null || item.m_shared == null) return false;
+            if (IsFoodLoanType(item)) return true;
             switch (item.m_shared.m_itemType) {
                 case ItemDrop.ItemData.ItemType.OneHandedWeapon:
                 case ItemDrop.ItemData.ItemType.TwoHandedWeapon:
@@ -105,6 +121,13 @@ namespace ValheimModPack.PartyPrison
                 case ItemDrop.ItemData.ItemType.Shoulder: return true;
                 default: return false;
             }
+        }
+
+        private static bool IsFoodLoanType(ItemDrop.ItemData item)
+        {
+            return item != null && item.m_shared != null && item.m_dropPrefab != null
+                && item.m_shared.m_food > 0f && item.m_shared.m_foodStamina > 0f
+                && item.m_shared.m_maxStackSize == 1 && CombatCatalog.IsFoodPrefab(item.m_dropPrefab.name);
         }
 
         /// <summary>Every owning peer removes obsolete loan gear from its character, leaving farm loot intact.</summary>
@@ -144,10 +167,14 @@ namespace ValheimModPack.PartyPrison
 
         private static int RemoveGearCore(Inventory inventory, long world, string activeToken, int activeRevision, Action<ItemDrop.ItemData> beforeRemove, Func<ItemDrop.ItemData, bool> canRemove = null)
         {
-            var remove = new List<ItemDrop.ItemData>();
+            List<ItemDrop.ItemData> remove = null;
             foreach (ItemDrop.ItemData item in inventory.GetAllItems()) {
-                if (IsObsoleteGear(item, world, activeToken, activeRevision) && (canRemove == null || canRemove(item))) remove.Add(item);
+                if (IsObsoleteGear(item, world, activeToken, activeRevision) && (canRemove == null || canRemove(item))) {
+                    if (remove == null) remove = new List<ItemDrop.ItemData>();
+                    remove.Add(item);
+                }
             }
+            if (remove == null) return 0;
             foreach (ItemDrop.ItemData item in remove) {
                 if (beforeRemove != null) beforeRemove(item);
                 inventory.RemoveItem(item);
@@ -176,20 +203,26 @@ namespace ValheimModPack.PartyPrison
                 ZNetView view = ZNetScene.instance.FindInstance(zdo);
                 Container chest = view == null || !view.IsValid() ? null : view.GetComponent<Container>();
                 if (chest == null || chest.IsInUse()) continue;
-                ContainerLoad.Invoke(chest, null);
+                // Inspect what the native container has already loaded. Do not
+                // force an unvalidated raw load merely to decide whether expiry
+                // is needed; a pending ordinary native sync can defer cleanup.
                 Inventory inventory = chest.GetInventory(); bool stale = false;
                 foreach (ItemDrop.ItemData item in inventory.GetAllItems()) {
                     if (IsObsoleteGear(item, world, activeToken, activeRevision)) { stale = true; break; }
                 }
                 if (!stale) stale = CustodyInventory.HasObsoleteBackpackGear(inventory, world, activeToken, activeRevision);
                 if (!stale) continue;
+                // Strict snapshots are paid only when there is an actual stale
+                // item to remove, never by the common empty/unchanged scan.
+                var storage = new PrisonKitStorage(zdo, inventory);
                 view.ClaimOwnership(); ContainerLoad.Invoke(chest, null);
-                int count = RemoveObsoleteInventoryGear(chest.GetInventory(), world, activeToken, activeRevision);
-                count += CustodyInventory.ExpireBackpackGear(chest.GetInventory(), world, activeToken, activeRevision);
+                Inventory candidate = storage.WorkingCopy(chest.GetInventory());
+                int count = RemoveObsoleteInventoryGear(candidate, world, activeToken, activeRevision);
+                count += CustodyInventory.ExpireBackpackGear(candidate, world, activeToken, activeRevision);
                 if (count > 0) {
                     // Backpack serialization changes an outer item's custom
                     // data without raising the native inventory change event.
-                    NativeContainerSave.Invoke(chest, null);
+                    storage.Publish(chest, candidate);
                     removed += count; ZDOMan.instance.ForceSendZDO(zdo.m_uid);
                 }
             }

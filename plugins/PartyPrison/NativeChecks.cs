@@ -124,7 +124,8 @@ namespace ValheimModPack.PartyPrison.NativeVerification
             Patch(typeof(TerrainComp), "ApplyToHeightmap", new[] { typeof(Texture2D), typeof(List<float>), typeof(float[]), typeof(float[]), typeof(Heightmap) });
             report.AppendLine("PASS: Required confinement, death, protection and input-reset Harmony patches bind; native creature loot generation remains available.");
             CheckCommandRouting(); CheckGroupRadiusCompatibility(); CheckUi(); CheckInventoryIsolation(); CheckCustodyInventory(); CheckAdmissionEquivalence(); CheckExactWithdrawalInsertion(); CheckCustodyMask(); CheckCustodyRegistry(); CheckCustodyTransitions(); CheckForcedTerrainHeights(); CheckForceClearance(); CheckLootPickupGuard(); CheckGeometry(); CheckLayoutPlan(); CheckPrefabs();
-            CombatNativeChecks.Run(Check); LayoutNativeChecks.Run(Check); RecoveryNativeChecks.Run(Check);
+            CombatNativeChecks.Run(Check); LayoutNativeChecks.Run(Check); RecoveryNativeChecks.Run(Check); DeathNativeChecks.Run(Check); KitStorageNativeChecks.Run(Check);
+            report.AppendLine("PASS: Detached native death-skill adapter matches full-patch percentages, cooldown boundary, soft-death notice and reset-skills world rule; personal items remain byte-identical. Live defeat/teleport/custody remains unverified.");
             if (CombatNativeChecks.BackpackFixtureSkipped) report.AppendLine("SKIP: Adventure Backpacks is absent; native backpack replacement fixture was omitted.");
             if (RecoveryNativeChecks.BackpackFixtureSkipped) report.AppendLine("SKIP: Adventure Backpacks is absent; native nested-backpack equipment expiry fixture was omitted.");
             Check(Player.m_localPlayer == null && Game.instance == null, "probe leaves no game or local player registration");
@@ -430,13 +431,13 @@ namespace ValheimModPack.PartyPrison.NativeVerification
                 Check(((Button)Field(window, "forceRelease")).interactable, "offline sentence enables the emergency release button");
                 Call(window, "ForceRelease"); Check(forced == 1 && released == "probe-account-1", "emergency release targets only the selected offline account");
                 Check(((Button)Field(window, "build")).GetComponentInChildren<Text>().text.Contains("возле меня")
-                    && ((Text)Field(window, "buildHint")).text.Contains("32 м") && !((Text)Field(window, "buildHint")).text.Contains("алтар"),
+                    && ((Text)Field(window, "buildHint")).text.Contains("40 м") && !((Text)Field(window, "buildHint")).text.Contains("алтар"),
                     "host construction controls explain a fixed look-relative site rather than altar search");
                 Call(window, "BuildPrison");
                 Check(placementCaptures == 1 && placementBuilds == 0 && (bool)Field(window, "buildArmed")
                     && ((Text)Field(window, "buildHint")).text.Contains("Перед вами"), "first build click captures the placement and asks for confirmation before construction");
                 Check(ReferenceEquals(pendingPlacement.GetValue(actualPlugin), capturedPlacement)
-                    && capturedPlacement.Origin.X == 10 && capturedPlacement.Origin.Z == 52,
+                    && capturedPlacement.Origin.X == 10 && capturedPlacement.Origin.Z == 60,
                     "the actual production PrepareBuild stores the first click's immutable host-look snapshot");
                 PrisonPlacementPlan firstPlacement = capturedPlacement;
                 placementHost = new PrisonPoint(777, 50, 888); placementLook = new PrisonPoint(-1, 0, 0);
@@ -484,7 +485,7 @@ namespace ValheimModPack.PartyPrison.NativeVerification
                     canFight = true; custody = ""; Call(window, "Repaint");
                     foreach (Text text in ((GameObject)Field(window, "panel")).GetComponentsInChildren<Text>(true)) Check(!text.supportRichText, "prisoner caption is plain text: " + text.name);
                     state.PendingRelease = true; state.RemainingSeconds = 0; Call(window, "Repaint");
-                    Check(((Text)Field(window, "sentence")).text.Contains("завершён") && ((Text)Field(window, "custodyText")).text.Contains("на сундуке"), "pending release explains gate opening and physical chest retrieval without using a client clock");
+                    Check(((Text)Field(window, "sentence")).text.Contains("завершён") && ((Text)Field(window, "custodyText")).text.Contains("сундуками"), "pending release explains gate opening and physical chest retrieval without using a client clock");
                     Check(!((Button)Field(window, "kit")).interactable && !((Button)Field(window, "arena")).interactable,
                         "pending release keeps retrieval guidance visible while disabling new arena activity");
                     Check(((Text)Field(window, "custodyText")).text.Contains("удаляются"), "release guidance distinguishes preserved loot from expiring prison armor and weapons");
@@ -627,13 +628,13 @@ namespace ValheimModPack.PartyPrison.NativeVerification
             Check(glass != null, "transparent arena wall prefab is available for layout verification");
             Bounds bounds = (Bounds)typeof(ArenaBuilder).GetMethod("SolidBounds", All).Invoke(null, new object[] { glass });
             typeof(ArenaBuilder).GetMethod("AppendWindows", All).Invoke(null, new object[] { windows, bounds });
-            Check(windows.Count == 32, "arena layout creates two eight-metre windows with two native glass rows");
+            Check(windows.Count == 48, "arena layout creates two eight-metre windows with three native glass rows");
             foreach (object window in windows) {
                 Vector3 point = (Vector3)Field(window, "Offset");
                 Check((string)Field(window, "Prefab") == "crystal_wall_1x1" && (string)Field(window, "Marker") == ArenaBuilder.WindowKey,
                     "viewing opening uses protected native glass rather than an empty escape gap");
-                Check(point.y + bounds.min.y >= -.001f && point.y + bounds.max.y <= 2.01f
-                    && (Mathf.Abs(point.x - 12f) < .001f || Mathf.Abs(point.z - 12f) < .001f),
+                Check(point.y + bounds.min.y >= -.001f && point.y + bounds.max.y <= 3.01f
+                    && (Mathf.Abs(point.x - 18f) < .001f || Mathf.Abs(point.z - 18f) < .001f),
                     "viewing glass fills the planned outer arena wall at standing eye height");
             }
             var lamps = (System.Collections.IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(placement));
@@ -642,7 +643,7 @@ namespace ValheimModPack.PartyPrison.NativeVerification
             Check(lamps.Count == angles.Length, "all six wall lanterns remain in the upgraded layout");
             for (int i = 0; i < lamps.Count; ++i) Check((float)Field(lamps[i], "Yaw") == angles[i], "lantern bracket rotates toward its wall: " + i);
             Check(ArenaBuilder.CellSignText == "преступление против вальхейма", "cell sign contains the requested Russian inscription");
-            report.AppendLine("PASS: Production layout planning covers both viewing openings with 32 solid glass panels, rotates all six lanterns and retains the requested cell inscription.");
+            report.AppendLine("PASS: Production layout planning covers both taller viewing openings with48 solid glass panels, rotates all six lanterns and retains the requested cell inscription.");
         }
 
         private static ItemDrop.ItemData Arrows(bool loan, int count, int x)
@@ -667,7 +668,7 @@ namespace ValheimModPack.PartyPrison.NativeVerification
                 && !ArenaBuilder.IsInsideCell(region, new Vector3(-4, 1, 0)), "cell safety excludes arena, retrieval lobby and the internal gate opening");
             MethodInfo solidBounds = typeof(ArenaBuilder).GetMethod("SolidBounds", All);
             Check(solidBounds != null, "construction uses its installed collider-bounds adapter");
-            foreach (string name in new[] { "iron_grate", "iron_wall_2x2", "stone_wall_2x1", "piece_bench01", "piece_chest" })
+            foreach (string name in new[] { "iron_grate", "iron_wall_2x2", "stone_wall_2x1", "stone_wall_4x2", "stone_floor_2x2", "stone_stair", "piece_bench01", "piece_chest" })
             {
                 GameObject prefab = PrefabManager.Instance.GetPrefab(name);
                 if (prefab == null && ZNetScene.instance != null) prefab = ZNetScene.instance.GetPrefab(name);

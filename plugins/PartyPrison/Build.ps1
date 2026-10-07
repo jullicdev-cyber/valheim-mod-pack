@@ -15,7 +15,7 @@ $assemblyOutput = Join-Path $buildDirectory 'PartyPrison.dll'
 # when a validation caller requests a candidate filename.
 $arguments = @('/nologo','/codepage:65001','/target:library','/optimize+',('/out:' + $assemblyOutput))
 $arguments += $refs | ForEach-Object { '/reference:' + $_ }
-$arguments += @('SentenceState.cs','SentenceStore.cs','CustodyStore.cs','CustodyWithdrawal.cs','BackpackAccess.cs','CustodyInventory.cs','Protocol.cs','PrisonWire.cs','PlacementPlan.cs','TerrainPlan.cs','TerrainLeveler.cs','ClearanceFootprint.cs','SiteClearer.cs','ForceClearance.cs','ArenaBuilder.cs','ArenaLayout.cs','CombatCatalog.cs','ArenaCombat.cs','CombatRuntime.cs','PrisonWindow.cs','Plugin.cs','CustodyRuntime.cs','WithdrawalRuntime.cs','Patches.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
+$arguments += @('SentenceState.cs','SentenceStore.cs','CustodyStore.cs','CustodyWithdrawal.cs','BackpackAccess.cs','CustodyInventory.cs','Protocol.cs','PrisonWire.cs','PlacementPlan.cs','TerrainPlan.cs','TerrainLeveler.cs','ClearanceFootprint.cs','SiteClearer.cs','ForceClearance.cs','ArenaBuilder.cs','ArenaLayout.cs','ArenaDefeatPenalty.cs','CombatCatalog.cs','ArenaCombat.cs','PrisonKitStorage.cs','CombatRuntime.cs','PrisonWindow.cs','PrisonContent.cs','PrisonConsole.cs','Plugin.cs','CustodyRuntime.cs','WithdrawalRuntime.cs','Patches.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
 & (Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe') @arguments
 if ($LASTEXITCODE -ne 0) { throw 'PartyPrison compilation failed.' }
 Copy-Item -LiteralPath $assemblyOutput -Destination $OutputFile -Force

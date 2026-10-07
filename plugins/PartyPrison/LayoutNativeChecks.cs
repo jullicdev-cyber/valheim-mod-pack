@@ -2,6 +2,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using System.Reflection;
 using HarmonyLib;
 using Jotunn.Managers;
@@ -20,7 +21,9 @@ namespace ValheimModPack.PartyPrison.NativeVerification
             check(Player.m_localPlayer == null && Game.instance == null, "layout fixture has no live character or world");
             CheckSignPermission(check);
             CheckCellLayout(check);
-            CheckMigrationSelection(check);
+            CheckExpandedLayout(check);
+            CheckCellFixtures(check);
+            CheckRebuildStorage(check);
         }
 
         private static bool SkipFixtureAwake(Component __instance)
@@ -141,8 +144,8 @@ namespace ValheimModPack.PartyPrison.NativeVerification
             typeof(ArenaBuilder).GetMethod("AppendCellFurniture", All).Invoke(null, new object[] { furniture, chestBounds, bedBounds });
             check(furniture.Count == 3, "cell furniture contains one chest, one sign and one bed");
             int beds = 0, chests = 0;
-            var region = new PrisonRegion { Center = new PrisonPoint(0, 4, 0), CellSpawn = new PrisonPoint(-8, 1, 0),
-                ArenaSpawn = new PrisonPoint(4, 1, 4), Radius = 18, HalfHeight = 8 };
+            var region = new PrisonRegion { Center = new PrisonPoint(0, 6, 0), CellSpawn = new PrisonPoint(-14, 1, 0),
+                ArenaSpawn = new PrisonPoint(4, 1, 4), Radius = 26, HalfHeight = 8 };
             foreach (object placement in furniture) {
                 string prefab = (string)Field(placement, "Prefab"); Vector3 offset = (Vector3)Field(placement, "Offset");
                 check(ArenaBuilder.IsInsideCell(region, offset + Vector3.up), "furniture remains inside the cell: " + prefab);
@@ -164,23 +167,24 @@ namespace ValheimModPack.PartyPrison.NativeVerification
                 Bounds placed = WorldBounds(placement, grille); bounds.Add(placed);
                 check((string)Field(placement, "Prefab") == "iron_wall_2x2" && (string)Field(placement, "Marker") == "VMP_PP_CellWall",
                     "cell wall replacement is a marked native metal grille");
-                check(placed.min.y >= -.01f && placed.max.y <= 8.05f, "metal cell walls stay within the floor and ceiling");
+                check(placed.min.y >= -.01f && placed.max.y <= 12.05f, "metal cell walls stay within the taller floor and ceiling");
                 Vector3 point = (Vector3)Field(placement, "Offset");
-                if (Mathf.Abs(point.z + 4f) < .01f && placed.min.y < gate.size.y - .02f)
-                    check(placed.max.x <= -9f + .03f || placed.min.x >= -7f - .03f, "release door retains its native two-metre clear opening");
-                if (Mathf.Abs(point.x + 4f) < .01f)
-                    check(placed.min.y >= gate.size.y - .02f, "internal gate header starts above the native gate leaf");
+                check(Mathf.Abs(point.x) < 17.99f && Mathf.Abs(point.z) < 17.99f, "metal partitions never replace the external stone shell");
+                if (Mathf.Abs(point.z + 10f) < .01f && point.x < -10f && placed.min.y < gate.size.y - .02f)
+                    check(placed.max.x <= -15f + .03f || placed.min.x >= -13f - .03f, "release door retains its native two-metre clear opening");
+                if (Mathf.Abs(point.x + 10f) < .01f && placed.min.y < gate.size.y - .02f)
+                    check(placed.max.z <= -1f + .03f || placed.min.z >= 1f - .03f, "internal gate retains its native two-metre clear opening");
             }
-            check(walls.Count >= 64 && walls.Count <= 68, "complete cell enclosure fits the bounded native-piece budget");
+            check(walls.Count >= 192 && walls.Count <= 198, "complete internal partitions fit the bounded native-piece budget");
             // Sample actual prefab collider bounds on three wall planes. This
             // verifies coverage rather than mirroring the loop's piece count.
-            for (float y = .125f; y < 8f; y += .5f) {
-                for (float z = -3.875f; z < 12f; z += .5f)
-                    check(Covered(bounds, new Vector3(-12f, y, z)), "west metal wall continuously covers its full cell height");
-                for (float x = -11.875f; x < -4f; x += .5f) {
-                    check(Covered(bounds, new Vector3(x, y, 12f)), "north metal wall continuously covers its full cell width");
-                    if (y >= gate.size.y || x <= -9f || x >= -7f)
-                        check(Covered(bounds, new Vector3(x, y, -4f)), "foyer divider is closed outside the native release doorway");
+            for (float y = .125f; y < 12f; y += .5f) {
+                for (float z = -9.875f; z < 18f; z += .5f)
+                    if (y >= gate.size.y || z <= -1f || z >= 1f)
+                        check(Covered(bounds, new Vector3(-10f, y, z)), "internal cell-arena grille is closed outside its native gate");
+                for (float x = -17.875f; x < 18f; x += .5f) {
+                    if (y >= gate.size.y || x <= -15f || x >= -13f)
+                        check(Covered(bounds, new Vector3(x, y, -10f)), "internal corridor divider is closed outside the release doorway");
                 }
             }
         }
@@ -194,24 +198,247 @@ namespace ValheimModPack.PartyPrison.NativeVerification
             return false;
         }
 
-        private static void CheckMigrationSelection(Action<bool, string> check)
+        private static void CheckExpandedLayout(Action<bool, string> check)
         {
-            MethodInfo select = typeof(ArenaBuilder).GetMethod("IsOldCellStoneWall", All);
-            check(select != null, "upgrade uses a scoped old-cell-wall selection predicate");
-            int stone = "stone_wall_4x2".GetStableHashCode(), small = "stone_wall_2x1".GetStableHashCode();
-            foreach (float z in new[] { -2f, 2f, 6f, 10f })
-                check((bool)select.Invoke(null, new object[] { stone, -12f, z }), "old west cell wall is selected for metal replacement");
-            foreach (float x in new[] { -10f, -6f }) {
-                check((bool)select.Invoke(null, new object[] { stone, x, 12f }), "old north cell wall is selected for metal replacement");
-                check((bool)select.Invoke(null, new object[] { stone, x, -4f }), "old stone cell divider is selected for replacement");
+            var prefabBounds = new Dictionary<string, Bounds>();
+            foreach (string name in new[] { "stone_floor_2x2", "stone_wall_4x2", "stone_wall_2x1", "stone_stair", "iron_wall_2x2", "iron_grate", "piece_bench01",
+                ArenaBuilder.CustodyPrefab, "piece_dvergr_lantern", "crystal_wall_1x1", "sign", "bed" })
+                prefabBounds[name] = SolidBounds(Prefab(name));
+            IList plan = (IList)typeof(ArenaBuilder).GetMethod("CreateLayoutPlan", All).Invoke(null, new object[] { prefabBounds });
+            check(plan.Count + 6 <= 1280, "expanded native floor, roof, scenery, storage and two cell fixtures fit the hard piece budget");
+            var floors = new List<Bounds>(); var roof = new List<Bounds>(); var shell = new List<Bounds>();
+            var obstacles = new List<Bounds>(); var windows = new List<Bounds>(); int stairs = 0;
+            foreach (object placement in plan) {
+                string name = (string)Field(placement, "Prefab");
+                if (name == "sign" || name == "piece_dvergr_lantern" || name == "bed" || name == "piece_bench01" || name == ArenaBuilder.CustodyPrefab) continue;
+                Bounds b = WorldBounds(placement, prefabBounds[name]); Vector3 offset = (Vector3)Field(placement, "Offset");
+                if (name == "stone_floor_2x2" && b.max.y < .01f) floors.Add(b);
+                else if (name == "stone_floor_2x2" && b.min.y > 11.99f) roof.Add(b);
+                else if (Mathf.Abs(offset.x) >= 17.99f || Mathf.Abs(offset.z) >= 17.99f) {
+                    shell.Add(b); check(name.StartsWith("stone_") || name == "crystal_wall_1x1", "every exterior collider is stone or spectator crystal");
+                }
+                else if (name.StartsWith("stone_")) obstacles.Add(b);
+                if (name == "crystal_wall_1x1") windows.Add(b);
+                if (name == "stone_stair") ++stairs;
             }
-            check((bool)select.Invoke(null, new object[] { small, -8f, -4f })
-                && (bool)select.Invoke(null, new object[] { small, -4f, 0f }), "both old stone gate headers become metal");
-            foreach (Vector2 position in new[] { new Vector2(-12, -10), new Vector2(-10, -12), new Vector2(2, -4), new Vector2(12, 6), new Vector2(10, 12) })
-                check(!(bool)select.Invoke(null, new object[] { stone, position.x, position.y }), "upgrade preserves public foyer and unrelated arena stone walls");
-            int chest = ArenaBuilder.CustodyPrefab.GetStableHashCode();
-            foreach (Vector2 position in new[] { new Vector2(-6, -10), new Vector2(-2, -10), new Vector2(2, -10), new Vector2(6, -10), new Vector2(-10, 3) })
-                check(!(bool)select.Invoke(null, new object[] { chest, position.x, position.y }), "wall migration never selects any existing property or kit chest for destruction");
+            check(stairs >= 2 && obstacles.Count > 20, "native stone stairs and solid raised levels add varied battle routes");
+            for (float x = -17.75f; x < 18f; x += 1f)
+                for (float z = -17.75f; z < 18f; z += 1f) {
+                    check(Covered(floors, new Vector3(x, 0f, z)), "expanded room has a continuous solid floor");
+                    check(Covered(roof, new Vector3(x, 12f, z)), "expanded room has a continuous solid ceiling");
+                }
+            for (float y = .125f; y < 12f; y += .5f)
+                for (float along = -17.875f; along < 18f; along += .5f) {
+                    check(Covered(shell, new Vector3(along, y, -18f)), "south stone shell has no open gaps");
+                    check(Covered(shell, new Vector3(along, y, 18f)), "north shell remains solid through stone and crystal");
+                    check(Covered(shell, new Vector3(18f, y, along)), "east shell remains solid through stone and crystal");
+                    if (y >= 4f || along <= -15f || along >= -13f)
+                        check(Covered(shell, new Vector3(-18f, y, along)), "west shell is stone outside the public doorway");
+                }
+            for (float y = .125f; y < 3f; y += .25f)
+                for (float along = 2.125f; along < 10f; along += .5f) {
+                    check(Covered(windows, new Vector3(along, y, 18f)), "north spectator glass is one native1m block taller");
+                    check(Covered(windows, new Vector3(18f, y, along)), "east spectator glass is one native1m block taller");
+                }
+            var expanded = new PrisonRegion { Center = new PrisonPoint(0, 6, 0), CellSpawn = new PrisonPoint(-14, 1, 0),
+                ArenaSpawn = new PrisonPoint(4, 1, 4), Radius = 26, HalfHeight = 8 };
+            foreach (int index in new[] { 0, 1, 2, 3, 4, 5, 6, 7 }) {
+                PrisonPoint p = ArenaGeometry.Spawn(expanded, index); Vector3 point = new Vector3((float)p.X, (float)p.Y, (float)p.Z);
+                check(ArenaBuilder.IsInsideArena(expanded, point), "native confinement accepts each multi-side enemy spawn");
+                foreach (Bounds b in obstacles) {
+                    Bounds broad = b; broad.Expand(new Vector3(1.1f, 1.1f, 1.1f));
+                    check(!broad.Contains(point), "spawn capsule stays outside all native retaining walls, cover and stairs");
+                }
+            }
+            var old = new PrisonRegion { Center = new PrisonPoint(0, 4, 0), CellSpawn = new PrisonPoint(-8, 1, 0),
+                ArenaSpawn = new PrisonPoint(4, 1, 4), Radius = 18, HalfHeight = 8 };
+            check(!ArenaBuilder.ContainsRoom(old, new Vector3(15, 1, 15)) && ArenaBuilder.ContainsRoom(expanded, new Vector3(15, 1, 15)),
+                "older saved prisons keep their physical containment until an explicit confirmed rebuild");
+            check(ArenaBuilder.IsInsideCell(old, new Vector3(-6, 1, 7)) && ArenaBuilder.IsInsideCell(expanded, new Vector3(-14, 1, -6)),
+                "legacy and expanded console approaches both lie inside the cell");
+        }
+
+        private static ZDO StorageZdo(uint id, string prefab, string marker, int custodyIndex, Vector3 position)
+        {
+            var zdo = new ZDO { m_uid = new ZDOID(-643591872, id) }; fixtureZdos.Add(zdo);
+            typeof(ZDO).GetField("m_prefab", All).SetValue(zdo, prefab.GetStableHashCode());
+            typeof(ZDO).GetField("m_position", All).SetValue(zdo, position); zdo.Set(ArenaBuilder.ProtectedKey, true);
+            if (marker != null) zdo.Set(marker, true);
+            if (custodyIndex >= 0) zdo.Set(ArenaBuilder.CustodyIndexKey, custodyIndex);
+            return zdo;
+        }
+
+        private static object FixturePlacement(string prefab, Vector3 position, float yaw)
+        { return Activator.CreateInstance(typeof(ArenaBuilder).GetNestedType("Placement", All), All, null, new object[] { prefab, position, yaw }, null); }
+
+        private static void CheckCellFixtures(Action<bool, string> check)
+        {
+            GameObject firePrefab = Prefab(PrisonContent.PrisonCampfirePrefab), bedPrefab = Prefab("bed");
+            Bounds console = SolidBounds(Prefab(PrisonConsole.PrefabName)), fire = SolidBounds(firePrefab);
+            Bounds bed = SolidBounds(Prefab("bed")), chest = SolidBounds(Prefab(ArenaBuilder.CustodyPrefab));
+            foreach (bool expanded in new[] { false, true }) {
+                var region = new PrisonRegion { Center = new PrisonPoint(0, expanded ? 6 : 4, 0), CellSpawn = new PrisonPoint(expanded ? -14 : -8, 1, 0),
+                    ArenaSpawn = new PrisonPoint(4, 1, 4), Radius = expanded ? 26 : 18, HalfHeight = 8 };
+                Vector3 controlPoint = expanded ? new Vector3(-14, -console.min.y, -6) : new Vector3(-6, -console.min.y, 7);
+                Vector3 firePoint = expanded ? new Vector3(-14, -fire.min.y, 13) : new Vector3(-7, -fire.min.y, 10);
+                Vector3 bedPoint = expanded ? new Vector3(-16, -bed.min.y, 16) : new Vector3(-10, -bed.min.y, 10);
+                Vector3 chestPoint = new Vector3(expanded ? -16 : -10, -chest.min.y, 3);
+                Bounds controlBox = WorldBounds(FixturePlacement(PrisonConsole.PrefabName, controlPoint, 0), console);
+                Bounds fireBox = WorldBounds(FixturePlacement(PrisonContent.PrisonCampfirePrefab, firePoint, 0), fire);
+                Bounds bedBox = WorldBounds(FixturePlacement("bed", bedPoint, 90), bed);
+                Bounds chestBox = WorldBounds(FixturePlacement(ArenaBuilder.CustodyPrefab, chestPoint, 90), chest);
+                check(!controlBox.Intersects(fireBox) && !controlBox.Intersects(bedBox) && !controlBox.Intersects(chestBox),
+                    "console native colliders do not overlap the fire, bed or equipment storage in " + (expanded ? "expanded" : "legacy") + " cell");
+                check(!fireBox.Intersects(bedBox) && !fireBox.Intersects(chestBox),
+                    "permanent campfire native colliders remain clear of bedding and belongings in " + (expanded ? "expanded" : "legacy") + " cell");
+                float divider = (float)ArenaGeometry.Divider(region), half = (float)ArenaGeometry.RoomHalfWidth(region);
+                foreach (Bounds fixture in new[] { controlBox, fireBox }) {
+                    check(fixture.min.x > -half && fixture.max.x < divider && fixture.min.z > divider && fixture.max.z < half,
+                        "complete cell fixture stays inside stone shell and internal iron partitions");
+                    check(Mathf.Abs(fixture.min.y) < .01f, "cell fixture native collider is aligned with the finished floor");
+                }
+                check((firePoint - bedPoint).sqrMagnitude < 16f, "campfire is placed close to the bed for resting warmth");
+                Bed nativeBed = bedPrefab.GetComponent<Bed>();
+                Vector3 lyingPoint = bedPoint + Quaternion.Euler(0, 90, 0) * bedPrefab.transform.InverseTransformPoint(nativeBed.m_spawnPoint.position)
+                    + Vector3.up * .5f;
+                bool warmed = false;
+                foreach (EffectArea area in firePrefab.GetComponentsInChildren<EffectArea>(true)) {
+                    if ((area.m_type & EffectArea.Type.Heat) == 0) continue;
+                    foreach (Collider collider in area.GetComponents<Collider>()) {
+                        string shape = collider is SphereCollider ? "sphere radius=" + ((SphereCollider)collider).radius.ToString("F2")
+                            : collider is BoxCollider ? "box size=" + ((BoxCollider)collider).size.ToString("F2") : collider.GetType().Name;
+                        Debug.Log("[Party Prison native layout] " + (expanded ? "expanded" : "legacy") + " campfire heat " + shape
+                            + "; bed attachment relative to fire=" + (lyingPoint - firePoint).ToString("F2"));
+                        check(collider.isTrigger, "native permanent fire heat uses a trigger volume: " + shape);
+                        if (InsideNativeHeat(firePrefab, collider, lyingPoint - firePoint)) warmed = true;
+                    }
+                }
+                check(warmed, "native campfire heat collider covers the bed attachment in " + (expanded ? "expanded" : "legacy") + " cell");
+                check(ArenaBuilder.IsInsideCell(region, new Vector3(controlPoint.x, 1, controlPoint.z))
+                    && ArenaBuilder.IsInsideCell(region, new Vector3(firePoint.x, 1, firePoint.z)), "legacy and expanded fixture approaches stay inside inmate cell permissions");
+            }
+        }
+
+        private static bool InsideNativeHeat(GameObject prefab, Collider collider, Vector3 fireLocalPoint)
+        {
+            Vector3 point = collider.transform.InverseTransformPoint(prefab.transform.TransformPoint(fireLocalPoint));
+            SphereCollider sphere = collider as SphereCollider;
+            if (sphere != null) return (point - sphere.center).sqrMagnitude <= sphere.radius * sphere.radius;
+            BoxCollider box = collider as BoxCollider;
+            if (box != null) { Vector3 delta = point - box.center; return Mathf.Abs(delta.x) <= box.size.x * .5f && Mathf.Abs(delta.y) <= box.size.y * .5f && Mathf.Abs(delta.z) <= box.size.z * .5f; }
+            CapsuleCollider capsule = collider as CapsuleCollider;
+            if (capsule != null) {
+                Vector3 delta = point - capsule.center; float half = Mathf.Max(0f, capsule.height * .5f - capsule.radius);
+                if (capsule.direction == 0) delta.x -= Mathf.Clamp(delta.x, -half, half);
+                else if (capsule.direction == 1) delta.y -= Mathf.Clamp(delta.y, -half, half);
+                else delta.z -= Mathf.Clamp(delta.z, -half, half);
+                return delta.sqrMagnitude <= capsule.radius * capsule.radius;
+            }
+            return false;
+        }
+
+        private static byte[] StoragePayload(bool withWood)
+        {
+            var inventory = new Inventory("PartyPrison.RebuildStorageFixture", null, 8, 4);
+            if (withWood) {
+                GameObject prefab = Prefab("Wood"); ItemDrop.ItemData item = prefab.GetComponent<ItemDrop>().m_itemData.Clone();
+                item.m_dropPrefab = prefab; item.m_stack = 1; item.m_gridPos = new Vector2i(0, 0);
+                inventory.AddItem(item);
+            }
+            var package = new ZPackage(); inventory.Save(package); return package.GetArray();
+        }
+
+        private static byte[] MissingStoragePrefab(byte[] valid)
+        {
+            byte[] altered = (byte[])valid.Clone();
+            using (var stream = new MemoryStream(altered, true)) using (var reader = new BinaryReader(stream)) {
+                int version = reader.ReadInt32();
+                if (version != 108 && version != 109 || reader.ReadUInt16() != 1) throw new InvalidOperationException("Unexpected native storage fixture format.");
+                reader.ReadInt32(); reader.ReadByte(); reader.ReadByte(); reader.ReadByte(); int flags = reader.ReadByte();
+                if ((flags & 4) != 0) reader.ReadUInt16(); if ((flags & 8) != 0) reader.ReadUInt16();
+                if ((flags & 16) != 0) reader.ReadInt32();
+                if ((flags & 32) != 0) { reader.ReadInt64(); reader.ReadString(); }
+                if ((flags & 64) == 0) throw new InvalidOperationException("Storage fixture has no prefab field.");
+                Array.Copy(BitConverter.GetBytes("vmp_missing_rebuild_fixture_item".GetStableHashCode()), 0, altered, (int)stream.Position, 4);
+            }
+            return altered;
+        }
+
+        private static bool StorageRejected(MethodInfo guard, PrisonRegion region, List<ZDO> objects, int version,
+            Func<int, GameObject> prefabs, Func<ZDO, Container> loaded)
+        {
+            try { guard.Invoke(null, new object[] { region, objects, version, prefabs, loaded }); return false; }
+            catch (TargetInvocationException error) {
+                if (error.InnerException is InvalidOperationException || error.InnerException is InvalidDataException || error.InnerException is FormatException) return true;
+                throw;
+            }
+        }
+
+        private static void CheckRebuildStorage(Action<bool, string> check)
+        {
+            var harmony = new Harmony("valheimmodpack.partyprison.nativeprobe.rebuild-storage");
+            var records = new List<ZDO>();
+            try {
+                harmony.Patch(typeof(ZDO).GetMethod("IncreaseDataRevision", All),
+                    prefix: new HarmonyMethod(typeof(LayoutNativeChecks).GetMethod("DetachedRevision", All)));
+                MethodInfo guard = typeof(ArenaBuilder).GetMethod("RequireEmptyStoredContainers", All, null,
+                    new[] { typeof(PrisonRegion), typeof(IList<ZDO>), typeof(int), typeof(Func<int, GameObject>), typeof(Func<ZDO, Container>) }, null);
+                check(guard != null, "rebuild guard validates captured native ZDO storage independently of current layout version");
+                var region = new PrisonRegion { Center = new PrisonPoint(0, 4, 0), CellSpawn = new PrisonPoint(-8, 1, 0),
+                    ArenaSpawn = new PrisonPoint(4, 1, 4), Radius = 18, HalfHeight = 8 };
+                for (int index = 0; index < 4; ++index)
+                    records.Add(StorageZdo((uint)(100 + index), ArenaBuilder.CustodyPrefab, ArenaBuilder.CustodyKey, index, new Vector3(-6 + index * 4, 0, -10)));
+                ZDO kit = StorageZdo(104, ArenaBuilder.CustodyPrefab, ArenaBuilder.KitKey, -1, new Vector3(-10, 0, 3)); records.Add(kit);
+                ZDO armory = StorageZdo(105, ArenaBuilder.CustodyPrefab, null, -1, new Vector3(6, 0, 6)); armory.Set(ArenaBuilder.ArmoryKey, true); records.Add(armory);
+                ZDO stone = StorageZdo(106, "stone_wall_4x2", null, -1, new Vector3(12, 0, 2)); records.Add(stone);
+                byte[] empty = StoragePayload(false), occupied = StoragePayload(true);
+                foreach (ZDO zdo in records) if (zdo != stone) zdo.Set(ZDOVars.s_items, empty);
+                Func<int, GameObject> prefabs = hash => hash == ArenaBuilder.CustodyPrefab.GetStableHashCode() ? Prefab(ArenaBuilder.CustodyPrefab)
+                    : hash == "stone_wall_4x2".GetStableHashCode() ? Prefab("stone_wall_4x2") : null;
+                Func<ZDO, Container> loaded = zdo => null;
+                check(!StorageRejected(guard, region, records, 4, prefabs, loaded), "empty v4 custody, kit and legacy armory storage can be explicitly rebuilt");
+                check(!StorageRejected(guard, region, records, 5, prefabs, loaded), "new-version empty storage obeys the same safe rebuild guard");
+                records.Add(records[0]);
+                check(!StorageRejected(guard, region, records, 4, prefabs, loaded), "overlapping protected and armory captures deduplicate the same native ZDO ID");
+                records.RemoveAt(records.Count - 1);
+                kit.Set(ZDOVars.s_items, occupied);
+                check(StorageRejected(guard, region, records, 4, prefabs, loaded), "ordinary deposited belongings in the equipment chest block a v4 rebuild");
+                check(Convert.ToBase64String(kit.GetByteArray(ZDOVars.s_items, null)) == Convert.ToBase64String(occupied), "rejecting equipment storage preserves its exact saved native payload");
+                kit.Set(ZDOVars.s_items, empty); records[2].Set(ZDOVars.s_items, occupied);
+                check(StorageRejected(guard, region, records, 4, prefabs, loaded), "custody belongings block rebuilding an older saved layout");
+                records[2].Set(ZDOVars.s_items, empty);
+                records.Remove(records[3]);
+                check(StorageRejected(guard, region, records, 4, prefabs, loaded), "missing one of four permanent property chest records fails closed");
+                records.Insert(3, StorageZdo(107, ArenaBuilder.CustodyPrefab, ArenaBuilder.CustodyKey, 3, new Vector3(6, 0, -10)));
+                records[3].Set(ZDOVars.s_items, empty); records[3].Set(ArenaBuilder.CustodyIndexKey, 2);
+                check(StorageRejected(guard, region, records, 4, prefabs, loaded), "distinct property chests with duplicate permanent indexes fail closed");
+                records[3].Set(ArenaBuilder.CustodyIndexKey, 3);
+                armory.Set(ZDOVars.s_items, occupied);
+                check(StorageRejected(guard, region, records, 4, prefabs, loaded), "legacy marked armory containers also retain visitors' deposited belongings");
+                armory.Set(ZDOVars.s_items, empty); kit.Set(ZDOVars.s_items, MissingStoragePrefab(occupied));
+                check(StorageRejected(guard, region, records, 4, prefabs, loaded), "missing item prefab cannot masquerade as an empty equipment chest during rebuild");
+                kit.Set(ZDOVars.s_items, empty);
+                typeof(ZDO).GetField("m_prefab", All).SetValue(kit, "vmp_missing_saved_fixture_chest".GetStableHashCode());
+                check(StorageRejected(guard, region, records, 4, prefabs, loaded), "unknown saved protected chest prefab cancels destruction even before loading");
+                typeof(ZDO).GetField("m_prefab", All).SetValue(kit, ArenaBuilder.CustodyPrefab.GetStableHashCode());
+                ZDO legacy = StorageZdo(108, ArenaBuilder.CustodyPrefab, null, -1, new Vector3(6, 0, 6)); legacy.Set(ArenaBuilder.ArmoryKey, true);
+                var legacyOnly = new List<ZDO> { legacy };
+                legacy.Set(ZDOVars.s_items, Convert.ToBase64String(occupied));
+                check(StorageRejected(guard, region, legacyOnly, 1, prefabs, loaded), "native legacy base64 inventory protects early armory contents");
+                check(legacy.GetString(ZDOVars.s_items, "") == Convert.ToBase64String(occupied), "legacy storage rejection preserves the original string bytes");
+                legacy.Set(ZDOVars.s_items, "broken_base64!");
+                check(StorageRejected(guard, region, legacyOnly, 1, prefabs, loaded), "corrupt legacy inventory never becomes empty during explicit rebuild");
+                legacy.Set(ZDOVars.s_items, Convert.ToBase64String(empty));
+                check(!StorageRejected(guard, region, legacyOnly, 1, prefabs, loaded), "early layouts without four property chests remain safely rebuildable when native storage is empty");
+                typeof(ZDO).GetField("m_position", All).SetValue(legacy, new Vector3(50, 0, 50)); legacy.Set(ZDOVars.s_items, "broken_base64!");
+                check(!StorageRejected(guard, region, legacyOnly, 1, prefabs, loaded), "unrelated storage outside the exact old footprint does not block or enter its rebuild");
+            }
+            finally {
+                foreach (ZDO zdo in new List<ZDO>(fixtureZdos)) {
+                    typeof(ZDO).GetMethod("Reset", All).Invoke(zdo, null); fixtureZdos.Remove(zdo);
+                }
+                harmony.UnpatchSelf();
+            }
         }
     }
 }

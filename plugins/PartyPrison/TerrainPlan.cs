@@ -26,7 +26,7 @@ namespace ValheimModPack.PartyPrison
 
     public static class TerrainPlan
     {
-        public const double HalfWidth = 13.5d;
+        public const double HalfWidth = 19.5d;
         // Native heightmap vertex selection rounds to a metre. Protect this skirt as well as the visible square.
         public const double FootprintPadding = 1d;
         public const double AltarProtectionRadius = 27d;
@@ -59,10 +59,13 @@ namespace ValheimModPack.PartyPrison
         }
 
         public static double EnclosingExtent(double yawDegrees)
+        { return EnclosingExtent(yawDegrees, true); }
+
+        public static double EnclosingExtent(double yawDegrees, bool expanded)
         {
             if (!Finite(yawDegrees)) throw new ArgumentException("Неверное направление постройки.");
             double radians = yawDegrees * Math.PI / 180d;
-            return (HalfWidth + FootprintPadding) * (Math.Abs(Math.Cos(radians)) + Math.Abs(Math.Sin(radians)));
+            return ((expanded ? HalfWidth : 13.5d) + FootprintPadding) * (Math.Abs(Math.Cos(radians)) + Math.Abs(Math.Sin(radians)));
         }
 
         /// <summary>A virtual interior has physical floors, without an exterior terrain compiler to level.</summary>

@@ -3,6 +3,9 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Reflection.Emit;
+using BepInEx.Bootstrap;
+using HarmonyLib;
 using Jotunn.Managers;
 using UnityEngine;
 
@@ -59,7 +62,25 @@ namespace ValheimModPack.PartyPrison.NativeVerification
                             check(!item.m_customData.ContainsKey(ArenaBuilder.LoanKey), "ordinary native chest equipment avoids legacy pickup guards: " + name);
                         }
                     }
+                    for (int i = 0; i < loadout.FoodPrefabs.Length; ++i) {
+                        ItemDrop.ItemData source = Item(loadout.FoodSources[i], 1), food = Item(loadout.FoodPrefabs[i], 1);
+                        check(food.m_shared.m_food > 0 && food.m_shared.m_foodStamina > 0
+                            && (food.m_shared.m_food > food.m_shared.m_foodStamina) == (i < 2),
+                            "each enemy and grade offers two native health foods and two stamina foods: " + loadout.MobPrefab + "/" + difficulty);
+                        check(food.m_shared.m_food == source.m_shared.m_food && food.m_shared.m_foodStamina == source.m_shared.m_foodStamina
+                            && food.m_shared.m_foodBurnTime == source.m_shared.m_foodBurnTime && food.m_shared.m_foodRegen == source.m_shared.m_foodRegen
+                            && food.m_shared.m_foodEitr == source.m_shared.m_foodEitr && food.m_shared.m_name == source.m_shared.m_name
+                            && food.m_shared.m_icons.Length == source.m_shared.m_icons.Length && food.m_shared.m_icons[0] == source.m_shared.m_icons[0],
+                            "arena food keeps native benefits, duration, food identity and inventory icon: " + loadout.FoodPrefabs[i]);
+                        check(food.m_shared.m_maxStackSize == 1 && source.m_shared.m_maxStackSize > 1
+                            && !System.Object.ReferenceEquals(food.m_shared, source.m_shared), "arena ration cannot merge into personal food or alter its native definition");
+                    }
                 }
+            CheckFoodLoans(check);
+            CheckFoodDragging(check);
+            CheckConsole(check);
+            CheckCampfire(check);
+            CheckCampfireAutomaticFuel(check);
 
             const long world = 6789;
             string token = new string('1', 32), oldToken = new string('2', 32);
@@ -94,6 +115,260 @@ namespace ValheimModPack.PartyPrison.NativeVerification
                 "native save/reload preserves all farm loot and personal equipment after release");
             check(ArenaBuilder.RemoveObsoleteInventoryGear(restored, world, "", 0) == 0, "release cleanup is idempotent after native persistence");
             CheckBackpackReplacement(check);
+        }
+
+        private static void CheckConsole(Action<bool, string> check)
+        {
+            GameObject console = Prefab(PrisonConsole.PrefabName), hammer = Prefab("Hammer");
+            check(console != null && console.GetComponent<ZNetView>() != null && console.GetComponent<PrisonConsole>() != null
+                && console.GetComponentInChildren<Collider>() != null, "unique floor console has native network identity, collision and interaction");
+            check(console.GetComponentsInChildren<CraftingStation>(true).Length == 0 && console.GetComponentsInChildren<StationExtension>(true).Length == 0,
+                "arena console does not open workbench crafting or count as a crafting station");
+            check(console.GetComponent<Piece>() != null && !console.GetComponent<Piece>().m_canBeRemoved
+                && console.GetComponent<Piece>().m_resources.Length == 0, "console is a protected fixture without deconstruction rewards");
+            check(hammer != null && hammer.GetComponent<ItemDrop>() != null
+                && !hammer.GetComponent<ItemDrop>().m_itemData.m_shared.m_buildPieces.m_pieces.Contains(console), "console cannot be placed through the hammer menu");
+            check(!console.GetComponent<PrisonConsole>().ValidNetworkObject
+                && !console.GetComponent<PrisonConsole>().Interact(null, false, false), "inactive prefab cannot open prisoner UI or impersonate a world fixture");
+        }
+
+        private static void CheckFoodLoans(Action<bool, string> check)
+        {
+            const long world = 6789; string token = new string('4', 32), oldToken = new string('5', 32);
+            var inventory = new Inventory("PartyPrison.FoodNative", null, 8, 4);
+            ItemDrop.ItemData personal = Item("Sausages", 7), oldFood = Gear(CombatCatalog.FoodPrefab("Sausages"), world, token, 1);
+            ItemDrop.ItemData active = Gear(CombatCatalog.FoodPrefab("Sausages"), world, token, 2);
+            ItemDrop.ItemData future = Gear(CombatCatalog.FoodPrefab("Sausages"), world, token, 3);
+            ItemDrop.ItemData previousSentence = Gear(CombatCatalog.FoodPrefab("TurnipStew"), world, oldToken, 1);
+            ItemDrop.ItemData otherWorld = Gear(CombatCatalog.FoodPrefab("TurnipStew"), world + 1, token, 1);
+            ItemDrop.ItemData noTag = Item(CombatCatalog.FoodPrefab("ShocklateSmoothie"), 1);
+            foreach (ItemDrop.ItemData item in new[] { personal, oldFood, active, future, previousSentence, otherWorld, noTag })
+                check(inventory.AddItem(item), "native food fixture inserts each separate serving and personal stack");
+            check(inventory.GetAllItems().Count == 7 && personal.m_stack == 7 && oldFood.m_stack == 1,
+                "same-named native sausages and arena sausages remain separate when loan food is inserted");
+            check(inventory.AddItem(Item("Sausages", 2)) && personal.m_stack == 9 && oldFood.m_stack == 1,
+                "personal food added later joins its native stack and cannot contaminate a tagged ration");
+            check(ArenaBuilder.IsGeneratedGear(oldFood) && !ArenaBuilder.IsGeneratedGear(personal) && !ArenaBuilder.IsGeneratedGear(noTag),
+                "only recognized food prefabs with valid loan provenance participate in expiration");
+            check(ArenaBuilder.RemoveObsoleteInventoryGear(inventory, world, token, 2) == 2
+                && inventory.GetAllItems().Contains(active) && inventory.GetAllItems().Contains(future), "food from old equipment revisions and sentences expires while current and future servings survive");
+            var saved = new ZPackage(); inventory.Save(saved);
+            var restored = new Inventory("PartyPrison.FoodRestored", null, 8, 4); restored.Load(new ZPackage(saved.GetArray()));
+            check(ArenaBuilder.RemoveObsoleteInventoryGear(restored, world, "", 0) == 2 && restored.GetAllItems().Count == 3,
+                "native persisted food provenance removes remaining current and future loan servings on release");
+            check(restored.GetAllItems().Any(item => item.m_dropPrefab.name == "Sausages" && item.m_stack == 9)
+                && restored.GetAllItems().Any(item => item.m_customData.ContainsKey(ArenaBuilder.GearKey))
+                && restored.GetAllItems().Any(item => item.m_dropPrefab.name == CombatCatalog.FoodPrefab("ShocklateSmoothie")),
+                "release preserves personal food, other-world rations and untagged data");
+            check(ArenaBuilder.RemoveObsoleteInventoryGear(restored, world, "", 0) == 0, "loan food cleanup is idempotent after save and release");
+        }
+
+        private static readonly HashSet<Inventory> foodDragInventories = new HashSet<Inventory>();
+        private static int foodDragBodyCalls;
+        private static void CountFoodDragBody(Inventory inventory)
+        { if (foodDragInventories.Contains(inventory)) ++foodDragBodyCalls; }
+        private static IEnumerable<CodeInstruction> ProbeFoodDragBody(IEnumerable<CodeInstruction> instructions)
+        {
+            yield return new CodeInstruction(OpCodes.Ldarg_0);
+            yield return new CodeInstruction(OpCodes.Call, typeof(CombatNativeChecks).GetMethod("CountFoodDragBody", FireFixtureFlags));
+            foreach (CodeInstruction instruction in instructions) yield return instruction;
+        }
+
+        private static void RejectFoodDrag(Action<bool, string> check, Inventory destination, Inventory source,
+            ItemDrop.ItemData item, int amount, Vector2i position, string label)
+        {
+            byte[] sourceBefore = Save(source), destinationBefore = Save(destination);
+            ItemDrop.ItemData[] sourceItems = source.GetAllItems().ToArray(), destinationItems = destination.GetAllItems().ToArray();
+            int beforeCalls = foodDragBodyCalls;
+            check(!destination.MoveItemToThis(source, item, amount, position.x, position.y), "native manual drag rejects mixed food prefabs: " + label);
+            check(foodDragBodyCalls == beforeCalls, "mixed food drag is blocked before native target-capacity or quantity mutation: " + label);
+            check(Save(source).SequenceEqual(sourceBefore) && Save(destination).SequenceEqual(destinationBefore)
+                && source.GetAllItems().SequenceEqual(sourceItems) && destination.GetAllItems().SequenceEqual(destinationItems),
+                "rejected food drag preserves both inventories, item identities, amounts, coordinates and provenance: " + label);
+        }
+
+        private static void CheckFoodDragging(Action<bool, string> check)
+        {
+            MethodInfo slotAdd = AccessTools.Method(typeof(Inventory), "AddItem",
+                new[] { typeof(ItemDrop.ItemData), typeof(int), typeof(int), typeof(int), typeof(bool) });
+            check(slotAdd != null && slotAdd.ReturnType == typeof(bool), "food drag fixture uses the actual native slot-add ABI");
+            Patches patches = Harmony.GetPatchInfo(slotAdd);
+            check(patches != null && patches.Prefixes.Any(patch => patch.owner == Plugin.Id
+                && patch.PatchMethod.DeclaringType.FullName == "ValheimModPack.PartyPrison.SlotStackIsolationPatch"),
+                "food drag guard is installed on native slot-add, including InventoryGui drag transfers");
+            var fixture = new Harmony("valheimmodpack.partyprison.nativeprobe.fooddrag");
+            try {
+                fixture.Patch(slotAdd, transpiler: new HarmonyMethod(typeof(CombatNativeChecks).GetMethod("ProbeFoodDragBody", FireFixtureFlags)));
+                const long world = 6789; string token = new string('6', 32);
+                foreach (string sourceName in CombatCatalog.AllFoodSources()) {
+                    var personalInventory = new Inventory("PartyPrison.PersonalFoodDrag", null, 8, 4);
+                    var rationInventory = new Inventory("PartyPrison.RationFoodDrag", null, 8, 4);
+                    foodDragInventories.Add(personalInventory); foodDragInventories.Add(rationInventory);
+                    ItemDrop.ItemData personal = Item(sourceName, 7), ration = Gear(CombatCatalog.FoodPrefab(sourceName), world, token, 2);
+                    personal.m_customData["food_drag_personal"] = sourceName;
+                    check(personalInventory.AddItem(personal) && rationInventory.AddItem(ration), "drag fixture inserts personal food and separately tagged ration: " + sourceName);
+                    RejectFoodDrag(check, personalInventory, rationInventory, ration, 1, personal.m_gridPos, sourceName + " ration onto personal stack");
+                    RejectFoodDrag(check, rationInventory, personalInventory, personal, 2, ration.m_gridPos, sourceName + " personal split onto ration");
+                    ItemDrop.ItemData secondRation = Gear(CombatCatalog.FoodPrefab(sourceName), world, token, 2);
+                    check(personalInventory.AddItem(secondRation), "same-prefab ration fixture inserts a separate valid serving");
+                    byte[] fullTarget = Save(personalInventory), unchangedSource = Save(rationInventory);
+                    int beforeCalls = foodDragBodyCalls;
+                    check(!personalInventory.MoveItemToThis(rationInventory, ration, 1, secondRation.m_gridPos.x, secondRation.m_gridPos.y)
+                        && foodDragBodyCalls == beforeCalls + 1 && Save(personalInventory).SequenceEqual(fullTarget)
+                        && Save(rationInventory).SequenceEqual(unchangedSource),
+                        "same-prefab serving reaches the native capacity rule without a custom refusal or provenance loss: " + sourceName);
+                    check(personalInventory.RemoveItem(secondRation), "same-prefab capacity fixture removes only its own extra serving");
+                    byte[] unchangedPersonal = Save(personalInventory);
+                    beforeCalls = foodDragBodyCalls;
+                    check(personalInventory.MoveItemToThis(rationInventory, ration, 1, 1, 0) && foodDragBodyCalls == beforeCalls + 1,
+                        "a ration may be dragged into an empty native inventory slot: " + sourceName);
+                    ItemDrop.ItemData moved = personalInventory.GetItemAt(1, 0);
+                    check(rationInventory.GetAllItems().Count == 0 && personalInventory.GetAllItems().Count == 2 && personal.m_stack == 7
+                        && System.Object.ReferenceEquals(personalInventory.GetItemAt(personal.m_gridPos.x, personal.m_gridPos.y), personal)
+                        && moved != null && moved.m_stack == 1 && moved.m_dropPrefab == ration.m_dropPrefab
+                        && moved.m_customData[ArenaBuilder.GearKey] == ration.m_customData[ArenaBuilder.GearKey]
+                        && moved.m_customData[ArenaBuilder.KitStockKey] == token,
+                        "accepted empty-slot transfer retains ration metadata and the original personal item: " + sourceName);
+                    beforeCalls = foodDragBodyCalls;
+                    check(personalInventory.MoveItemToThis(personalInventory, moved, 1, 2, 0) && foodDragBodyCalls == beforeCalls + 1,
+                        "a ration can be rearranged within the same inventory: " + sourceName);
+                    ItemDrop.ItemData rearranged = personalInventory.GetItemAt(2, 0);
+                    check(personalInventory.GetItemAt(1, 0) == null && personalInventory.GetAllItems().Count == 2
+                        && rearranged != null && rearranged.m_stack == 1 && rearranged.m_customData[ArenaBuilder.GearKey] == ration.m_customData[ArenaBuilder.GearKey],
+                        "same-inventory drag keeps exactly one tagged serving: " + sourceName);
+                    check(ArenaBuilder.RemoveObsoleteInventoryGear(personalInventory, world, "", 0) == 1
+                        && Save(personalInventory).SequenceEqual(unchangedPersonal) && personalInventory.GetAllItems().Single() == personal,
+                        "dragged ration still expires and leaves the full original personal inventory unchanged: " + sourceName);
+                    foodDragInventories.Remove(personalInventory); foodDragInventories.Remove(rationInventory);
+                }
+                foreach (string name in new[] { "Sausages", "ArrowWood" }) {
+                    var source = new Inventory("PartyPrison.OrdinaryDragSource", null, 8, 4);
+                    var destination = new Inventory("PartyPrison.OrdinaryDragDestination", null, 8, 4);
+                    foodDragInventories.Add(source); foodDragInventories.Add(destination);
+                    ItemDrop.ItemData incoming = Item(name, 7), target = Item(name, 3);
+                    incoming.m_customData["ordinary_drag_source"] = "retain"; target.m_customData["ordinary_drag_target"] = "retain";
+                    check(source.AddItem(incoming) && destination.AddItem(target), "ordinary food/arrow drag fixtures insert native stacks");
+                    int beforeCalls = foodDragBodyCalls;
+                    check(destination.MoveItemToThis(source, incoming, 2, target.m_gridPos.x, target.m_gridPos.y)
+                        && foodDragBodyCalls == beforeCalls + 1 && incoming.m_stack == 5 && target.m_stack == 5
+                        && source.GetAllItems().Single() == incoming && destination.GetAllItems().Single() == target
+                        && incoming.m_customData.ContainsKey("ordinary_drag_source") && target.m_customData.ContainsKey("ordinary_drag_target"),
+                        "ordinary native split-and-stack preserves counts and both item identities: " + name);
+                    beforeCalls = foodDragBodyCalls;
+                    check(destination.MoveItemToThis(source, incoming, 2, 1, 0) && foodDragBodyCalls == beforeCalls + 1
+                        && incoming.m_stack == 3 && target.m_stack == 5 && source.GetAllItems().Single() == incoming
+                        && destination.GetItemAt(1, 0).m_stack == 2 && destination.GetItemAt(1, 0).m_customData.ContainsKey("ordinary_drag_source"),
+                        "ordinary native stack splitting into an empty slot is unchanged: " + name);
+                    foodDragInventories.Remove(source); foodDragInventories.Remove(destination);
+                }
+            }
+            finally { foodDragInventories.Clear(); foodDragBodyCalls = 0; fixture.UnpatchSelf(); }
+        }
+
+        private static void CheckCampfire(Action<bool, string> check)
+        {
+            GameObject source = Prefab("fire_pit"), prefab = Prefab(PrisonContent.PrisonCampfirePrefab), hammer = Prefab("Hammer");
+            check(source != null && source.GetComponent<Fireplace>() != null && prefab != null
+                && prefab.GetComponent<Fireplace>() != null && prefab.GetComponent<ZNetView>() != null,
+                "prison campfire uses a separate native-networked Fireplace prefab");
+            Fireplace fire = prefab.GetComponent<Fireplace>(), original = source.GetComponent<Fireplace>();
+            check(fire.m_infiniteFuel && fire.m_secPerFuel == 0f && fire.m_startFuel == 0f && fire.m_maxFuel == 0f
+                && !fire.m_canRefill && !fire.m_canTurnOff && fire.m_disableCoverCheck && fire.m_igniteInterval == 0f,
+                "enclosed-cell fire remains lit without fuel consumption, periodic fuel-time writes or ignition spread");
+            check(fire.m_smokeSpawner == null && prefab.GetComponentsInChildren<SmokeSpawner>(true).Length == 0,
+                "cell campfire cannot emit native suffocating smoke volumes under its stone roof");
+            check(prefab.GetComponent<Piece>() != null && !prefab.GetComponent<Piece>().m_canBeRemoved
+                && prefab.GetComponent<Piece>().m_resources.Length == 0
+                && !hammer.GetComponent<ItemDrop>().m_itemData.m_shared.m_buildPieces.m_pieces.Contains(prefab),
+                "cell fire is a protected fixture without hammer placement or dismantling rewards");
+            EffectArea[] nativeAreas = source.GetComponentsInChildren<EffectArea>(true), cloneAreas = prefab.GetComponentsInChildren<EffectArea>(true);
+            check(nativeAreas.Length == cloneAreas.Length && nativeAreas.Length > 0,
+                "smokeless campfire retains its native heat/rest and other effect areas");
+            bool heat = false;
+            for (int i = 0; i < nativeAreas.Length; ++i) {
+                check(nativeAreas[i].m_type == cloneAreas[i].m_type && nativeAreas[i].m_statusEffect == cloneAreas[i].m_statusEffect,
+                    "native campfire effect-area semantics remain unchanged in the cell clone");
+                if ((cloneAreas[i].m_type & EffectArea.Type.Heat) != 0) heat = true;
+            }
+            check(heat && fire.m_enabledObject != null && fire.m_enabledObject != original.m_enabledObject
+                && prefab.GetComponentsInChildren<Light>(true).Length == source.GetComponentsInChildren<Light>(true).Length
+                && prefab.GetComponentsInChildren<Component>(true).Count(value => value.GetType().FullName == "UnityEngine.ParticleSystem")
+                    == source.GetComponentsInChildren<Component>(true).Count(value => value.GetType().FullName == "UnityEngine.ParticleSystem"),
+                "cell fire keeps separate native flame visuals, lights, particles and heat");
+            check(original.m_smokeSpawner != null && source.GetComponentsInChildren<SmokeSpawner>(true).Length > 0
+                && !original.m_infiniteFuel && original.m_secPerFuel > 0f,
+                "ordinary campfire smoke and fuel behavior is untouched by the prison clone");
+        }
+
+        private const BindingFlags FireFixtureFlags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
+        private static GameObject fireFixtureObject;
+        private static ZDO fireFixtureZdo;
+        private static int vendorBodyCalls;
+
+        private static bool SkipFireFixtureAwake(Component __instance)
+        { return __instance == null || __instance.gameObject != fireFixtureObject; }
+        private static bool SkipFireFixtureRevision(ZDO __instance)
+        { return !System.Object.ReferenceEquals(__instance, fireFixtureZdo); }
+        private static void CountVendorBody() { ++vendorBodyCalls; }
+        private static IEnumerable<CodeInstruction> VendorBodyProbe(IEnumerable<CodeInstruction> instructions)
+        {
+            yield return new CodeInstruction(OpCodes.Call, typeof(CombatNativeChecks).GetMethod("CountVendorBody", FireFixtureFlags));
+            foreach (CodeInstruction instruction in instructions) yield return instruction;
+        }
+
+        private static void CheckCampfireAutomaticFuel(Action<bool, string> check)
+        {
+            BepInEx.PluginInfo plugin;
+            if (!Chainloader.PluginInfos.TryGetValue("TastyChickenLegs.AutomaticFuel", out plugin)) return;
+            Type handler = plugin.Instance.GetType().Assembly.GetType("AutomaticFuel.GameClasses.Fireplace_Patches+Fireplace_UpdateFireplace_Patch", false);
+            MethodInfo postfix = handler == null ? null : handler.GetMethod("Postfix", FireFixtureFlags, null, new[] { typeof(Fireplace), typeof(ZNetView) }, null);
+            check(postfix != null && postfix.ReturnType == typeof(void), "installed AutomaticFuel fireplace handler matches the verified ABI");
+            Patches patches = Harmony.GetPatchInfo(postfix);
+            check(patches != null && patches.Prefixes.Any(patch => patch.owner == Plugin.Id
+                && patch.PatchMethod.DeclaringType.FullName == "ValheimModPack.PartyPrison.PrisonCampfireAutomaticFuelPatch"),
+                "PartyPrison registers its scoped guard on the actual AutomaticFuel vendor handler");
+            var fixture = new Harmony("valheimmodpack.partyprison.nativeprobe.campfirefuel");
+            try {
+                check(Player.m_localPlayer == null && Game.instance == null, "automatic-fuel fixture runs without a user character or world");
+                var awake = new HarmonyMethod(typeof(CombatNativeChecks).GetMethod("SkipFireFixtureAwake", FireFixtureFlags)); awake.priority = Priority.First;
+                fixture.Patch(typeof(ZNetView).GetMethod("Awake", FireFixtureFlags), prefix: awake);
+                fixture.Patch(typeof(Fireplace).GetMethod("Awake", FireFixtureFlags), prefix: awake);
+                fixture.Patch(typeof(ZDO).GetMethod("IncreaseDataRevision", FireFixtureFlags),
+                    prefix: new HarmonyMethod(typeof(CombatNativeChecks).GetMethod("SkipFireFixtureRevision", FireFixtureFlags)));
+                fixture.Patch(postfix, transpiler: new HarmonyMethod(typeof(CombatNativeChecks).GetMethod("VendorBodyProbe", FireFixtureFlags)));
+                fireFixtureObject = new GameObject("PartyPrison.NativeFixture.CellFire"); fireFixtureObject.SetActive(false);
+                ZNetView view = fireFixtureObject.AddComponent<ZNetView>(); Fireplace fire = fireFixtureObject.AddComponent<Fireplace>();
+                fire.m_infiniteFuel = true; fire.m_maxFuel = fire.m_startFuel = fire.m_secPerFuel = 0f;
+                fireFixtureZdo = new ZDO { m_uid = new ZDOID(-643591874, 1) };
+                typeof(ZDO).GetField("m_prefab", FireFixtureFlags).SetValue(fireFixtureZdo, PrisonContent.PrisonCampfirePrefab.GetStableHashCode());
+                typeof(ZNetView).GetField("m_zdo", FireFixtureFlags).SetValue(view, fireFixtureZdo);
+                fireFixtureZdo.Set(ArenaBuilder.ProtectedKey, true); fireFixtureZdo.Set(PrisonContent.PrisonCampfireMarker, true);
+                vendorBodyCalls = 0; uint revision = fireFixtureZdo.DataRevision;
+                postfix.Invoke(null, new object[] { fire, view });
+                check(vendorBodyCalls == 0 && fireFixtureZdo.DataRevision == revision,
+                    "marked native cell fire bypasses the entire vendor body: no refueling coroutine, chest query or native fuel mutation");
+                fireFixtureZdo.Set(ArenaBuilder.ProtectedKey, false); postfix.Invoke(null, new object[] { fire, view });
+                check(vendorBodyCalls == 1, "an unprotected fireplace keeps the ordinary vendor path");
+                fireFixtureZdo.Set(ArenaBuilder.ProtectedKey, true); fireFixtureZdo.Set(PrisonContent.PrisonCampfireMarker, false);
+                postfix.Invoke(null, new object[] { fire, view });
+                check(vendorBodyCalls == 2, "a fireplace missing the prison campfire marker keeps its ordinary vendor path");
+                fireFixtureZdo.Set(PrisonContent.PrisonCampfireMarker, true);
+                typeof(ZDO).GetField("m_prefab", FireFixtureFlags).SetValue(fireFixtureZdo, "fire_pit".GetStableHashCode());
+                postfix.Invoke(null, new object[] { fire, view });
+                check(vendorBodyCalls == 3, "ordinary campfire prefab keeps its vendor path even with unrelated custom markers");
+                typeof(ZDO).GetField("m_prefab", FireFixtureFlags).SetValue(fireFixtureZdo, PrisonContent.PrisonCampfirePrefab.GetStableHashCode());
+                fire.m_infiniteFuel = false; postfix.Invoke(null, new object[] { fire, view });
+                check(vendorBodyCalls == 4, "a finite-fuel fireplace is never suppressed by the prison compatibility guard");
+                fire.m_infiniteFuel = true; typeof(ZNetView).GetField("m_zdo", FireFixtureFlags).SetValue(view, null);
+                postfix.Invoke(null, new object[] { fire, view });
+                check(vendorBodyCalls == 5, "an invalid native view is never mistaken for a system cell campfire");
+            }
+            finally {
+                if (fireFixtureObject != null) UnityEngine.Object.DestroyImmediate(fireFixtureObject);
+                if (fireFixtureZdo != null) typeof(ZDO).GetMethod("Reset", FireFixtureFlags).Invoke(fireFixtureZdo, null);
+                fireFixtureObject = null; fireFixtureZdo = null; fixture.UnpatchSelf();
+            }
+            check(Player.m_localPlayer == null && Game.instance == null, "fuel compatibility fixture leaves no native player or world registration");
         }
 
         private static byte[] Save(Inventory inventory)

@@ -77,7 +77,7 @@
   },
   {
     "path": "BepInEx/config/valheimmodpack.partyprison.cfg",
-    "sha256": "14411e345b57753c94a2e6916cd68f6679e28777a3888eba0870a34544f2a45c"
+    "sha256": "7f32b1901c652a0da109d822a4cb9a61984ed38c8e182744f656f6fc55a24bb5"
   },
   {
     "path": "BepInEx/config/valheimmodpack.portalfinder.cfg",
@@ -317,7 +317,7 @@
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-PartyPrison/PartyPrison.dll",
-    "sha256": "62e5490c94e7d096ce02bdc7d106a55376e0307853f417ae7e9eae95d72397b2"
+    "sha256": "b2b881f9836b82aafcf33ba8555570ea304bd78bdc7de50470c3b933dcc7a395"
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-PlayerSectorSync/PlayerSectorSync.dll",
@@ -333,7 +333,7 @@
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-WorldCharacters/WorldCharacters.dll",
-    "sha256": "a3ffb308828ce0206b86e2441e454b8297ae47b2d562ab6bad9a1e82eec06b48"
+    "sha256": "d85b6c5a9e3c25296b56030296a19d766fb27f61045cfb3c47c774fb77b7c7f1"
   },
   {
     "path": "BepInEx/plugins/ValheimPlus.dll",

@@ -60,9 +60,9 @@ internal static class ClearanceFootprintTests
         Check(ClearanceFootprint.ContainsRoot(-1000d, 2000d, 31d, 13d, -1000d, 2000d, 45d, 14.5d),
             "nonzero mixed-sign coordinates support a rotated plot");
         Check(ClearanceFootprint.ContainsRoot(0d, 0d, 32d, 32d, 0d, 0d, 0d, 12d), "smallest allowed query extent keeps the four-metre skirt");
-        Check(ClearanceFootprint.ContainsRoot(0d, 0d, 48d, 48d, 0d, 0d, 0d, 20d), "largest query extent remains bounded");
+        Check(ClearanceFootprint.ContainsRoot(0d, 0d, 68d, 68d, 0d, 0d, 0d, 30d), "expanded largest query extent remains bounded");
         Check(!ClearanceFootprint.ContainsRoot(0d, 0d, 0d, 0d, 0d, 0d, 0d, 11.999d), "too-small clearance extent is rejected");
-        Check(!ClearanceFootprint.ContainsRoot(0d, 0d, 0d, 0d, 0d, 0d, 0d, 20.001d), "too-large clearance extent is rejected");
+        Check(!ClearanceFootprint.ContainsRoot(0d, 0d, 0d, 0d, 0d, 0d, 0d, 30.001d), "too-large clearance extent is rejected");
     }
 
     private static void InvalidInputs()

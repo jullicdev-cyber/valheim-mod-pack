@@ -13,6 +13,12 @@ namespace ValheimModPack.WorldCharacters
     {
         private static readonly FieldInfo Data = AccessTools.Field(typeof(PlayerProfile), "m_playerData");
         private static readonly MethodInfo WorldData = AccessTools.Method(typeof(PlayerProfile), "GetWorldData", new[] {typeof(long)});
+        // The native world-profile layout is fixed for the supported game ABI.
+        // Bind its metadata once; captures still read the current world object
+        // and fields on every save, so changing beds/maps never uses stale data.
+        private static readonly FieldInfo[] WorldFlags = WorldFields("m_haveCustomSpawnPoint", "m_haveLogoutPoint", "m_haveDeathPoint");
+        private static readonly FieldInfo[] WorldPoints = WorldFields("m_spawnPoint", "m_logoutPoint", "m_deathPoint", "m_homePoint");
+        private static readonly FieldInfo WorldMap = WorldFields("m_mapData")[0];
         public static string BuildFingerprint()
         {
             var lines = new List<string> { "WorldCharacters/1;Player33;Inventory109", global::Version.CurrentVersion.ToString() };
@@ -85,39 +91,48 @@ namespace ValheimModPack.WorldCharacters
             using (var w = new BinaryWriter(stream))
             {
                 w.Write(1);
-                foreach (string prefix in new[] {"spawn", "logout", "death", "home"})
+                for (int i = 0; i < WorldPoints.Length; ++i)
                 {
-                    if (prefix != "home") w.Write((bool)Field(data, Flag(prefix)).GetValue(data));
-                    Vector3 point = (Vector3)Field(data, "m_" + prefix + "Point").GetValue(data);
+                    if (i < WorldFlags.Length) w.Write((bool)WorldFlags[i].GetValue(data));
+                    Vector3 point = (Vector3)WorldPoints[i].GetValue(data);
                     w.Write(point.x); w.Write(point.y); w.Write(point.z);
                 }
-                StateCodec.WriteBytes(w, includeMap ? ((byte[])Field(data, "m_mapData").GetValue(data) ?? new byte[0]) : new byte[0]);
+                StateCodec.WriteBytes(w, includeMap ? ((byte[])WorldMap.GetValue(data) ?? new byte[0]) : new byte[0]);
                 w.Flush(); return stream.ToArray();
             }
         }
-        private static string Flag(string p) { return p == "spawn" ? "m_haveCustomSpawnPoint" : p == "logout" ? "m_haveLogoutPoint" : "m_haveDeathPoint"; }
-        private static FieldInfo Field(object target, string name) { return AccessTools.Field(target.GetType(), name); }
+        private static FieldInfo[] WorldFields(params string[] names)
+        {
+            if (WorldData == null) throw new MissingMethodException(typeof(PlayerProfile).FullName, "GetWorldData");
+            var fields = new FieldInfo[names.Length];
+            for (int i = 0; i < names.Length; ++i)
+            {
+                fields[i] = AccessTools.Field(WorldData.ReturnType, names[i]);
+                if (fields[i] == null) throw new MissingFieldException(WorldData.ReturnType.FullName, names[i]);
+            }
+            return fields;
+        }
         private static void ApplyWorld(PlayerProfile profile, long world, byte[] bytes)
         {
             object data = GetWorld(profile, world);
             if (bytes.Length == 0)
             {
-                foreach (string p in new[] {"spawn", "logout", "death"}) Field(data, Flag(p)).SetValue(data, false);
-                Field(data, "m_mapData").SetValue(data, null); return;
+                foreach (FieldInfo flag in WorldFlags) flag.SetValue(data, false);
+                WorldMap.SetValue(data, null); return;
             }
             using (var stream = new MemoryStream(bytes))
             using (var r = new BinaryReader(stream))
             {
                 if (r.ReadInt32() != 1) throw new InvalidDataException("Unsupported world profile.");
-                foreach (string p in new[] {"spawn", "logout", "death", "home"})
+                for (int i = 0; i < WorldPoints.Length; ++i)
                 {
-                    if (p != "home") Field(data, Flag(p)).SetValue(data, r.ReadBoolean());
+                    if (i < WorldFlags.Length) WorldFlags[i].SetValue(data, r.ReadBoolean());
                     var point = new Vector3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
                     if (Single.IsNaN(point.sqrMagnitude) || Single.IsInfinity(point.sqrMagnitude)) throw new InvalidDataException("Invalid spawn position.");
-                    Field(data, "m_" + p + "Point").SetValue(data, point);
+                    WorldPoints[i].SetValue(data, point);
                 }
                 byte[] map = StateCodec.ReadBytes(r, 10 * 1024 * 1024);
-                Field(data, "m_mapData").SetValue(data, map.Length == 0 ? null : map);
+                WorldMap.SetValue(data, map.Length == 0 ? null : map);
                 if (stream.Position != stream.Length) throw new InvalidDataException("Trailing world profile data.");
             }
         }

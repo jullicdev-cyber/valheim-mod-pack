@@ -42,113 +42,160 @@ namespace ValheimModPack.PartyPrison
 
         private static void AppendCellGrilles(List<Placement> plan, Bounds grille, Bounds gate)
         {
-            for (int tier = 0; tier < 4; ++tier) {
+            for (int tier = 0; tier < 6; ++tier) {
                 float y = tier * 2f - grille.min.y;
-                // The cell occupies x=[-12,-4], z=[-4,12]. Its exterior west
-                // and north walls now permit an unobstructed view through bars.
-                for (int segment = 0; segment < 8; ++segment)
-                    plan.Add(new Placement("iron_wall_2x2", new Vector3(-RoomHalfWidth, y, -3f + segment * 2f), 90f, CellWallKey, -1));
-                for (int segment = 0; segment < 4; ++segment)
-                    plan.Add(new Placement("iron_wall_2x2", new Vector3(-11f + segment * 2f, y, RoomHalfWidth), 0f, CellWallKey, -1));
-                // The public foyer divider retains a two-metre release doorway.
-                float[] positions = tier < 2 ? new float[] { -11f, -10f, -6f, -5f } : new float[] { -11f, -9f, -7f, -5f };
+                // Both metal planes are internal. The outer north and west cell
+                // walls are stone like the rest of the enclosure.
+                float[] positions = tier < 2 ? new float[] { -17f, -16f, -12f, -11f } : new float[] { -17f, -15f, -13f, -11f };
                 foreach (float x in positions)
-                    plan.Add(new Placement("iron_wall_2x2", new Vector3(x, y, -4f), 0f, CellWallKey, -1));
+                    plan.Add(new Placement("iron_wall_2x2", new Vector3(x, y, -10f), 0f, CellWallKey, -1));
+                for (int segment = 0; segment < 14; ++segment)
+                    plan.Add(new Placement("iron_wall_2x2", new Vector3(-9f + segment * 2f, y, -10f), 0f, CellWallKey, -1));
+                float[] zPositions = tier < 2
+                    ? new float[] { -9f, -7f, -5f, -3f, -2f, 2f, 3f, 5f, 7f, 9f, 11f, 13f, 15f, 17f }
+                    : new float[] { -9f, -7f, -5f, -3f, -1f, 1f, 3f, 5f, 7f, 9f, 11f, 13f, 15f, 17f };
+                foreach (float z in zPositions)
+                    plan.Add(new Placement("iron_wall_2x2", new Vector3(-10f, y, z), 90f, CellWallKey, -1));
             }
             // A native gate can be shorter than its four-metre opening. Fill
             // exactly the space above the collider rather than closing the leaf.
             for (float height = gate.size.y; height < 4f; height += grille.size.y) {
                 float y = height - grille.min.y;
-                plan.Add(new Placement("iron_wall_2x2", new Vector3(-8f, y, -4f), 0f, CellWallKey, -1));
-                plan.Add(new Placement("iron_wall_2x2", new Vector3(-4f, y, 0f), 90f, CellWallKey, -1));
+                plan.Add(new Placement("iron_wall_2x2", new Vector3(-14f, y, -10f), 0f, CellWallKey, -1));
+                plan.Add(new Placement("iron_wall_2x2", new Vector3(-10f, y, 0f), 90f, CellWallKey, -1));
             }
         }
 
-        /// <summary>Upgrade either v2 or v3 once, without replacing native inventories.</summary>
-        private static bool UpgradeLoadedLayout(PrisonRegion region)
+        private static List<Placement> CreateLayoutPlan(Dictionary<string, Bounds> bounds)
+        {
+            var plan = new List<Placement>();
+            Bounds floor = bounds["stone_floor_2x2"], wall = bounds["stone_wall_4x2"], small = bounds["stone_wall_2x1"];
+            // The continuous floor/roof remains solid; six stone tiers enclose a
+            // twelve-metre room instead of the former eight-metre room.
+            for (int x = 0; x < 18; ++x)
+                for (int z = 0; z < 18; ++z) {
+                    float px = -17f + x * 2f, pz = -17f + z * 2f;
+                    plan.Add(new Placement("stone_floor_2x2", new Vector3(px, -floor.max.y, pz), 0f));
+                    plan.Add(new Placement("stone_floor_2x2", new Vector3(px, RoomHeight - floor.min.y, pz), 0f));
+                }
+            for (int tier = 0; tier < 6; ++tier)
+                for (int segment = 0; segment < 9; ++segment) {
+                    float along = -16f + segment * 4f, y = tier * 2f - wall.min.y;
+                    plan.Add(new Placement("stone_wall_4x2", new Vector3(along, y, -RoomHalfWidth), 0f));
+                    if (!IsWindowSegment(tier, segment)) {
+                        plan.Add(new Placement("stone_wall_4x2", new Vector3(along, y, RoomHalfWidth), 0f));
+                        plan.Add(new Placement("stone_wall_4x2", new Vector3(RoomHalfWidth, y, along), 90f));
+                    }
+                    if (segment >= 2 || tier >= 2)
+                        plan.Add(new Placement("stone_wall_4x2", new Vector3(-RoomHalfWidth, y, along), 90f));
+                }
+            // Fill the west doorway shoulders while retaining its native 2m
+            // opening. Stone strips above the taller windows close the 3–4m gap.
+            for (int tier = 0; tier < 4; ++tier)
+                foreach (float z in new float[] { -17f, -16f, -12f, -11f })
+                    plan.Add(new Placement("stone_wall_2x1", new Vector3(-RoomHalfWidth, tier - small.min.y, z), 90f));
+            foreach (float along in new float[] { 3f, 5f, 7f, 9f }) {
+                plan.Add(new Placement("stone_wall_2x1", new Vector3(along, 3f - small.min.y, RoomHalfWidth), 0f));
+                plan.Add(new Placement("stone_wall_2x1", new Vector3(RoomHalfWidth, 3f - small.min.y, along), 90f));
+            }
+            Bounds gate = bounds["iron_grate"];
+            plan.Add(new Placement("iron_grate", new Vector3(-14f, -gate.min.y, -10f), 0f, ExitKey, -1));
+            plan.Add(new Placement("iron_grate", new Vector3(-10f, -gate.min.y, 0f), 90f, InnerGateKey, -1));
+            plan.Add(new Placement("piece_bench01", new Vector3(-16f, -bounds["piece_bench01"].min.y, 7f), 90f));
+            AppendWindows(plan, bounds["crystal_wall_1x1"]);
+            AppendCellFurniture(plan, bounds[CustodyPrefab], bounds["bed"]);
+            AppendCellGrilles(plan, bounds["iron_wall_2x2"], gate);
+            AppendLamps(plan);
+            AppendArenaTerrain(plan, bounds);
+            return plan;
+        }
+
+        private static void AppendArenaTerrain(List<Placement> plan, Dictionary<string, Bounds> bounds)
+        {
+            Bounds wall = bounds["stone_wall_4x2"];
+            // Two solid raised islands provide 2m and 4m fighting levels. Their
+            // retaining bodies have no hidden hollow chambers to trap mobs.
+            AppendPlatform(plan, bounds, -4f, 8f, 2f);
+            AppendPlatform(plan, bounds, 8f, -2f, 4f);
+            AppendStairFlight(plan, bounds["stone_stair"], new Vector3(-1f, 0f, 8f), 0f, 2f);
+            AppendStairFlight(plan, bounds["stone_stair"], new Vector3(8f, 0f, 1f), 90f, 4f);
+            // Low independent walls break lines of sight without sealing paths,
+            // blocking the inner gate, or occupying any scheduled spawn anchor.
+            plan.Add(new Placement("stone_wall_4x2", new Vector3(1f, -wall.min.y, 0f), 0f));
+            plan.Add(new Placement("stone_wall_4x2", new Vector3(8f, -wall.min.y, 9f), 90f));
+        }
+
+        private static void AppendPlatform(List<Placement> plan, Dictionary<string, Bounds> bounds, float x, float z, float top)
+        {
+            Bounds floor = bounds["stone_floor_2x2"], wall = bounds["stone_wall_4x2"];
+            for (int tileX = 0; tileX < 3; ++tileX)
+                for (int tileZ = 0; tileZ < 3; ++tileZ)
+                    plan.Add(new Placement("stone_floor_2x2", new Vector3(x + 1f + tileX * 2f, top - floor.max.y, z + 1f + tileZ * 2f), 0f));
+            for (float height = 0f; height < top; height += 2f)
+                for (int row = 0; row < 6; ++row) {
+                    // Wall thickness is native1m; tightly spaced rows fill all
+                    // of the island instead of forming an inaccessible chamber.
+                    plan.Add(new Placement("stone_wall_4x2", new Vector3(x + 2f, height - wall.min.y, z + .5f + row), 0f));
+                    plan.Add(new Placement("stone_wall_4x2", new Vector3(x + 4f, height - wall.min.y, z + .5f + row), 0f));
+                }
+        }
+
+        private static void AppendStairFlight(List<Placement> plan, Bounds stair, Vector3 topEdge, float yaw, float top)
+        {
+            float rise = stair.size.y, run = stair.size.z;
+            if (rise < .25f || rise > 4f || run < .5f || run > 4f)
+                throw new InvalidOperationException("Изменились размеры каменной лестницы Valheim.");
+            int steps = Mathf.CeilToInt(top / rise);
+            Quaternion rotation = Quaternion.Euler(0f, yaw, 0f);
+            for (int step = 0; step < steps; ++step) {
+                float baseHeight = top - (steps - step) * rise;
+                Vector3 offset = topEdge + rotation * new Vector3(0f, 0f, -(steps - step - .5f) * run);
+                offset.y = baseHeight - stair.min.y;
+                plan.Add(new Placement("stone_stair", offset, yaw));
+            }
+        }
+
+        public static bool IsCurrentFootprint(PrisonRegion region) { return ArenaGeometry.Expanded(region); }
+
+        /// <summary>Cell fixtures are retrofitted without altering saved terrain, geometry or storage.</summary>
+        public static bool EnsureConsole(PrisonRegion region)
         {
             RequireHost();
-            if (region == null || ZoneSystem.instance == null || !ZNetScene.instance.IsAreaReady(Vector(region.Center))) return false;
-            List<ZDO> protectedPieces = TaggedRegionObjects(ProtectedKey, region);
-            int version = Int32.MaxValue;
-            foreach (ZDO piece in protectedPieces)
-                if (InsideStructure(region, piece.GetPosition())) version = Math.Min(version, piece.GetInt(LayoutVersionKey, 0));
-            if (version < 2 || version >= CurrentLayoutVersion) return false;
-            // Everything must be loaded before creating replacements or deleting
-            // old walls. This also guarantees the contents of all chests survive.
-            foreach (ZDO piece in protectedPieces) {
-                if (!InsideStructure(region, piece.GetPosition())) continue;
-                ZNetView view = ZNetScene.instance.FindInstance(piece);
-                if (view == null || !view.IsValid()) return false;
+            if (region == null || !ZNetScene.instance.IsAreaReady(Vector(region.CellSpawn))) return false;
+            bool hasConsole = false, hasFire = false;
+            foreach (ZDO old in TaggedRegionObjects(ProtectedKey, region)) {
+                if (!InsideStructure(region, old.GetPosition())) continue;
+                if (old.GetPrefab() == PrisonConsole.PrefabName.GetStableHashCode() && old.GetBool(PrisonConsole.ConsoleKey, false)) hasConsole = true;
+                if (old.GetPrefab() == PrisonContent.PrisonCampfirePrefab.GetStableHashCode() && old.GetBool(PrisonContent.PrisonCampfireMarker, false)) hasFire = true;
             }
-            var prefabs = new Dictionary<string, GameObject>();
-            foreach (string name in new[] { "crystal_wall_1x1", "sign", CustodyPrefab, "piece_dvergr_lantern", "bed", "iron_wall_2x2", "iron_grate" })
-                prefabs.Add(name, RequirePrefab(name));
-            if (prefabs["sign"].GetComponent<Sign>() == null || prefabs[CustodyPrefab].GetComponent<Container>() == null
-                || prefabs["bed"].GetComponent<Bed>() == null)
-                throw new InvalidOperationException("Не найдены табличка, сундук или кровать для обновления тюрьмы.");
-            Vector3 basePoint = Vector(region.Center) - Vector3.up * 4f;
+            if (hasConsole && hasFire) return true;
             Vector3 right = CellRight(region), forward = Vector3.Cross(right, Vector3.up);
+            Vector3 basePoint = Vector(region.Center); basePoint.y = (float)region.CellSpawn.Y - 1f;
             Quaternion rotation = Quaternion.LookRotation(forward);
-            var additions = new List<Placement>();
-            AppendWindows(additions, SolidBounds(prefabs["crystal_wall_1x1"]));
-            AppendCellFurniture(additions, SolidBounds(prefabs[CustodyPrefab]), SolidBounds(prefabs["bed"]));
-            AppendLamps(additions);
-            AppendCellGrilles(additions, SolidBounds(prefabs["iron_wall_2x2"]), SolidBounds(prefabs["iron_grate"]));
-            TerrainLeveler.ClearGrass(region);
-            var newlyCreated = new List<GameObject>();
+            var created = new List<GameObject>(2);
             try {
-                // Prefab+marker+position makes retries idempotent after partial
-                // creation; custody and kit chests are never replaced or emptied.
-                foreach (Placement placement in additions) {
-                    Vector3 position = basePoint + rotation * placement.Offset;
-                    bool exists = false;
-                    foreach (ZDO old in protectedPieces)
-                        if (old.GetPrefab() == placement.Prefab.GetStableHashCode() && old.GetBool(placement.Marker, false)
-                            && (old.GetPosition() - position).sqrMagnitude < .01f) { exists = true; break; }
-                    if (!exists) newlyCreated.Add(CreatePiece(prefabs[placement.Prefab], placement, basePoint, rotation));
+                if (!hasConsole) {
+                    GameObject prefab = RequirePrefab(PrisonConsole.PrefabName); Bounds bounds = SolidBounds(prefab);
+                    Vector3 local = ArenaGeometry.Expanded(region) ? new Vector3(-14f, -bounds.min.y, -6f) : new Vector3(-6f, -bounds.min.y, 7f);
+                    created.Add(CreatePiece(prefab, new Placement(PrisonConsole.PrefabName, local, 0f, PrisonConsole.ConsoleKey, -1), basePoint, rotation));
+                }
+                if (!hasFire) {
+                    GameObject prefab = RequirePrefab(PrisonContent.PrisonCampfirePrefab); Bounds bounds = SolidBounds(prefab);
+                    Vector3 local = ArenaGeometry.Expanded(region) ? new Vector3(-14f, -bounds.min.y, 13f) : new Vector3(-7f, -bounds.min.y, 10f);
+                    created.Add(CreatePiece(prefab, new Placement(PrisonContent.PrisonCampfirePrefab, local, 0f, PrisonContent.PrisonCampfireMarker, -1), basePoint, rotation));
                 }
             }
             catch {
-                for (int i = newlyCreated.Count - 1; i >= 0; --i) DestroyCreated(newlyCreated[i]);
+                for (int i = created.Count - 1; i >= 0; --i) DestroyCreated(created[i]);
                 throw;
             }
-            int wallPrefab = "stone_wall_4x2".GetStableHashCode(), lampPrefab = "piece_dvergr_lantern".GetStableHashCode();
-            float bottomWallY = -SolidBounds(RequirePrefab("stone_wall_4x2")).min.y;
-            foreach (ZDO piece in protectedPieces) {
-                if (!InsideStructure(region, piece.GetPosition())) continue;
-                Vector3 delta = piece.GetPosition() - basePoint;
-                float x = Vector3.Dot(delta, right), z = Vector3.Dot(delta, forward);
-                bool lowerViewingWall = piece.GetPrefab() == wallPrefab && Mathf.Abs(delta.y - bottomWallY) < .1f
-                    && ((Mathf.Abs(z - RoomHalfWidth) < .1f && (Mathf.Abs(x - 2f) < .1f || Mathf.Abs(x - 6f) < .1f))
-                        || (Mathf.Abs(x - RoomHalfWidth) < .1f && (Mathf.Abs(z - 2f) < .1f || Mathf.Abs(z - 6f) < .1f)));
-                if (lowerViewingWall || IsOldCellStoneWall(piece.GetPrefab(), x, z)
-                    || piece.GetPrefab() == lampPrefab && !piece.GetBool(LampKey, false)) {
-                    DestroyWorldObject(piece); continue;
-                }
-                if (piece.GetBool(SignKey, false)) {
-                    piece.Set(ZDOVars.s_text, CellSignText);
-                    piece.Set(ZDOVars.s_author, "");
-                    piece.Set(ZDOVars.s_authorDisplayName, "");
-                }
-                // Never take ownership of a public chest just to update layout
-                // metadata: a player may already have its ordinary UI open.
-                piece.Set(LayoutVersionKey, CurrentLayoutVersion);
-            }
-            foreach (ZDO item in TaggedRegionObjects(ArmoryKey, region))
-                if (InsideStructure(region, item.GetPosition())) DestroyWorldObject(item);
-            InvalidateLayoutCache();
-            return true;
+            InvalidateLayoutCache(); return true;
         }
 
-        private static bool IsOldCellStoneWall(int prefab, float x, float z)
+        /// <summary>Geometry is never silently enlarged under an occupied saved prison.</summary>
+        private static bool UpgradeLoadedLayout(PrisonRegion region)
         {
-            if (prefab != "stone_wall_4x2".GetStableHashCode() && prefab != "stone_wall_2x1".GetStableHashCode()) return false;
-            bool cellWest = Mathf.Abs(x + RoomHalfWidth) < .1f && z >= -4.1f && z <= 12.1f;
-            bool cellNorth = Mathf.Abs(z - RoomHalfWidth) < .1f && x >= -12.1f && x <= -4.1f;
-            bool cellSouth = Mathf.Abs(z + 4f) < .1f && x >= -12.1f && x <= -4.1f;
-            bool innerHeader = Mathf.Abs(x + 4f) < .1f && Mathf.Abs(z) < .1f;
-            return cellWest || cellNorth || cellSouth || innerHeader;
+            return EnsureConsole(region);
         }
     }
 }

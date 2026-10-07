@@ -14,7 +14,7 @@ namespace ValheimModPack.PartyPrison
         {
             if (!Coordinate(centerX) || !Coordinate(centerZ) || !Coordinate(originX) || !Coordinate(originZ) ||
                 !Finite(sizeX) || !Finite(sizeZ) || sizeX < 0d || sizeZ < 0d ||
-                !Finite(yawDegrees) || !Finite(extent) || extent < 12d || extent > 20d)
+                !Finite(yawDegrees) || !Finite(extent) || extent < 12d || extent > 30d)
                 return false;
 
             double normalized = yawDegrees % 360d;

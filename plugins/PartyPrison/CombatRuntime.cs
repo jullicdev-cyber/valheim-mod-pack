@@ -56,9 +56,11 @@ namespace ValheimModPack.PartyPrison
             float now = Time.realtimeSinceStartup;
             if (Hosting && store != null && !fatalStore && region != null && now >= nextStoredGearMaintenance)
             {
-                nextStoredGearMaintenance = now + 1f; RefreshHostCombatState();
-                if (ArenaBuilder.ExpireStoredPrisonGear(region, world, combatToken, combatRevision) > 0)
-                    network.Save(true, false, false);
+                nextStoredGearMaintenance = now + 1f;
+                // Container.Save persists inventory in its own native ZDO and
+                // ForceSendZDO replicates it. Saving the entire world here
+                // stalls unrelated players whenever old kit items disappear.
+                ArenaBuilder.ExpireStoredPrisonGear(region, world, combatToken, combatRevision);
             }
             if (!Hosting && !receivedState || !WC.AdministrativeReady || Player.m_localPlayer == null) return;
             if (now < nextGearMaintenance) return;
@@ -99,10 +101,12 @@ namespace ValheimModPack.PartyPrison
             nextWave = Time.realtimeSinceStartup + 8f; nextHost = Time.realtimeSinceStartup;
             RefreshHostCombatState();
             ArenaBuilder.ExpireStoredPrisonGear(region, world, combatToken, combatRevision);
-            network.Save(true, false, false);
+            // The new choice/stock is already in native ZDOs. Normal world
+            // autosaves persist it; custody handoff and character checkpoints
+            // keep their separate durability barriers.
             PrisonCombatLoadout choice = CombatCatalog.Get(family, difficulty);
             notice = T("Противники: ", "Enemies: ") + T(choice.RussianName, choice.EnglishName)
-                + T("; сложность ", "; difficulty ") + (difficulty + 1) + T(". Новый набор — в сундуке камеры.", ". New equipment is in the cell chest.");
+                + T("; сложность ", "; difficulty ") + (difficulty + 1) + T(". Снаряжение и четыре вида еды — в сундуке камеры.", ". Equipment and four food choices are in the cell chest.");
         }
 
         private bool ServerCombatMessage(ZNetPeer peer, int kind, BinaryReader reader)
@@ -128,12 +132,13 @@ namespace ValheimModPack.PartyPrison
             return true;
         }
 
-        private void NotifyDefeat()
+        private bool NotifyDefeat()
         {
-            if (localSentence == null || Time.realtimeSinceStartup < nextDefeat) return;
-            nextDefeat = Time.realtimeSinceStartup + 2f;
+            if (localSentence == null) return true;
+            if (Time.realtimeSinceStartup < nextDefeat) return false;
             if (Hosting) { ArenaBuilder.ResetAfterDefeat(region); nextWave = Time.realtimeSinceStartup + 8f; }
             else ToHost(PrisonProtocol.Defeat, writer => PrisonProtocol.Text(writer, localSentence.SentenceId));
+            nextDefeat = Time.realtimeSinceStartup + 2f; return true;
         }
     }
 }

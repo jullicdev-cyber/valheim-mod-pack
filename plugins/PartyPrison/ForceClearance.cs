@@ -24,7 +24,7 @@ namespace ValheimModPack.PartyPrison
         public static Site PlanForce(Vector3 origin, Quaternion rotation, float extent, float low, float high, PrisonRegion replaceableRegion)
         {
             RequireHost();
-            if (!Finite(origin) || !Finite(extent) || extent < 12f || extent > 21f ||
+            if (!Finite(origin) || !Finite(extent) || extent < 12f || extent > 30f ||
                 !Finite(low) || !Finite(high) || low < -10000f || high > 10000f || low >= high ||
                 !Finite(rotation.x) || !Finite(rotation.y) || !Finite(rotation.z) || !Finite(rotation.w))
                 throw new ArgumentException("Неверные границы принудительной расчистки.");
@@ -41,9 +41,9 @@ namespace ValheimModPack.PartyPrison
             staticRegionWorld = currentWorld;
             staticRegion = region == null ? null : region.Copy(); regionApplied = false;
             if (region == null) { staticExtent = 0f; return; }
-            double dx = region.ArenaSpawn.X - region.CellSpawn.X, dz = region.ArenaSpawn.Z - region.CellSpawn.Z;
-            double yaw = Math.Atan2(dx, dz) - Math.Atan2(12d, 4d);
-            staticExtent = (float)TerrainPlan.EnclosingExtent(yaw * 180d / Math.PI);
+            double dx = region.Center.X - region.CellSpawn.X, dz = region.Center.Z - region.CellSpawn.Z;
+            double yaw = Math.Atan2(-dz, dx);
+            staticExtent = (float)TerrainPlan.EnclosingExtent(yaw * 180d / Math.PI, ArenaGeometry.Expanded(region));
             if (ZNetScene.instance != null) { ReapplyCurrentStaticRegion(); regionApplied = true; }
         }
 
@@ -573,7 +573,7 @@ namespace ValheimModPack.PartyPrison
 
         internal static void ReapplyCurrentStaticRegion()
         {
-            if (staticRegion == null || staticExtent < 12f || staticExtent > 21f || ZNetScene.instance == null ||
+            if (staticRegion == null || staticExtent < 12f || staticExtent > 30f || ZNetScene.instance == null ||
                 ZNet.instance == null || staticRegionWorld != ZNet.instance.GetWorldUID()) return;
             Vector3 center = Plugin.Vector(staticRegion.Center);
             // Virtual dungeon rooms share surface X/Z but live thousands of metres
@@ -638,7 +638,7 @@ namespace ValheimModPack.PartyPrison
             if (bytes == null || bytes.Length > MaximumRemoteBytes || ZNet.instance == null || ZNetScene.instance == null) throw new InvalidDataException("Invalid clearance packet.");
             var package = new ZPackage(bytes); if (package.ReadInt() != 1 || package.ReadLong() != ZNet.instance.GetWorldUID()) throw new InvalidDataException("Clearance packet belongs to another world.");
             Vector3 origin = package.ReadVector3(); float extent = package.ReadSingle(), low = package.ReadSingle(), high = package.ReadSingle();
-            if (!Finite(origin) || !Finite(extent) || extent < 12f || extent > 21f || !Finite(low) || !Finite(high) || low < -10000f || high > 10000f || low >= high) throw new InvalidDataException("Invalid clearance bounds.");
+            if (!Finite(origin) || !Finite(extent) || extent < 12f || extent > 30f || !Finite(low) || !Finite(high) || low < -10000f || high > 10000f || low >= high) throw new InvalidDataException("Invalid clearance bounds.");
             int count = package.ReadInt(); if (count < 0 || count > ForceMaximumRoots) throw new InvalidDataException("Invalid move count.");
             var ids = new List<ZDOID>(); var positions = new List<Vector3>(); var rotations = new List<Quaternion>();
             for (int i = 0; i < count; ++i) {

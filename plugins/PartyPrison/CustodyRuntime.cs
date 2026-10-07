@@ -397,7 +397,8 @@ namespace ValheimModPack.PartyPrison
             Container chest = ArenaBuilder.GetKitContainer(region);
             if (chest != null && Vector3.Distance(Player.m_localPlayer.transform.position, chest.transform.position) <= 4)
             { window.Hide(); chest.Interact(Player.m_localPlayer, false, false); return; }
-            notice = T("Базовое снаряжение лежит в обычном сундуке внутри камеры. Откройте его клавишей E.", "Basic equipment is in the ordinary cell chest. Open it with E.");
+            string use = Localization.instance == null ? "Use" : Localization.instance.Localize("$KEY_Use");
+            notice = T("Снаряжение и паёк лежат в сундуке камеры. Закройте окно, подойдите к сундуку и нажмите ", "Equipment and rations are in the cell chest. Close this window, approach it and press ") + use + ".";
         }
         private void AutoWaves()
         {

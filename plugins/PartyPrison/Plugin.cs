@@ -9,6 +9,7 @@ using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 using Jotunn.Utils;
+using Jotunn.Managers;
 using WC = ValheimModPack.WorldCharacters.Plugin;
 
 namespace ValheimModPack.PartyPrison
@@ -17,10 +18,11 @@ namespace ValheimModPack.PartyPrison
     [BepInDependency("com.jotunn.jotunn", "2.30.2")]
     [BepInDependency("valheimmodpack.worldcharacters", "1.0.4")]
     [BepInDependency("valheimmodpack.inventoryadmin", BepInDependency.DependencyFlags.SoftDependency)]
+    [BepInDependency("TastyChickenLegs.AutomaticFuel", BepInDependency.DependencyFlags.SoftDependency)]
     [NetworkCompatibility(CompatibilityLevel.EveryoneMustHaveMod, VersionStrictness.Patch)]
     public sealed partial class Plugin : BaseUnityPlugin
     {
-        public const string Id = "valheimmodpack.partyprison", Version = "1.4.1";
+        public const string Id = "valheimmodpack.partyprison", Version = "1.5.0";
         internal const string LoanKey = "VMP_PP_Loan", InmateKey = "VMP_PP_Inmate";
         private const string RpcName = PrisonWire.RpcName;
         internal static Plugin Active;
@@ -31,11 +33,14 @@ namespace ValheimModPack.PartyPrison
         private ZNet network;
         private long world, sequence, receivedSequence;
         private PrisonRegion region;
+        private PrisonRegion consoleReadyRegion;
         private PrisonPlacementPlan pendingPlacement;
         private SentenceState localSentence;
         private bool receivedState, releaseTeleport, releaseArrived, fatalStore, defeatReturn;
         private long releaseSave;
         private bool releaseHadCustodyReceipt;
+        private bool defeatNotificationPending, defeatCheckpointPending;
+        private float nextDefeatRecovery;
         private float nextHost, lastHostTick, nextHeartbeat, nextArmory, nextWave, nextEnforce, nextNotice, nextMobCleanup;
         private float nextLoanMaintenance, nextLoanRemoval, nextReleaseAck, nextLayoutUpgrade;
         private string notice = "", lastError = "";
@@ -44,6 +49,8 @@ namespace ValheimModPack.PartyPrison
         private readonly Dictionary<ZRpc, float> samples = new Dictionary<ZRpc, float>();
         private readonly Dictionary<ZRpc, float> requests = new Dictionary<ZRpc, float>();
         private readonly Dictionary<string, long> releaseBaselines = new Dictionary<string, long>();
+        private readonly List<ZNetPeer> hostPeers = new List<ZNetPeer>(16);
+        private readonly List<string> verifiedOnline = new List<string>(16);
         private sealed class Presence { internal string Token; internal float At; internal long Character; }
         internal bool Hosting { get { return network != null && network.IsServer(); } }
         internal bool Confined { get { return localSentence != null && !localSentence.EmergencyRelease && region != null && (!localSentence.PendingRelease || !LegacyLayout && localCustodyStage < (int)CustodyStage.Released); } }
@@ -57,15 +64,36 @@ namespace ValheimModPack.PartyPrison
         private void Awake()
         {
             Active = this;
-            shortcut = Config.Bind("Controls", "OpenPrison", new KeyboardShortcut(KeyCode.F12, KeyCode.LeftControl), "Prison host controls / prisoner activities. Rebind in Bindrune.");
+            shortcut = Config.Bind("Controls", "OpenPrison", new KeyboardShortcut(KeyCode.F12, KeyCode.LeftControl), "Host prison controls only. Inmates use the arena console in the cell with the game's Use key. Rebind in Bindrune.");
             window = new PrisonWindow(new PrisonUiBindings { IsHost = () => Hosting, CanUse = CanUse, Players = Roster,
                 LocalSentence = () => localSentence == null ? null : localSentence.Copy(), Impose = Impose, Release = Release, ForceRelease = ForceRelease,
                 PrepareBuild = PrepareBuild, Build = BuildConfirmedPrison, Wave = RequestWave, Move = Move, Kit = GiveKit, CanFight = () => FightReady, CustodyStatus = CustodyStatus,
                 Choice = RequestCombatChoice, CombatFamily = () => combatFamily, CombatDifficulty = () => combatDifficulty,
                 Notice = () => notice, Translate = T, Error = e => Report(e.Message) });
             harmony = new Harmony(Id); harmony.PatchAll(typeof(Plugin).Assembly);
+            PrefabManager.OnVanillaPrefabsAvailable += RegisterContent;
             new Terminal.ConsoleCommand("prison", "Prison: open, build, players, jail <account/name> <minutes> [reason], release/force-release <account/name>, cell, arena, mobs <0..5> [0..2], wave <0/1/2>", (Terminal.ConsoleEvent)Command);
             Logger.LogInfo("Party Prison ready; host-only sentences, mandatory identical clients.");
+        }
+        private void RegisterContent()
+        {
+            PrefabManager.OnVanillaPrefabsAvailable -= RegisterContent;
+            try { PrisonContent.Register(); }
+            catch (Exception e) { Report("Prison content registration failed: " + e.Message); }
+        }
+        internal bool CanOpenPrisonConsole(PrisonConsole console, Player player)
+        {
+            return console != null && console.ValidNetworkObject && player != null && player == Player.m_localPlayer
+                && FightReady && CanUse() && !player.IsDead() && !player.IsTeleporting() && !player.InCutscene()
+                && ArenaBuilder.IsInsideCell(region, player.transform.position) && ArenaBuilder.IsInsideCell(region, console.transform.position)
+                && (player.transform.position - console.transform.position).sqrMagnitude <= 16f;
+        }
+        internal bool TryOpenPrisonConsole(PrisonConsole console, Player player)
+        {
+            if (!CanOpenPrisonConsole(console, player) || InventoryGui.IsVisible() || Menu.IsVisible() || Console.IsVisible()
+                || TextInput.IsVisible() || UnifiedPopup.IsVisible() || ZInput.s_IsRebindActive
+                || Chat.instance != null && Chat.instance.HasFocus()) return false;
+            window.Show(); return window.IsVisible;
         }
         private bool CanUse()
         { return network != null && Player.m_localPlayer != null && WC.AdministrativeReady && (Hosting && store != null && !fatalStore || localSentence != null || localCustodyStage == (int)CustodyStage.Released); }
@@ -87,13 +115,15 @@ namespace ValheimModPack.PartyPrison
         private void Reset()
         {
             if (window != null) window.Hide();
-            if (store != null) { store.Dispose(); store = null; }
+            if (store != null) { try { store.Dispose(); } catch (Exception e) { Logger.LogError("Prison timer shutdown failed; last durable state is preserved: " + e.Message); } finally { store = null; } }
             ResetCustody(); ResetWithdrawal(); wire.Clear();
             ArenaBuilder.ResetRuntime();
             ResetCombat();
             peers.Clear(); presences.Clear(); samples.Clear(); requests.Clear(); releaseBaselines.Clear();
-            region = null; pendingPlacement = null; SiteClearer.ConfigureRegion(null); localSentence = null; network = null; world = sequence = receivedSequence = 0;
+            hostPeers.Clear(); verifiedOnline.Clear();
+            region = null; consoleReadyRegion = null; pendingPlacement = null; SiteClearer.ConfigureRegion(null); localSentence = null; network = null; world = sequence = receivedSequence = 0;
             receivedState = releaseTeleport = releaseArrived = fatalStore = defeatReturn = releaseHadCustodyReceipt = false; releaseSave = 0;
+            defeatNotificationPending = defeatCheckpointPending = false; nextDefeatRecovery = 0;
             nextArmory = nextWave = nextEnforce = nextMobCleanup = 0; notice = lastError = "";
             nextLoanMaintenance = nextLoanRemoval = nextReleaseAck = nextLayoutUpgrade = 0;
         }
@@ -123,7 +153,7 @@ namespace ValheimModPack.PartyPrison
                 }
                 MaintainCombatGear();
                 window.Tick();
-                if (CanUse() && shortcut.Value.IsDown() && !InventoryGui.IsVisible() && !Menu.IsVisible() && !Console.IsVisible()
+                if (Hosting && CanUse() && shortcut.Value.IsDown() && !InventoryGui.IsVisible() && !Menu.IsVisible() && !Console.IsVisible()
                     && !ZInput.s_IsRebindActive && (Chat.instance == null || !Chat.instance.HasFocus()))
                 { if (window.IsVisible) window.Hide(); else if (!TextInput.IsVisible() && !UnifiedPopup.IsVisible()) window.Show(); }
             }
@@ -165,33 +195,34 @@ namespace ValheimModPack.PartyPrison
         {
             float now = Time.realtimeSinceStartup; if (now < nextHost) return;
             double delta = Math.Min(2, Math.Max(0, now - lastHostTick)); lastHostTick = now; nextHost = now + 1;
+            hostPeers.Clear(); hostPeers.AddRange(peers.Values);
             if (fatalStore || store == null || store.Faulted || custody == null || custody.Faulted || withdrawal == null || withdrawal.Faulted)
             {
                 fatalStore = true;
-                foreach (ZNetPeer peer in network.GetPeers().ToArray()) if (peer.IsReady()) network.Disconnect(peer);
+                foreach (ZNetPeer peer in hostPeers) if (peer.IsReady()) network.Disconnect(peer);
                 return;
             }
-            if (region != null && now >= nextLayoutUpgrade && ArenaBuilder.LayoutVersion(region) < ArenaBuilder.CurrentLayoutVersion)
+            if (region != null && !ReferenceEquals(consoleReadyRegion, region) && now >= nextLayoutUpgrade)
             {
                 nextLayoutUpgrade = now + 5f;
-                try { if (ArenaBuilder.UpgradeLayout(region)) network.Save(true, false, false); }
+                try { if (ArenaBuilder.EnsureConsole(region)) consoleReadyRegion = region; }
                 catch (Exception e) { Report(T("Обновление постройки ожидает загрузки: ", "Prison upgrade is waiting for loading: ") + e.Message); }
             }
             HostCustodyTick();
             RefreshHostCombatState();
-            var online = new List<string>();
-            foreach (ZNetPeer peer in peers.Values.ToArray())
+            verifiedOnline.Clear();
+            foreach (ZNetPeer peer in hostPeers)
             {
                 if (!Ready(peer)) continue;
                 string owner = WC.GetAdministrativeOwner(peer); SentenceState sentence = store.Find(owner); Presence presence; PrisonPoint position;
                 if (sentence != null && !sentence.PendingRelease && presences.TryGetValue(peer.m_rpc, out presence)
                     && presence.Token == sentence.SentenceId && presence.Character == WC.GetAdministrativeCharacter(peer.m_uid)
-                    && HostFightReady(sentence) && now >= presence.At && now - presence.At <= 2.5f && Position(peer, out position) && region != null && ArenaBuilder.ContainsConfinement(region, Vector(position))) online.Add(owner);
+                    && HostFightReady(sentence) && now >= presence.At && now - presence.At <= 2.5f && Position(peer, out position) && region != null && ArenaBuilder.ContainsConfinement(region, Vector(position))) verifiedOnline.Add(owner);
             }
-            try { store.TickOnline(online, delta); }
+            try { store.QueueTickOnline(verifiedOnline, delta); }
             catch (Exception e) { fatalStore = true; Report("Prison saving failed; inmates stay confined and admissions stop: " + e.Message); return; }
             ++sequence;
-            foreach (ZNetPeer peer in peers.Values.ToArray())
+            foreach (ZNetPeer peer in hostPeers)
             {
                 if (!Ready(peer)) continue;
                 SentenceState sentence = store.Find(WC.GetAdministrativeOwner(peer));
@@ -299,7 +330,8 @@ namespace ValheimModPack.PartyPrison
             if (stage != -1) { SentencePolicy.RequireAccountId(account); Guid custodyId; if (!Guid.TryParseExact(token, "N", out custodyId) || hash.Length != 64) throw new InvalidDataException("Invalid custody identity."); }
             receivedSequence = serial; receivedState = true; region = nextRegion; SiteClearer.ConfigureRegion(region);
             if (localSentence == null || state == null || localSentence.SentenceId != state.SentenceId)
-            { releaseArrived = releaseHadCustodyReceipt = false; releaseSave = 0; nextReleaseAck = nextLoanMaintenance = nextLoanRemoval = 0; }
+            { releaseArrived = releaseHadCustodyReceipt = false; releaseSave = 0; nextReleaseAck = nextLoanMaintenance = nextLoanRemoval = 0;
+                defeatReturn = defeatNotificationPending = defeatCheckpointPending = false; nextDefeatRecovery = 0; }
             localSentence = state;
             localLayoutVersion = layoutVersion;
             ReadCustodyState(stage, account, token, hash, recovery);
@@ -317,9 +349,30 @@ namespace ValheimModPack.PartyPrison
         internal void Enforce(bool defeated)
         {
             Player player = Player.m_localPlayer;
-            if (!Confined || player == null || !WC.AdministrativeReady) return;
+            if (!Confined || player == null) return;
+            if (defeated) {
+                // Recover the authoritative actor before notification or disk
+                // checkpoints can fail. CheckDeath must never repeatedly apply
+                // a penalty or fall through to a custody-destroying tombstone.
+                defeatReturn = true; player.SetHealth(player.GetMaxHealth());
+                defeatNotificationPending = defeatCheckpointPending = true; nextDefeatRecovery = 0;
+                notice = T("Поражение: штраф навыков по правилам мира, возврат в камеру; вещи сохранены.", "Defeat: world-rule skill penalty, returned to cell; belongings preserved.");
+                try { ArenaDefeatPenalty.Apply(player); }
+                catch (Exception e) { Report("Arena skill loss could not be applied: " + e.Message); }
+            }
+            if (!WC.AdministrativeReady) return;
             ZNetView view = player.GetComponent<ZNetView>(); if (view != null && view.IsValid() && view.IsOwner()) view.GetZDO().Set(InmateKey, true);
-            if (defeated) { NotifyDefeat(); defeatReturn = true; player.SetHealth(player.GetMaxHealth()); WC.RequestAdministrativeSave(); notice = T("Вы возвращены в камеру. Мобы удалены; добыча сохранена.", "Returned to the cell. Enemies cleared; loot preserved."); }
+            if ((defeatNotificationPending || defeatCheckpointPending) && Time.realtimeSinceStartup >= nextDefeatRecovery) {
+                nextDefeatRecovery = Time.realtimeSinceStartup + 1f;
+                if (defeatNotificationPending) {
+                    try { if (NotifyDefeat()) defeatNotificationPending = false; }
+                    catch (Exception e) { Report("Arena defeat notification is pending: " + e.Message); }
+                }
+                if (defeatCheckpointPending) {
+                    try { WC.RequestAdministrativeSave(); defeatCheckpointPending = false; }
+                    catch (Exception e) { Report("Arena defeat checkpoint is pending: " + e.Message); }
+                }
+            }
             if ((defeatReturn || !ArenaBuilder.ContainsConfinement(region, player.transform.position)) && !player.IsTeleporting() && (defeatReturn || Time.realtimeSinceStartup >= nextEnforce))
             { nextEnforce = Time.realtimeSinceStartup + 2; if (player.TeleportTo(Vector(region.CellSpawn), Quaternion.identity, true)) defeatReturn = false; }
             if (Time.realtimeSinceStartup >= nextLoanMaintenance)
@@ -391,7 +444,7 @@ namespace ValheimModPack.PartyPrison
         private void Impose(string account, double minutes, string reason)
         {
             RequireHost(); ZNetPeer peer = peers.Values.FirstOrDefault(p => Ready(p) && WC.GetAdministrativeOwner(p) == account); PrisonPoint position;
-            if (region == null || ArenaBuilder.LayoutVersion(region) < ArenaBuilder.CurrentLayoutVersion) throw new InvalidOperationException(T("Сначала постройте тюрьму через Ctrl+F12 или /prison build.", "Build the prison using Ctrl+F12 or /prison build first."));
+            if (region == null || ArenaBuilder.LayoutVersion(region) < 4) throw new InvalidOperationException(T("Сначала постройте тюрьму через Ctrl+F12 или /prison build.", "Build the prison using Ctrl+F12 or /prison build first."));
             if (custody.HasOutstanding || store.All().Length != 0) throw new InvalidOperationException(T("Четыре сундука заняты. Дождитесь освобождения и возврата всех вещей.", "The four chests are occupied. Wait for release and collection of all belongings."));
             CustodyInventory.RequireEmptyChests(Chests());
             if (new UTF8Encoding(false, true).GetByteCount(reason ?? "") > 1024) throw new InvalidOperationException(T("Сократите причину наказания.", "Shorten the sentence reason."));
@@ -443,7 +496,10 @@ namespace ValheimModPack.PartyPrison
                 "; yaw=" + placement.FacingYawDegrees.ToString("F1", CultureInfo.InvariantCulture));
             if (custody.HasOutstanding) throw new InvalidOperationException("Collect all stored belongings before rebuilding.");
             if (store.All().Length != 0) throw new InvalidOperationException("Release all prisoners first.");
-            if (region != null && ArenaBuilder.LayoutVersion(region) >= ArenaBuilder.CurrentLayoutVersion) CustodyInventory.RequireEmptyChests(Chests());
+            if (region != null) {
+                if (ArenaBuilder.LayoutVersion(region) >= 2) CustodyInventory.RequireEmptyChests(Chests());
+                ArenaBuilder.RequireEmptyStoredContainers(region);
+            }
             PrisonRegion old = region;
             List<ZDOID> oldObjects = ArenaBuilder.CaptureStructure(old);
             string clearFailure = null;
@@ -486,7 +542,7 @@ namespace ValheimModPack.PartyPrison
             try
             {
                 Session(); string[] words = args.Args;
-                if (words.Length < 2 || words[1] == "open") { if (CanUse()) window.Show(); else throw new UnauthorizedAccessException(T("Тюрьма доступна хосту и заключённым.", "Prison controls are available to the host and inmates.")); return; }
+                if (words.Length < 2 || words[1] == "open") { if (Hosting && CanUse()) window.Show(); else throw new UnauthorizedAccessException(T("Заключённый открывает управление через пульт в камере клавишей взаимодействия.", "The inmate opens controls using the cell console and the interaction key.")); return; }
                 if (words[1] == "cell") { Move(false); return; }
                 if (words[1] == "arena") { Move(true); return; }
                 if (words[1] == "kit") { GiveKit(); return; }
@@ -505,6 +561,6 @@ namespace ValheimModPack.PartyPrison
         }
         internal void ResetInput() { if (window != null) window.HandleInputReset(); }
         internal bool WindowVisible { get { return window != null && window.IsVisible; } }
-        private void OnDestroy() { Reset(); if (harmony != null) harmony.UnpatchSelf(); if (Active == this) Active = null; }
+        private void OnDestroy() { PrefabManager.OnVanillaPrefabsAvailable -= RegisterContent; Reset(); if (harmony != null) harmony.UnpatchSelf(); if (Active == this) Active = null; }
     }
 }

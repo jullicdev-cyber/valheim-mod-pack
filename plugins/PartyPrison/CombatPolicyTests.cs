@@ -23,11 +23,27 @@ internal static class CombatPolicyTests
                     Check(gear.Count == choice.GearPrefabs.Length, "no duplicate equipment definitions");
                     Check(gear.Contains("ArrowWood") && choice.GearPrefabs.Length <= 12, "supplies and bounded chest stock");
                     Check(choice.RussianName.Length > 0 && choice.EnglishName.Length > 0, "visible mob family names");
+                    Check(choice.FoodSources.Length == 4 && choice.FoodPrefabs.Length == 4, "four food choices in every enemy and grade loadout");
+                    Check(new HashSet<string>(choice.FoodSources).Count == 4, "four different food types rather than duplicate portions");
+                    Check(choice.FoodServings == difficulty + 1 && choice.FoodServings <= 3, "bounded portions scale with enemy grade");
+                    for (int food = 0; food < 4; ++food)
+                        Check(choice.FoodPrefabs[food] == CombatCatalog.FoodPrefab(choice.FoodSources[food]) && CombatCatalog.IsFoodPrefab(choice.FoodPrefabs[food]), "food uses a registered isolated loan prefab");
+                    Check(choice.GearPrefabs.Length + choice.FoodServings * 4 <= 32, "full kit fits empty native iron chest");
                     string saved = choice.GearPrefabs[0]; choice.GearPrefabs[0] = "changed";
                     Check(CombatCatalog.Get(family, difficulty).GearPrefabs[0] == saved, "callers cannot alter catalog equipment");
+                    string savedFood = choice.FoodSources[0]; choice.FoodSources[0] = "changed"; choice.FoodPrefabs[0] = "changed";
+                    Check(CombatCatalog.Get(family, difficulty).FoodSources[0] == savedFood
+                        && CombatCatalog.Get(family, difficulty).FoodPrefabs[0] == CombatCatalog.FoodPrefab(savedFood), "callers cannot mutate registered food definitions");
                 }
             }
             Check(families.SetEquals(new[] { "Greyling", "Greydwarf", "Draugr", "Skeleton", "Hatchling", "Wolf" }), "the six requested mob families use canonical native prefabs");
+            string[] sources = CombatCatalog.AllFoodSources();
+            Check(new HashSet<string>(sources).Count == sources.Length && sources.Length <= 24, "food registration is unique and bounded");
+            Check(!CombatCatalog.IsFoodPrefab("Sausages") && !CombatCatalog.IsFoodPrefab("vmp_prison_food_arbitrary")
+                && !CombatCatalog.IsFoodPrefab(null), "personal foods and arbitrary client names are never classified as loan foods");
+            Check(CombatCatalog.Get(0, 0).FoodSources[0] == "CookedMeat" && CombatCatalog.Get(1, 1).FoodSources[0] == "DeerStew"
+                && CombatCatalog.Get(2, 1).FoodSources[0] == "Sausages" && CombatCatalog.Get(5, 1).FoodSources[0] == "WolfMeatSkewer",
+                "food recipes follow meadows, forest, swamp and mountain enemy origins");
             Reject(() => CombatCatalog.Get(-1, 0), "negative family rejected");
             Reject(() => CombatCatalog.Get(6, 0), "arbitrary prefab index rejected");
             Reject(() => CombatCatalog.Get(0, -1), "negative difficulty rejected");

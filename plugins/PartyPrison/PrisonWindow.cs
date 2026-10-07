@@ -45,13 +45,15 @@ namespace ValheimModPack.PartyPrison
         private GameObject overlay, panel;
         private Player owner;
         private ZNet network;
-        private Text title, subtitle, selection, pagination, status, buildHint, sentence, reasonText, custodyText;
+        private Text title, subtitle, selection, pagination, status, buildHint, sentence, reasonText, custodyText, foodText;
         private InputField minutes, reason;
         private Button previous, next, impose, release, forceRelease, build, kit, cell, arena;
         private string selectedAccount, localNotice = "";
         private bool inputOwned, hostPanel, buildArmed;
         private int page, generation;
         private float refreshAt;
+        private int foodFamily = -1, foodDifficulty = -1;
+        private string foodLanguage = "";
 
         public PrisonWindow(PrisonUiBindings bindings)
         {
@@ -133,12 +135,13 @@ namespace ValheimModPack.PartyPrison
             finally
             {
                 overlay = panel = null; owner = null; network = null;
-                title = subtitle = selection = pagination = status = buildHint = sentence = reasonText = custodyText = null;
+                title = subtitle = selection = pagination = status = buildHint = sentence = reasonText = custodyText = foodText = null;
                 minutes = reason = null; previous = next = impose = release = forceRelease = build = kit = cell = arena = null;
                 for (int i = 0; i < rows.Length; ++i) rows[i] = null;
                 for (int i = 0; i < tiers.Length; ++i) tiers[i] = null;
                 for (int i = 0; i < families.Length; ++i) families[i] = null;
                 players.Clear(); selectedAccount = null; page = 0; buildArmed = false; localNotice = "";
+                foodFamily = foodDifficulty = -1; foodLanguage = "";
                 if (inputOwned) { inputOwned = false; GUIManager.BlockInput(false); }
             }
         }
@@ -197,9 +200,9 @@ namespace ValheimModPack.PartyPrison
         {
             sentence = Label("", 0, 298, 710, 57, 29, true);
             reasonText = Label("", 0, 244, 710, 43, 18, false);
-            Label(T("Отдыхайте на лавочке или кровати, либо идите на арену.\nМобов и сложность выбирайте из камеры; сундук должен быть закрыт.",
-                "Rest on the bench or bed, or enter the arena.\nChoose enemies and difficulty from the cell; close the chest first."), 0, 186, 710, 62, 18, false);
-            kit = ButtonAt(T("Открыть сундук со снаряжением", "Open equipment chest"), 0, 120, 638, 42, Kit);
+            Label(T("Открывайте этот пульт клавишей взаимодействия в камере.\nОтдыхайте на лавочке или кровати. Перед сменой мобов закройте сундук.",
+                "Use the interaction key on the cell's arena console.\nRest on the bench or bed. Close the chest before changing enemies."), 0, 186, 710, 62, 18, false);
+            kit = ButtonAt(T("Сундук снаряжения — подсказка", "Equipment chest — help"), 0, 120, 638, 42, Kit);
             cell = ButtonAt(T("Вернуться в камеру", "Return to cell"), -168, 64, 300, 42, () => Move(false));
             arena = ButtonAt(T("Перейти на арену", "Go to arena"), 168, 64, 300, 42, () => Move(true));
             Label(T("Противники", "Enemies"), 0, 14, 710, 30, 21, true);
@@ -209,7 +212,8 @@ namespace ValheimModPack.PartyPrison
             }
             Label(T("Сложность следующих волн", "Difficulty of future waves"), 0, -124, 710, 30, 21, true);
             WaveButtons(0, -169, 216, 40, 233);
-            custodyText = Label("", 0, -269, 710, 124, 17, false);
+            foodText = Label("", 0, -226, 710, 64, 16, false);
+            custodyText = Label("", 0, -307, 710, 84, 17, false);
             status = Label("", 0, -393, 710, 65, 16, false);
         }
 
@@ -256,8 +260,9 @@ namespace ValheimModPack.PartyPrison
                 buildHint.text = buildArmed
                     ? T("Перед вами будут удалены препятствия и постройки, земля выровнена. Вещи и питомцы переместятся наружу. Esc — отмена.",
                         "Obstacles and buildings in front of you will be removed; ground levelled. Belongings and pets move outside. Esc cancels.")
-                    : T("Центр тюрьмы — в 32 м перед вами по направлению взгляда. Вход обращён к вам. Пустую тюрьму можно перенести.",
-                        "Prison center: 32 m ahead in your look direction; entrance faces you. An empty prison can be relocated.");
+                    : T("Центр тюрьмы — в ", "Prison center: ") + PrisonPlacementPlan.CenterDistance.ToString("0", CultureInfo.InvariantCulture)
+                        + T(" м перед вами по направлению взгляда. Вход обращён к вам. Пустую тюрьму можно перестроить.",
+                            " m ahead in your look direction; entrance faces you. An empty prison can be rebuilt.");
                 RepaintActions();
             }
             else
@@ -274,8 +279,8 @@ namespace ValheimModPack.PartyPrison
                 reasonText.text = state == null ? "" : T("Причина: ", "Reason: ") + Safe(state.Reason, 180);
                 custodyText.text = String.IsNullOrEmpty(custody)
                     ? state != null && state.PendingRelease
-                        ? T("После открытия решётки нажмите E на сундуке, чтобы забрать вещи.\nДобыча сохраняется; тюремная броня и оружие удаляются.",
-                            "Once the gate opens, press E on a chest to retrieve your belongings.\nLoot is kept; prison armor and weapons are removed.")
+                        ? T("После открытия решётки взаимодействуйте с сундуками, чтобы забрать вещи.\nДобыча сохраняется; тюремное снаряжение и несъеденные пайки удаляются.",
+                            "Once the gate opens, interact with the chests to retrieve your belongings.\nLoot is kept; loan equipment and uneaten rations are removed.")
                         : !ready
                             ? T("Ваши вещи сохраняются в четырёх железных сундуках. Дождитесь окончания подготовки перед боем.",
                                 "Your belongings are being secured in four iron chests. Wait for preparation to finish before fighting.")
@@ -287,6 +292,7 @@ namespace ValheimModPack.PartyPrison
                 if (arena != null) arena.interactable = ready && bindings.Move != null;
                 foreach (Button tier in tiers) if (tier != null) tier.interactable = ready && (bindings.Wave != null || bindings.Choice != null);
                 int selectedFamily = bindings.CombatFamily == null ? 0 : bindings.CombatFamily();
+                RepaintFood(selectedFamily, bindings.CombatDifficulty == null ? 0 : bindings.CombatDifficulty());
                 for (int i = 0; i < families.Length; ++i) if (families[i] != null) {
                     families[i].interactable = ready && bindings.Choice != null;
                     families[i].GetComponentInChildren<Text>().text = (i == selectedFamily ? "› " : "") + T(CombatCatalog.Name(i, true), CombatCatalog.Name(i, false));
@@ -297,6 +303,26 @@ namespace ValheimModPack.PartyPrison
             for (int i = 0; i < tiers.Length; ++i) if (tiers[i] != null) tiers[i].GetComponentInChildren<Text>().text = (i == selectedTier ? "› " : "") + T(tierRu[i], tierEn[i]);
             string serviceNotice = bindings.Notice == null ? "" : bindings.Notice();
             status.text = Safe(String.IsNullOrEmpty(localNotice) ? serviceNotice : localNotice, 380);
+        }
+
+        private void RepaintFood(int family, int difficulty)
+        {
+            if (foodText == null) return;
+            string language = Localization.instance == null ? "" : Localization.instance.GetSelectedLanguage();
+            if (family == foodFamily && difficulty == foodDifficulty && language == foodLanguage) return;
+            PrisonCombatLoadout choice = CombatCatalog.Get(family, difficulty);
+            string[] names = new string[choice.FoodSources.Length];
+            for (int i = 0; i < names.Length; ++i) {
+                GameObject prefab = ObjectDB.instance == null ? null : ObjectDB.instance.GetItemPrefab(choice.FoodSources[i]);
+                ItemDrop item = prefab == null ? null : prefab.GetComponent<ItemDrop>();
+                string name = item == null ? choice.FoodSources[i] : item.m_itemData.m_shared.m_name;
+                names[i] = Localization.instance == null ? name : Localization.instance.Localize(name);
+            }
+            foodText.text = T("Здоровье: ", "Health: ") + names[0] + ", " + names[1]
+                + "\n" + T("Выносливость: ", "Stamina: ") + names[2] + ", " + names[3]
+                + T(". Порций каждого: ", ". Portions each: ") + choice.FoodServings
+                + "\n" + T("Одновременно — 3 блюда. Съеденная еда действует обычное время.", "Three foods at once. Eaten food keeps its normal duration.");
+            foodFamily = family; foodDifficulty = difficulty; foodLanguage = language;
         }
 
         private void RepaintActions()

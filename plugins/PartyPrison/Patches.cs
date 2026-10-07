@@ -51,11 +51,12 @@ namespace ValheimModPack.PartyPrison
     [HarmonyPatch(typeof(Player), "SetControls")]
     internal static class ControlsPatch
     {
-        private static void Prefix(Player __instance, object[] __args)
+        private static void Prefix(Player __instance, ref Vector3 __0, ref bool __1, ref bool __2, ref bool __3,
+            ref bool __4, ref bool __5, ref bool __6, ref bool __7, ref bool __8, ref bool __9, ref bool __10, ref bool __11)
         {
             if (!PrisonGuard.Local(__instance) || !Plugin.Active.AwaitingState && !Plugin.Active.PreparingCustody && !Plugin.Active.WindowVisible) return;
-            for (int i = 0; i < __args.Length; ++i)
-            { if (__args[i] is bool) __args[i] = false; else if (__args[i] is Vector3) __args[i] = Vector3.zero; }
+            __0 = Vector3.zero;
+            __1 = __2 = __3 = __4 = __5 = __6 = __7 = __8 = __9 = __10 = __11 = false;
         }
     }
     [HarmonyPatch(typeof(Player), "PlacePiece")]
@@ -79,7 +80,9 @@ namespace ValheimModPack.PartyPrison
         [HarmonyPriority(Priority.First)]
         private static bool Prefix(Character __instance)
         {
-            if (__instance != Player.m_localPlayer || Plugin.Active == null || !Plugin.Active.Confined || __instance.GetHealth() > 0) return true;
+            if (__instance != Player.m_localPlayer || Plugin.Active == null || !Plugin.Active.Confined || __instance.IsDead() || __instance.GetHealth() > 0) return true;
+            ZNetView view = __instance.GetComponent<ZNetView>();
+            if (view == null || !view.IsValid() || !view.IsOwner()) return true;
             Plugin.Active.Enforce(true); return false;
         }
     }
@@ -281,10 +284,21 @@ namespace ValheimModPack.PartyPrison
     [HarmonyPatch(typeof(Inventory), "AddItem", new Type[] { typeof(ItemDrop.ItemData), typeof(int), typeof(int), typeof(int), typeof(bool) })]
     internal static class SlotStackIsolationPatch
     {
+        private static bool CompatibleFood(ItemDrop.ItemData existing, ItemDrop.ItemData incoming)
+        {
+            if (existing == null || incoming == null) return true;
+            bool existingRation = existing.m_dropPrefab != null && CombatCatalog.IsFoodPrefab(existing.m_dropPrefab.name);
+            bool incomingRation = incoming.m_dropPrefab != null && CombatCatalog.IsFoodPrefab(incoming.m_dropPrefab.name);
+            // Native slot dragging compares the shared food name and the
+            // destination's stack cap. A max-stack-one incoming ration alone
+            // cannot prevent its provenance being lost in a personal stack.
+            return !existingRation && !incomingRation || existing.m_dropPrefab == incoming.m_dropPrefab;
+        }
+
         private static bool Prefix(Inventory __instance, ItemDrop.ItemData __0, int __2, int __3, ref bool __result)
         {
             ItemDrop.ItemData existing = __instance.GetAllItems().FirstOrDefault(item => item.m_gridPos.x == __2 && item.m_gridPos.y == __3);
-            if (!ReferenceEquals(__instance, PrisonGuard.Inaccessible) && (PrisonGuard.InventoryAccess(__instance) || PrisonGuard.LoadingCustody != 0) && PrisonGuard.LoanDestination(__instance, __0) && (existing == null || Plugin.IsLoan(existing) == Plugin.IsLoan(__0))) return true;
+            if (!ReferenceEquals(__instance, PrisonGuard.Inaccessible) && (PrisonGuard.InventoryAccess(__instance) || PrisonGuard.LoadingCustody != 0) && PrisonGuard.LoanDestination(__instance, __0) && CompatibleFood(existing, __0) && (existing == null || Plugin.IsLoan(existing) == Plugin.IsLoan(__0))) return true;
             __result = false; return false;
         }
     }

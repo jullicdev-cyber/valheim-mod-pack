@@ -165,11 +165,13 @@ namespace ValheimModPack.PartyPrison
             Reject(delegate { TerrainPlan.CreateAnywhere(0d, 0d, 40d, Repeated(40d, 3), 1); }, "incomplete forced ground samples");
             Reject(delegate { TerrainPlan.CreateAnywhere(0d, 0d, 40d, Repeated(40d, TerrainPlan.MaximumSamples + 1), 1); }, "unbounded forced ground samples");
             Reject(delegate { TerrainPlan.CreateAnywhere(0d, 0d, 40d, Repeated(40d, 4), 0); }, "missing forced compiler");
-            Check(Math.Abs(TerrainPlan.EnclosingExtent(45d) - 14.5d * Math.Sqrt(2d)) < 1E-10, "diagonal footprint encloses the complete rotated terrain skirt");
-            Check(Math.Abs(TerrainPlan.EnclosingExtent(90d) - 14.5d) < 1E-10, "cardinal footprint requires no diagonal expansion");
+            Check(Math.Abs(TerrainPlan.EnclosingExtent(45d) - 20.5d * Math.Sqrt(2d)) < 1E-10, "diagonal footprint encloses the complete expanded rotated terrain skirt");
+            Check(Math.Abs(TerrainPlan.EnclosingExtent(90d) - 20.5d) < 1E-10, "expanded cardinal footprint requires no diagonal expansion");
+            Check(Math.Abs(TerrainPlan.EnclosingExtent(45d, false) - 14.5d * Math.Sqrt(2d)) < 1E-10,
+                "existing prison keeps its old clearance and does not hide neighbouring terrain or structures");
             for (int yaw = -360; yaw <= 360; yaw += 7) {
                 double a = yaw * Math.PI / 180d, extent = TerrainPlan.EnclosingExtent(yaw);
-                foreach (double x in new[] { -14.5d, 14.5d }) foreach (double z in new[] { -14.5d, 14.5d }) {
+                foreach (double x in new[] { -20.5d, 20.5d }) foreach (double z in new[] { -20.5d, 20.5d }) {
                     Check(Math.Abs(x * Math.Cos(a) + z * Math.Sin(a)) <= extent + 1E-9 &&
                         Math.Abs(z * Math.Cos(a) - x * Math.Sin(a)) <= extent + 1E-9,
                         "rotated square corners remain inside the exact shared terrain/clearance extent");

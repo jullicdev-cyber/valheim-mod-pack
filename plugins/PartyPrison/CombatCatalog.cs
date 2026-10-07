@@ -8,11 +8,19 @@ namespace ValheimModPack.PartyPrison
         public readonly string MobPrefab, RussianName, EnglishName;
         public readonly int MobLevel, WaveCount, GearQuality;
         public readonly string[] GearPrefabs;
-        internal PrisonCombatLoadout(string prefab, string russian, string english, string[] gear, int difficulty)
+        public readonly string[] FoodSources, FoodPrefabs;
+        public readonly int FoodServings;
+        internal PrisonCombatLoadout(string prefab, string russian, string english, string[] gear, string[] foods, int difficulty)
         {
             MobPrefab = prefab; RussianName = russian; EnglishName = english;
             MobLevel = difficulty + 1; WaveCount = difficulty + 2; GearQuality = difficulty + 1;
             GearPrefabs = (string[])gear.Clone();
+            FoodSources = (string[])foods.Clone(); FoodPrefabs = new string[foods.Length];
+            for (int i = 0; i < foods.Length; ++i) FoodPrefabs[i] = CombatCatalog.FoodPrefab(foods[i]);
+            // Four choices, each in its own nonstackable loan serving. Native
+            // food limits and benefits remain unchanged; harder fights stock
+            // enough portions for more than one attempt.
+            FoodServings = difficulty + 1;
         }
     }
 
@@ -32,11 +40,73 @@ namespace ValheimModPack.PartyPrison
             new[] { "ArmorWolfChest", "ArmorWolfLegs", "HelmetDrake", "SwordSilver", "ShieldSilver", "BowDraugrFang", "ArrowWood" }
         };
 
+        // Entries 0 and 1 favor health; 2 and 3 favor stamina. The weak
+        // loadout uses the previous biome's available recipes, then upgrades
+        // to the enemy's biome. The highest tier adds a third serving.
+        private static readonly string[][][] Food = {
+            new[] {
+                new[] { "CookedMeat", "NeckTailGrilled", "Raspberry", "Honey" },
+                new[] { "CookedDeerMeat", "CookedMeat", "Raspberry", "Honey" },
+                new[] { "CookedDeerMeat", "CookedMeat", "Raspberry", "Honey" }
+            },
+            ForestFoods(),
+            new[] {
+                new[] { "DeerStew", "MinceMeatSauce", "CarrotSoup", "QueensJam" },
+                new[] { "Sausages", "BlackSoup", "TurnipStew", "ShocklateSmoothie" },
+                new[] { "Sausages", "BlackSoup", "TurnipStew", "ShocklateSmoothie" }
+            },
+            ForestFoods(), MountainFoods(), MountainFoods()
+        };
+        private static readonly System.Collections.Generic.HashSet<string> FoodNames = MakeFoodNames();
+
+        private static System.Collections.Generic.HashSet<string> MakeFoodNames()
+        {
+            var names = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+            foreach (string[][] family in Food) foreach (string[] tier in family) foreach (string source in tier) names.Add(FoodPrefab(source));
+            return names;
+        }
+
+        private static string[][] ForestFoods()
+        {
+            return new[] {
+                new[] { "CookedDeerMeat", "CookedMeat", "Honey", "Blueberries" },
+                new[] { "DeerStew", "MinceMeatSauce", "CarrotSoup", "QueensJam" },
+                new[] { "DeerStew", "MinceMeatSauce", "CarrotSoup", "QueensJam" }
+            };
+        }
+
+        private static string[][] MountainFoods()
+        {
+            return new[] {
+                new[] { "Sausages", "BlackSoup", "TurnipStew", "ShocklateSmoothie" },
+                new[] { "WolfMeatSkewer", "CookedWolfMeat", "OnionSoup", "Eyescream" },
+                new[] { "WolfMeatSkewer", "SerpentStew", "OnionSoup", "Eyescream" }
+            };
+        }
+
+        public static string FoodPrefab(string source)
+        {
+            if (String.IsNullOrEmpty(source)) throw new ArgumentException("Food source is missing.");
+            return "vmp_prison_food_" + source;
+        }
+
+        public static bool IsFoodPrefab(string name)
+        {
+            return !String.IsNullOrEmpty(name) && FoodNames.Contains(name);
+        }
+
+        public static string[] AllFoodSources()
+        {
+            var names = new System.Collections.Generic.SortedSet<string>(StringComparer.Ordinal);
+            foreach (string[][] family in Food) foreach (string[] tier in family) foreach (string source in tier) names.Add(source);
+            var result = new string[names.Count]; names.CopyTo(result); return result;
+        }
+
         public static PrisonCombatLoadout Get(int family, int difficulty)
         {
             if (family < 0 || family >= FamilyCount || difficulty < 0 || difficulty >= DifficultyCount)
                 throw new ArgumentOutOfRangeException("family", "Выберите один из шести видов мобов и сложность 1–3.");
-            return new PrisonCombatLoadout(Mobs[family], Russian[family], English[family], Gear[family], difficulty);
+            return new PrisonCombatLoadout(Mobs[family], Russian[family], English[family], Gear[family], Food[family][difficulty], difficulty);
         }
 
         public static string Name(int family, bool russian) { return russian ? Get(family, 0).RussianName : Get(family, 0).EnglishName; }
@@ -63,7 +133,8 @@ namespace ValheimModPack.PartyPrison
         }
 
         // Supplies can merge with normal loot. Never remove a mixed arrow/resource
-        // stack; only the nonstackable armor and weapons we generated carry tags.
+        // stack. Generated armor/weapons and separate arena-food prefabs each
+        // occupy one nonstackable slot before they receive provenance tags.
         public static bool ShouldRemove(string gear, string legacy, int maximumStack, long world, string activeToken, int activeRevision)
         {
             if (maximumStack != 1 || world == 0) return false;

@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading.Tasks;
 
 namespace ValheimModPack.PartyPrison
 {
@@ -15,6 +16,11 @@ namespace ValheimModPack.PartyPrison
         private const int MaximumBytes = 1024 * 1024;
         private const int Magic = 0x50505331;
         private readonly object sync = new object();
+        private readonly object timerGate = new object();
+        private readonly Action beforeTimerWrite;
+        private Task timerWrite;
+        private readonly Dictionary<string, TimerDebit> queuedTimer = new Dictionary<string, TimerDebit>(StringComparer.Ordinal);
+        private sealed class TimerDebit { internal string Token; internal double Seconds; }
         private readonly FileStream processLock;
         private readonly string path;
         private readonly long world;
@@ -22,14 +28,22 @@ namespace ValheimModPack.PartyPrison
         private PrisonRegion region;
         private byte[] diskHash;
         private bool disposed;
-        public bool Faulted { get; private set; }
-        public string FaultReason { get; private set; }
+        private volatile bool faulted;
+        private volatile string faultReason;
+        public bool Faulted { get { return faulted; } }
+        public string FaultReason { get { return faultReason ?? ""; } }
+        private void MarkFault(string reason)
+        { lock (sync) { if (!faulted) { faultReason = reason; faulted = true; } } }
 
         public SentenceStore(string directory, long world)
+            : this(directory, world, null) { }
+
+        internal SentenceStore(string directory, long world, Action beforeTimerWrite)
         {
             if (world == 0) throw new InvalidDataException("World identity is required.");
             if (String.IsNullOrWhiteSpace(directory)) throw new ArgumentException("State directory is required.");
             this.world = world;
+            this.beforeTimerWrite = beforeTimerWrite;
             string root = Path.GetFullPath(directory);
             RequireRegularPath(root);
             Directory.CreateDirectory(root);
@@ -71,6 +85,93 @@ namespace ValheimModPack.PartyPrison
         }
 
         public void SetRegion(bool authenticatedCallerIsHost, PrisonRegion value)
+        { RequireHost(authenticatedCallerIsHost); lock (timerGate) { FlushTimerLocked(); SetRegionCore(authenticatedCallerIsHost, value); } }
+        public SentenceState Impose(bool authenticatedCallerIsHost, string authenticatedAccountId, string playerName,
+            string reason, double seconds, PrisonPoint returnPosition)
+        { RequireHost(authenticatedCallerIsHost); lock (timerGate) { FlushTimerLocked(); return ImposeCore(authenticatedCallerIsHost, authenticatedAccountId, playerName, reason, seconds, returnPosition); } }
+        public SentenceState[] TickOnline(IEnumerable<string> verifiedOnlineAccounts, double seconds)
+        { lock (timerGate) { FlushTimerLocked(); return TickOnlineCore(verifiedOnlineAccounts, seconds); } }
+        public SentenceState RequestRelease(bool authenticatedCallerIsHost, string authenticatedAccountId)
+        { RequireHost(authenticatedCallerIsHost); lock (timerGate) { FlushTimerLocked(); return RequestReleaseCore(authenticatedCallerIsHost, authenticatedAccountId); } }
+        public SentenceState RequestEmergencyRelease(bool authenticatedCallerIsHost, string authenticatedAccountId)
+        { RequireHost(authenticatedCallerIsHost); lock (timerGate) { FlushTimerLocked(); return RequestEmergencyReleaseCore(authenticatedCallerIsHost, authenticatedAccountId); } }
+        public bool AcknowledgeRelease(string authenticatedAccountId, string sentenceId)
+        { lock (timerGate) { FlushTimerLocked(); return AcknowledgeReleaseCore(authenticatedAccountId, sentenceId); } }
+
+        // Timer commits are bounded to one background write. Queries expose only
+        // durable time, never an unsaved expiry. Commands and shutdown drain this
+        // queue before mutating the same store; there are no Unity APIs here.
+        public bool QueueTickOnline(IEnumerable<string> verifiedOnlineAccounts, double seconds)
+        {
+            SentencePolicy.RequireTick(seconds);
+            if (verifiedOnlineAccounts == null) throw new ArgumentNullException("verifiedOnlineAccounts");
+            var accounts = new HashSet<string>(StringComparer.Ordinal);
+            foreach (string account in verifiedOnlineAccounts) {
+                SentencePolicy.RequireAccountId(account); accounts.Add(account);
+                if (accounts.Count > SentencePolicy.MaximumSentences) throw new InvalidDataException("Oversized active prisoner roster.");
+            }
+            lock (timerGate) {
+                if (timerWrite != null && timerWrite.IsCompleted) FinishTimerLocked();
+                lock (sync) {
+                    CheckOpen();
+                    foreach (string account in accounts) {
+                        SentenceState value;
+                        if (seconds == 0 || !sentences.TryGetValue(account, out value) || value.PendingRelease) continue;
+                        TimerDebit debit;
+                        if (!queuedTimer.TryGetValue(account, out debit) || debit.Token != value.SentenceId)
+                            queuedTimer[account] = debit = new TimerDebit { Token = value.SentenceId };
+                        debit.Seconds = Math.Min(value.RemainingSeconds, debit.Seconds + seconds);
+                    }
+                }
+                if (timerWrite != null) return false;
+                PrisonRegion copyRegion; Dictionary<string, SentenceState> next = TakeQueuedTimer(out copyRegion);
+                if (next == null) return false;
+                timerWrite = Task.Run(() => {
+                    try {
+                        if (beforeTimerWrite != null) beforeTimerWrite();
+                        Persist(copyRegion, next);
+                        lock (sync) { CheckOpen(); sentences = next; }
+                    }
+                    catch { MarkFault("Background sentence timer could not be saved."); throw; }
+                });
+                return true;
+            }
+        }
+
+        private Dictionary<string, SentenceState> TakeQueuedTimer(out PrisonRegion copyRegion)
+        {
+            lock (sync) {
+                CheckOpen(); copyRegion = region == null ? null : region.Copy();
+                if (queuedTimer.Count == 0) return null;
+                Dictionary<string, SentenceState> next = CopySentences(); bool changed = false;
+                foreach (var pair in queuedTimer) {
+                    SentenceState value;
+                    if (!next.TryGetValue(pair.Key, out value) || value.PendingRelease || value.SentenceId != pair.Value.Token || pair.Value.Seconds <= 0) continue;
+                    value.RemainingSeconds = Math.Max(0, value.RemainingSeconds - pair.Value.Seconds);
+                    value.PendingRelease = value.RemainingSeconds == 0;
+                    value.Revision = checked(value.Revision + 1); changed = true;
+                }
+                queuedTimer.Clear(); return changed ? next : null;
+            }
+        }
+        private void FinishTimerLocked()
+        {
+            Task pending = timerWrite;
+            if (pending == null) return;
+            try { pending.GetAwaiter().GetResult(); }
+            catch { MarkFault("Background sentence timer could not be saved."); throw; }
+            finally { timerWrite = null; }
+        }
+        private void FlushTimerLocked()
+        {
+            FinishTimerLocked();
+            if (queuedTimer.Count == 0) return;
+            PrisonRegion copyRegion; Dictionary<string, SentenceState> next = TakeQueuedTimer(out copyRegion);
+            if (next == null) return;
+            Persist(copyRegion, next); lock (sync) { sentences = next; }
+        }
+
+        private void SetRegionCore(bool authenticatedCallerIsHost, PrisonRegion value)
         {
             RequireHost(authenticatedCallerIsHost);
             SentencePolicy.RequireRegion(value);
@@ -83,7 +184,7 @@ namespace ValheimModPack.PartyPrison
             }
         }
 
-        public SentenceState Impose(bool authenticatedCallerIsHost, string authenticatedAccountId, string playerName,
+        private SentenceState ImposeCore(bool authenticatedCallerIsHost, string authenticatedAccountId, string playerName,
             string reason, double seconds, PrisonPoint returnPosition)
         {
             RequireHost(authenticatedCallerIsHost);
@@ -104,7 +205,7 @@ namespace ValheimModPack.PartyPrison
             }
         }
 
-        public SentenceState[] TickOnline(IEnumerable<string> verifiedOnlineAccounts, double seconds)
+        private SentenceState[] TickOnlineCore(IEnumerable<string> verifiedOnlineAccounts, double seconds)
         {
             SentencePolicy.RequireTick(seconds);
             if (verifiedOnlineAccounts == null) throw new ArgumentNullException("verifiedOnlineAccounts");
@@ -137,7 +238,7 @@ namespace ValheimModPack.PartyPrison
             }
         }
 
-        public SentenceState RequestRelease(bool authenticatedCallerIsHost, string authenticatedAccountId)
+        private SentenceState RequestReleaseCore(bool authenticatedCallerIsHost, string authenticatedAccountId)
         {
             RequireHost(authenticatedCallerIsHost);
             SentencePolicy.RequireAccountId(authenticatedAccountId);
@@ -157,7 +258,7 @@ namespace ValheimModPack.PartyPrison
         // Keep the release in the durable sentence until the recipient saves
         // its cleanup. This works before confiscation as well as after it, and
         // reconnecting clients receive the same explicit cancellation decision.
-        public SentenceState RequestEmergencyRelease(bool authenticatedCallerIsHost, string authenticatedAccountId)
+        private SentenceState RequestEmergencyReleaseCore(bool authenticatedCallerIsHost, string authenticatedAccountId)
         {
             RequireHost(authenticatedCallerIsHost);
             SentencePolicy.RequireAccountId(authenticatedAccountId);
@@ -176,7 +277,7 @@ namespace ValheimModPack.PartyPrison
 
         // Call only after the host authenticates the ACK sender and verifies that
         // the client actually applied this release. Old tokens cannot erase a new sentence.
-        public bool AcknowledgeRelease(string authenticatedAccountId, string sentenceId)
+        private bool AcknowledgeReleaseCore(string authenticatedAccountId, string sentenceId)
         {
             SentencePolicy.RequireAccountId(authenticatedAccountId);
             lock (sync)
@@ -307,11 +408,11 @@ namespace ValheimModPack.PartyPrison
             }
             catch (Exception error)
             {
-                Faulted = true; FaultReason = "Prison state could not be verified; host must stop admitting players and repair the file.";
+                MarkFault("Prison state could not be verified; host must stop admitting players and repair the file.");
                 throw new IOException(FaultReason, error);
             }
             if (same) return;
-            Faulted = true; FaultReason = "Prison state changed outside this host; file preserved and host must stop admitting players.";
+            MarkFault("Prison state changed outside this host; file preserved and host must stop admitting players.");
             throw new IOException(FaultReason);
         }
 
@@ -382,6 +483,12 @@ namespace ValheimModPack.PartyPrison
                 current = Path.GetDirectoryName(current);
             }
         }
-        public void Dispose() { lock (sync) { if (disposed) return; disposed = true; processLock.Dispose(); } }
+        public void Dispose() {
+            lock (timerGate) {
+                lock (sync) { if (disposed) return; }
+                try { FlushTimerLocked(); }
+                finally { lock (sync) { disposed = true; processLock.Dispose(); } }
+            }
+        }
     }
 }

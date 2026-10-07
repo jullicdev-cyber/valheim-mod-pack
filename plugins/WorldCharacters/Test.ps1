@@ -14,6 +14,12 @@ $sources = @('State.cs','NativeInventory.cs','StateStore.cs','Session.cs','Tests
 if ($LASTEXITCODE -ne 0) { throw 'World Characters test build failed' }
 & $runner (Join-Path $folder 'state') $PlayerDataFixture
 if ($LASTEXITCODE -ne 0) { throw 'World Characters tests failed' }
+$maintenanceRunner = Join-Path $folder 'PeerMaintenanceTests.exe'
+$maintenanceSources = @('PeerMaintenance.cs','PeerMaintenanceTests.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
+& $compiler /nologo /codepage:65001 /target:exe /optimize+ "/out:$maintenanceRunner" @maintenanceSources
+if ($LASTEXITCODE -ne 0) { throw 'Peer maintenance tests build failed' }
+& $maintenanceRunner
+if ($LASTEXITCODE -ne 0) { throw 'Peer maintenance tests failed' }
 foreach ($suite in @('SnapshotWriterTests','SessionAsyncTests','StateAllocationTests','SnapshotFlowTests','SnapshotRateLimitTests')) {
     $asyncRunner = Join-Path $folder ($suite + '.exe')
     $asyncSources = @('State.cs','NativeInventory.cs','StateStore.cs','Session.cs','SnapshotWriter.cs','SnapshotRateLimit.cs',($suite + '.cs')) | ForEach-Object { Join-Path $PSScriptRoot $_ }

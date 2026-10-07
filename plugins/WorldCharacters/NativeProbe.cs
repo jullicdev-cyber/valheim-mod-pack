@@ -123,6 +123,7 @@ namespace ValheimModPack.WorldCharactersProbe
                 Check(state.WorldData.Length >= 59 && state.Player.SequenceEqual(payload), "native existing-profile migration preserves bytes");
                 gameState.GetMethod("Apply").Invoke(null,new object[]{profile,state});
                 Check(((byte[])AccessTools.Field(typeof(PlayerProfile),"m_playerData").GetValue(profile)).SequenceEqual(payload), "native profile restore preserves player payload");
+                VerifyCurrentWorldFields(profile, gameState, fingerprint);
                 string inputResult = WorldCharactersAdministrationInputNativeChecks.Run();
                 Check(inputResult.StartsWith("PASS"), "native administration input assertions");
                 string uiResult = "Graphical administration checks not requested.";
@@ -139,6 +140,42 @@ namespace ValheimModPack.WorldCharactersProbe
                 else Finish(result,0);
             }
             catch(Exception e) { Finish("FAIL after " + checks + " native checks: " + e,2); }
+        }
+        private void VerifyCurrentWorldFields(PlayerProfile profile, Type gameState, string fingerprint)
+        {
+            const long firstWorld = 123, otherWorld = 987;
+            MethodInfo getter = AccessTools.Method(typeof(PlayerProfile), "GetWorldData", new[] { typeof(long) });
+            object first = getter.Invoke(profile, new object[] { firstWorld });
+            string[] pointNames = { "m_spawnPoint", "m_logoutPoint", "m_deathPoint", "m_homePoint" };
+            string[] flagNames = { "m_haveCustomSpawnPoint", "m_haveLogoutPoint", "m_haveDeathPoint" };
+            for (int i = 0; i < pointNames.Length; ++i)
+                AccessTools.Field(first.GetType(), pointNames[i]).SetValue(first, new Vector3(10 + i, 20 + i, 30 + i));
+            for (int i = 0; i < flagNames.Length; ++i) AccessTools.Field(first.GetType(), flagNames[i]).SetValue(first, i != 1);
+            byte[] originalMap = { 1, 2, 3, 4 };
+            AccessTools.Field(first.GetType(), "m_mapData").SetValue(first, originalMap);
+            CharacterState captured = (CharacterState)gameState.GetMethod("FromProfile").Invoke(null, new object[] { profile, firstWorld, "host", fingerprint, false, true });
+            // Change the native values after the first read. The cache may hold
+            // FieldInfo, never a particular world's values or instance.
+            AccessTools.Field(first.GetType(), pointNames[0]).SetValue(first, new Vector3(81, 82, 83));
+            AccessTools.Field(first.GetType(), "m_mapData").SetValue(first, new byte[] { 7, 8 });
+            CharacterState updated = (CharacterState)gameState.GetMethod("FromProfile").Invoke(null, new object[] { profile, firstWorld, "host", fingerprint, false, true });
+            Check(!captured.WorldData.SequenceEqual(updated.WorldData), "cached profile metadata reads changed current positions and map");
+            CharacterState positions = (CharacterState)gameState.GetMethod("FromProfile").Invoke(null, new object[] { profile, firstWorld, "host", fingerprint, false, false });
+            Check(positions.WorldData.SequenceEqual(StateCodec.WithoutMap(updated.WorldData)), "cached world fields preserve the position-only save envelope");
+            // Apply the original snapshot to another world and read it back.
+            CharacterState target = captured.Copy(); target.World = otherWorld;
+            gameState.GetMethod("Apply").Invoke(null, new object[] { profile, target });
+            CharacterState roundTrip = (CharacterState)gameState.GetMethod("FromProfile").Invoke(null, new object[] { profile, otherWorld, "host", fingerprint, false, true });
+            Check(roundTrip.WorldData.SequenceEqual(captured.WorldData), "cached world fields retain all flags, positions and map through native restore");
+            object other = getter.Invoke(profile, new object[] { otherWorld });
+            for (int i = 0; i < pointNames.Length; ++i)
+                Check((Vector3)AccessTools.Field(other.GetType(), pointNames[i]).GetValue(other) == new Vector3(10 + i, 20 + i, 30 + i), "native point restored independently: " + pointNames[i]);
+            for (int i = 0; i < flagNames.Length; ++i)
+                Check((bool)AccessTools.Field(other.GetType(), flagNames[i]).GetValue(other) == (i != 1), "native profile flag preserved: " + flagNames[i]);
+            Check(((byte[])AccessTools.Field(first.GetType(), "m_mapData").GetValue(first)).SequenceEqual(new byte[] { 7, 8 }), "restoring another world does not overwrite this world's current map");
+            target.WorldData = new byte[0]; gameState.GetMethod("Apply").Invoke(null, new object[] { profile, target });
+            Check(flagNames.All(name => !(bool)AccessTools.Field(other.GetType(), name).GetValue(other))
+                && AccessTools.Field(other.GetType(), "m_mapData").GetValue(other) == null, "fresh restore clears every current-world flag and map");
         }
         private IEnumerator PreviewAndFinish(string result)
         {

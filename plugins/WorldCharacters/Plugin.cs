@@ -15,7 +15,7 @@ namespace ValheimModPack.WorldCharacters
     [BepInIncompatibility("org.bepinex.plugins.servercharacters")]
     public sealed partial class Plugin : BaseUnityPlugin
     {
-        public const string Id = "valheimmodpack.worldcharacters", Version = "1.1.0";
+        public const string Id = "valheimmodpack.worldcharacters", Version = "1.1.1";
         private const string RpcName = "VMP_WorldCharacters_v1";
         private const int SnapshotQueueCapacity = 64;
         internal static Plugin Instance;
@@ -31,7 +31,8 @@ namespace ValheimModPack.WorldCharacters
         private string fingerprint;
         private readonly Dictionary<ZRpc, Link> links = new Dictionary<ZRpc, Link>();
         private readonly HashSet<string> leases = new HashSet<string>();
-        private readonly List<ZRpc> disconnect = new List<ZRpc>();
+        private readonly Queue<ZRpc> disconnect = new Queue<ZRpc>();
+        private readonly PeerMaintenance<ZRpc, Link> peerMaintenance = new PeerMaintenance<ZRpc, Link>(0.5);
         private ConfigEntry<int> interval;
         private ConfigEntry<bool> protectSolo;
         private readonly LocalProtectionPolicy protection = new LocalProtectionPolicy();
@@ -112,20 +113,28 @@ namespace ValheimModPack.WorldCharacters
                 exitOnUpdate = false;
                 if (Game.instance) { continuingLogout = true; try { Game.instance.Logout(false, true); } finally { continuingLogout = false; } }
             }
-            foreach (ZRpc rpc in disconnect.ToArray())
+            // Process exactly the batch present at entry. A disconnect callback
+            // may enqueue another peer, which is safely handled next frame.
+            int rejectedCount = disconnect.Count, rejectedGeneration = saveGeneration;
+            for (int i = 0; i < rejectedCount && disconnect.Count != 0 && rejectedGeneration == saveGeneration; ++i)
             {
-                disconnect.Remove(rpc);
+                ZRpc rpc = disconnect.Dequeue();
                 Link rejected; ZNetPeer peer = links.TryGetValue(rpc, out rejected) ? rejected.Peer : null;
                 if (peer != null) ZNet.instance.Disconnect(peer);
             }
             float now = Time.realtimeSinceStartup;
-            foreach (Link link in links.Values.ToArray())
+            if (peerMaintenance.TryCapture(links, now))
             {
-                if (link.Rejected) continue;
-                if (Hosting && ((link.Session == null && now - link.Created > 120)
-                    || (link.Session != null && !link.Session.Loaded && now - link.Created > 120)
-                    || (link.Session != null && link.Session.Loaded && !link.Session.Closed && now - link.LastMessage > 90)))
-                    Reject(link, "Character handshake or snapshot timed out.");
+                bool hosting = peerMaintenance.Count != 0 && Hosting;
+                for (int i = 0; i < peerMaintenance.Count; ++i)
+                {
+                    Link link = peerMaintenance[i];
+                    if (link.Rejected) continue;
+                    if (hosting && ((link.Session == null && now - link.Created > 120)
+                        || (link.Session != null && !link.Session.Loaded && now - link.Created > 120)
+                        || (link.Session != null && link.Session.Loaded && !link.Session.Closed && now - link.LastMessage > 90)))
+                        Reject(link, "Character handshake or snapshot timed out.");
+                }
             }
             if (Managed && !Hosting && !ready && !failed && server != null && now - server.Created > 120)
                 Fail("The server did not provide a World Characters save. Install the same modpack on the host.");
@@ -217,7 +226,7 @@ namespace ValheimModPack.WorldCharacters
             if (link.Rejected) return;
             link.Rejected = true; Logger.LogWarning(reason);
             try { Send(link, 9, p => p.Write(reason)); } catch (Exception) { }
-            disconnect.Add(link.Peer.m_rpc);
+            disconnect.Enqueue(link.Peer.m_rpc);
         }
         // Sent immediately before vanilla PeerInfo; that message still validates the game's password/authentication.
         private bool BeforeSendPeerInfo(ZRpc rpc)
@@ -538,7 +547,7 @@ namespace ValheimModPack.WorldCharacters
             ResetAdministration();
             FlushWrites(); ++saveGeneration;
             protection.Clear();
-            links.Clear(); leases.Clear(); disconnect.Clear(); localHost = null; server = null; offered = null; protectedProfile = null;
+            links.Clear(); leases.Clear(); disconnect.Clear(); peerMaintenance.Reset(); localHost = null; server = null; offered = null; protectedProfile = null;
             ready = failed = firstLoadSeen = saving = closing = continuingLogout = loadCompleted = exitOnUpdate = false;
             loadedPlayer = null; sent = acknowledged = 0; lastMapCapture = 0;
             produced = localDurable = 0; cachedWorldData = null;

@@ -34,7 +34,7 @@ namespace ValheimModPack.PartyPrison
             Vector3 altar, bool clearPlayerStructures)
         {
             RequireHost();
-            if (!Finite(origin) || !Finite(altar) || !Finite(extent) || extent < 12f || extent > 20f ||
+            if (!Finite(origin) || !Finite(altar) || !Finite(extent) || extent < 12f || extent > 30f ||
                 !Finite(low) || !Finite(high) || high <= low || high - low > 40f ||
                 !Finite(rotation.x) || !Finite(rotation.y) || !Finite(rotation.z) || !Finite(rotation.w))
                 throw new ArgumentException("Неверные границы очистки площадки под тюрьму.");

@@ -51,8 +51,18 @@ try {
     }
     $profile = $game.MainModule.Types | Where-Object Name -eq 'PlayerProfile'
     if (-not ($profile.Fields | Where-Object { $_.Name -eq 'm_playerData' -and $_.FieldType.FullName -eq 'System.Byte[]' })) { throw 'Player data field changed' }
-    if (-not ($profile.Methods | Where-Object { $_.Name -eq 'GetWorldData' -and $_.Parameters.Count -eq 1 -and $_.Parameters[0].ParameterType.FullName -eq 'System.Int64' })) { throw 'World profile getter changed' }
+    $worldGetter = @($profile.Methods | Where-Object { $_.Name -eq 'GetWorldData' -and $_.Parameters.Count -eq 1 -and $_.Parameters[0].ParameterType.FullName -eq 'System.Int64' })
+    if ($worldGetter.Count -ne 1) { throw 'World profile getter changed' }
     $count += 2
+    $worldData = $worldGetter[0].ReturnType.Resolve()
+    foreach ($spec in @(
+        @('m_haveCustomSpawnPoint','System.Boolean'),@('m_haveLogoutPoint','System.Boolean'),@('m_haveDeathPoint','System.Boolean'),
+        @('m_spawnPoint','UnityEngine.Vector3'),@('m_logoutPoint','UnityEngine.Vector3'),@('m_deathPoint','UnityEngine.Vector3'),@('m_homePoint','UnityEngine.Vector3'),
+        @('m_mapData','System.Byte[]'))) {
+        $matches = @($worldData.Fields | Where-Object { $_.Name -eq $spec[0] -and $_.FieldType.FullName -eq $spec[1] -and -not $_.IsStatic })
+        if ($matches.Count -ne 1) { throw "Cached native world-profile field changed: $($spec[0])" }
+        $count++
+    }
     # The shutdown checkpoint reuses the character snapshot committed before the
     # scene invalidates Player's ZDO. Fail if native lifecycle ordering changes.
     $gameType = $game.MainModule.Types | Where-Object Name -eq 'Game'

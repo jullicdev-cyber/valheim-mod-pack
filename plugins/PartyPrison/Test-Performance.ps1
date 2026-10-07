@@ -185,8 +185,29 @@ try {
     $maintenance = Method $pluginType 'MaintainCombatGear' 0
     Clock-Gate $maintenance 'nextGearMaintenance' 0.5 'ArenaBuilder::RemoveObsoleteGearWhenSettled'
     Clock-Gate $maintenance 'nextStoredGearMaintenance' 1 'ArenaBuilder::ExpireStoredPrisonGear'
-    Check (@(Calls $maintenance 'Plugin::RefreshHostCombatState').Count -eq 1) (
-        'Local gear polling must not add another combat region query outside the once-per-second host-storage gate.')
+    Check (@(Calls $maintenance 'Plugin::RefreshHostCombatState').Count -eq 0) (
+        'Gear polling must reuse the combat state already refreshed by HostTick.')
+    foreach ($poll in @($maintenance, (Method $pluginType 'ApplyCombatChoice' 3))) {
+        Check (-not [bool](Calls $poll 'ZNet::Save')) 'Enemy choices and routine stale gear removal must not force a world checkpoint.'
+    }
+    Check ([bool](Calls $hostTick 'SentenceStore::QueueTickOnline') -and -not [bool](Calls $hostTick 'SentenceStore::TickOnline\(')) (
+        'The periodic prison timer must use the nonblocking durable worker queue.')
+    $timerQueue = Method 'ValheimModPack.PartyPrison.SentenceStore' 'QueueTickOnline' 2
+    Check ([bool](Calls $timerQueue 'System\.Threading\.Tasks\.Task::Run')) 'Sentence timer disk persistence must run on a worker.'
+    Check ([bool](Calls $timerQueue 'System\.Threading\.Tasks\.Task::get_IsCompleted')) 'Timer polling must observe completion before draining a previous worker.'
+    foreach ($timerMethod in @(Graph $timerQueue)) {
+        Check (-not [bool](Calls $timerMethod 'UnityEngine\.|ZNet::|Player::|Inventory::')) 'Background sentence persistence must not access native game objects.'
+    }
+    $controlPrefix = Method 'ValheimModPack.PartyPrison.ControlsPatch' 'Prefix' 13
+    Check (-not [bool]($controlPrefix.Parameters | Where-Object { $_.Name -eq '__args' -or $_.ParameterType.FullName -eq 'System.Object[]' })) (
+        'Every-frame controls must bind typed references without boxed argument arrays.')
+    Check (-not [bool]($controlPrefix.Body.Instructions | Where-Object { $_.OpCode.Name -in @('box','newarr') })) 'Warm input guard must not box controls or allocate an argument array.'
+    $nativeControls = @($native.MainModule.Types | Where-Object Name -eq 'Player' | ForEach-Object Methods | Where-Object Name -eq 'SetControls')
+    Check ($nativeControls.Count -eq 1 -and $nativeControls[0].Parameters.Count -eq 12) 'Native Player.SetControls signature changed.'
+    for ($controlIndex = 0; $controlIndex -lt 12; ++$controlIndex) {
+        Check ($controlPrefix.Parameters[$controlIndex + 1].ParameterType.FullName -ceq ($nativeControls[0].Parameters[$controlIndex].ParameterType.FullName + '&')) (
+            'Typed controls prefix must preserve exact native argument type at index ' + $controlIndex)
+    }
     No-WorldScan $maintenance
     $kitLookup = Method $arenaType 'GetKitZdo' 1
     Check ([bool](Calls $kitLookup 'ArenaBuilder::StoredGearChests') -and -not [bool](Calls $kitLookup 'ArenaBuilder::TaggedRegionObjects')) (
@@ -325,7 +346,44 @@ try {
         Check ([bool](Calls $state 'CustodyStore::FindState')) ('Frequent state updates must not clone full item backups: ' + $name)
         Check (-not [bool](Calls $state 'CustodyStore::Find\(')) ('Full custody payload lookup remains in a frequent state update: ' + $name)
     }
-    Write-Output ('PASS: ' + $script:checks + ' prison inventory, admission, arena and spawn performance contracts against the installed game. No game process launched.')
+    # Native death ABI: the arena borrows only the game's skill-loss branch;
+    # the detached Unity fixture covers its behavior when a launch is possible.
+    $playerType = @($native.MainModule.Types | Where-Object FullName -eq 'Player')[0]
+    $hardDeath = @($playerType.Methods | Where-Object { $_.Name -eq 'HardDeath' -and $_.Parameters.Count -eq 0 })
+    Check ($hardDeath.Count -eq 1 -and -not $hardDeath[0].IsStatic -and $hardDeath[0].ReturnType.FullName -eq 'System.Boolean') 'Native HardDeath must remain the instance bool cooldown policy.'
+    foreach ($name in @('m_timeSinceDeath','m_hardDeathCooldown')) {
+        $field = @($playerType.Fields | Where-Object Name -eq $name)
+        Check ($field.Count -eq 1 -and -not $field[0].IsStatic -and $field[0].FieldType.FullName -eq 'System.Single') ('Native death timer ABI changed: ' + $name)
+    }
+    $skillsType = @($native.MainModule.Types | Where-Object FullName -eq 'Skills')[0]
+    foreach ($name in @('Clear','OnDeath')) {
+        $method = @($skillsType.Methods | Where-Object { $_.Name -eq $name -and $_.Parameters.Count -eq 0 })
+        Check ($method.Count -eq 1 -and $method[0].IsPublic -and -not $method[0].IsStatic -and $method[0].ReturnType.FullName -eq 'System.Void') ('Native skill penalty ABI changed: ' + $name)
+    }
+    $penalty = Method 'ValheimModPack.PartyPrison.ArenaDefeatPenalty' 'Apply' 1
+    Check ([bool](Calls $penalty 'Skills::OnDeath') -and [bool](Calls $penalty 'Skills::Clear') -and [bool](Calls $penalty 'ZoneSystem::GetGlobalKey')) 'Arena skill loss must reuse the native skill and world-rule APIs.'
+    Check (-not [bool](Calls $penalty 'Player::OnDeath|Player::ClearHardDeath|Skills::LowerAllSkills')) 'Arena penalty must not create a second native death or bypass native skill policy.'
+    $enforce = Method $pluginType 'Enforce' 1
+    Check (@(Calls $enforce 'ArenaDefeatPenalty::Apply').Count -eq 1) 'Arena defeat must have one skill penalty dispatch.'
+    $restore = @(Calls $enforce 'Character::SetHealth|Player::SetHealth')
+    $ready = @(Calls $enforce 'WorldCharacters\.Plugin::get_AdministrativeReady')
+    $loss = @(Calls $enforce 'ArenaDefeatPenalty::Apply')
+    Check ($restore.Count -eq 1 -and $ready.Count -eq 1 -and $restore[0].Offset -lt $loss[0].Offset -and $loss[0].Offset -lt $ready[0].Offset) 'Lethal arena damage must restore the actor before skill processing and before the administrative readiness gate.'
+    foreach ($target in @('Plugin::NotifyDefeat','WorldCharacters\.Plugin::RequestAdministrativeSave')) {
+        $call = @(Calls $enforce $target)
+        Check ($call.Count -eq 1 -and $restore[0].Offset -lt $call[0].Offset) ('Health restoration must precede a fallible defeat action: ' + $target)
+    }
+    foreach ($field in @('defeatNotificationPending','defeatCheckpointPending','nextDefeatRecovery')) {
+        Check ([bool]($enforce.Body.Instructions | Where-Object { $_.Operand -is [Mono.Cecil.FieldReference] -and $_.Operand.Name -eq $field })) ('Defeat action retries must remain independently tracked and throttled: ' + $field)
+        foreach ($name in @('Reset','ClientMessage')) {
+            $resetMethod = Method $pluginType $name
+            Check ([bool]($resetMethod.Body.Instructions | Where-Object { $_.OpCode.Name -eq 'stfld' -and $_.Operand.Name -eq $field })) ('Defeat retry state must clear on world/sentence reset: ' + $field)
+        }
+    }
+    $deathPrefix = Method 'ValheimModPack.PartyPrison.DefeatPatch' 'Prefix' 1
+    Check ([bool](Calls $deathPrefix 'ZNetView::IsValid') -and [bool](Calls $deathPrefix 'ZNetView::IsOwner')) 'Only the authoritative local inmate may intercept lethal damage.'
+    Check ([bool](Calls $deathPrefix 'Character::IsDead|Player::IsDead')) 'Arena interception must retain the native already-dead guard.'
+    Write-Output ('PASS: ' + $script:checks + ' prison inventory, admission, arena, death and spawn performance contracts against the installed game. No game process launched.')
 } finally {
     $plugin.Dispose()
     $native.Dispose()

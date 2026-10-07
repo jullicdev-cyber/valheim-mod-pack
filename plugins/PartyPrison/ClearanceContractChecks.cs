@@ -66,6 +66,12 @@ internal static class ClearanceContractChecks
             case Code.Ldc_I4_0: return expected == 0;
             case Code.Ldc_I4_1: return expected == 1;
             case Code.Ldc_I4_2: return expected == 2;
+            case Code.Ldc_I4_3: return expected == 3;
+            case Code.Ldc_I4_4: return expected == 4;
+            case Code.Ldc_I4_5: return expected == 5;
+            case Code.Ldc_I4_6: return expected == 6;
+            case Code.Ldc_I4_7: return expected == 7;
+            case Code.Ldc_I4_8: return expected == 8;
             case Code.Ldc_I4: return (int)instruction.Operand == expected;
             case Code.Ldc_I4_S: return (sbyte)instruction.Operand == expected;
             default: return false;
@@ -449,12 +455,32 @@ internal static class ClearanceContractChecks
             "Confirmed UI construction must use the first-click snapshot.");
         MethodDefinition buildCore = Method(runtime, "BuildPrisonCore", Namespace + "PrisonPlacementPlan");
         Instruction captureOld = Call(buildCore, builder.FullName, "CaptureStructure");
+        Instruction storageGuard = Call(buildCore, builder.FullName, "RequireEmptyStoredContainers");
         Instruction buildSite = Call(buildCore, builder.FullName, "BuildAnywhere");
         Instruction removeOld = Call(buildCore, builder.FullName, "RemoveCapturedStructure");
         Instruction oldFlush = Call(buildCore, Namespace + "SiteClearer", "FlushPendingDestruction");
         Instruction saveWorld = Call(buildCore, "ZNet", "Save");
         Check(captureOld.Offset < buildSite.Offset && buildSite.Offset < removeOld.Offset && removeOld.Offset < oldFlush.Offset && oldFlush.Offset < saveWorld.Offset,
             "Rebuild must capture old identities before new pieces exist, remove only that snapshot, flush, then save the world.");
+        Instruction[] layoutQueries = CallInstructions(buildCore).Where(i => ((MethodReference)i.Operand).DeclaringType.FullName == builder.FullName
+            && ((MethodReference)i.Operand).Name == "LayoutVersion").ToArray();
+        bool layoutCanBypassGuard = layoutQueries.Any(query => buildCore.Body.Instructions.Any(i => i.Offset > query.Offset && i.Offset < storageGuard.Offset
+            && i.OpCode.FlowControl == FlowControl.Cond_Branch && i.Operand is Instruction && ((Instruction)i.Operand).Offset > storageGuard.Offset));
+        Check(storageGuard.Offset < captureOld.Offset && !layoutCanBypassGuard,
+            "Any saved prison must pass the all-container inventory guard before capture, regardless of current layout version.");
+        MethodDefinition storage = Method(builder, "RequireEmptyStoredContainers", Namespace + "PrisonRegion",
+            "System.Collections.Generic.IList`1<ZDO>", "System.Int32", "System.Func`2<System.Int32,UnityEngine.GameObject>", "System.Func`2<ZDO,Container>");
+        Check(Calls(storage, builder.FullName, "InsideStructure") && Calls(storage, "ZDO", "GetByteArray") && Calls(storage, "ZDO", "GetString")
+            && Calls(storage, "System.Convert", "FromBase64String") && Calls(storage, Namespace + "CustodyInventory", "Count"),
+            "Rebuild storage inspection must enforce exact bounds and strictly decode both native and legacy inventory payloads.");
+        Check(GenericType(storage, "Container") && Calls(storage, "Container", "IsInUse") && Calls(storage, "Inventory", "GetAllItems"),
+            "Loaded open or unsaved nonempty equipment/legacy containers cannot be destroyed during rebuild.");
+        Check(storage.Body.Instructions.Any(i => IsInt(i, 2)) && storage.Body.Instructions.Any(i => IsInt(i, 4))
+            && storage.Body.Instructions.Count(i => i.OpCode.Code == Code.Throw) >= 6,
+            "Older v2+ prisons must fail closed on missing or duplicated permanent custody indexes, unknown prefabs and nonempty kit storage.");
+        Check(!Graph(plugin, storage).SelectMany(CallInstructions).Select(i => (MethodReference)i.Operand)
+            .Any(m => m.DeclaringType.FullName == "ZDO" && (m.Name == "Set" || m.Name == "SetOwner") || m.Name == "DestroyZDO" || m.Name == "DropItems"),
+            "Rebuild validation must inspect without modifying or clearing the previous saved storage.");
         MethodDefinition force = Method(builder, "BuildAnywhere", "UnityEngine.Vector3", "UnityEngine.Quaternion", Namespace + "PrisonRegion",
             "System.Action`1<" + Namespace + "PrisonRegion>", "System.Action`1<System.String>", "System.Action`1<System.Byte[]>");
         Instruction forcePlan = Call(force, Namespace + "TerrainLeveler", "PlanAnywhere");

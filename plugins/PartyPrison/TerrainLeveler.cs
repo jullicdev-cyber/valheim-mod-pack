@@ -57,10 +57,13 @@ namespace ValheimModPack.PartyPrison
         public static void ClearGrass(PrisonRegion region)
         {
             if (region == null) throw new ArgumentNullException("region");
-            Vector3 center = Plugin.Vector(region.Center) - Vector3.up * 4f, direction = Plugin.Vector(region.Center) - Plugin.Vector(region.CellSpawn);
+            Vector3 center = Plugin.Vector(region.Center), direction = Plugin.Vector(region.Center) - Plugin.Vector(region.CellSpawn);
+            center.y = (float)region.CellSpawn.Y - 1f;
             direction.y = 0f;
             Quaternion rotation = direction.sqrMagnitude > .1f ? Quaternion.LookRotation(Vector3.Cross(direction.normalized, Vector3.up)) : Quaternion.identity;
-            Site site = PlanAnywhere(center, center.y - .15f, rotation);
+            float extent = (float)TerrainPlan.EnclosingExtent(rotation.eulerAngles.y, ArenaGeometry.Expanded(region));
+            Site site = Character.InInterior(center) ? PlanInterior(center, center.y - .15f, extent)
+                : Inspect(center, Vector3.zero, center.y - .15f, extent, true);
             using (Transaction transaction = site.ApplyClearPaint()) transaction.Commit();
         }
 

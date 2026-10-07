@@ -5,7 +5,7 @@ namespace ValheimModPack.PartyPrison
     /// <summary>Immutable host-relative placement; no world object or terrain is touched.</summary>
     public sealed class PrisonPlacementPlan
     {
-        public const double CenterDistance = 32d;
+        public const double CenterDistance = 40d;
         private const double MaximumCoordinate = 20000d;
         private const double MinimumHorizontalLook = 0.0001d;
         private readonly PrisonPoint origin;
@@ -61,5 +61,54 @@ namespace ValheimModPack.PartyPrison
         }
 
         private static bool Finite(double value) { return !Double.IsNaN(value) && !Double.IsInfinity(value); }
+    }
+
+    /// <summary>Geometry selected from the durable region, without object scans or mutable layout caches.</summary>
+    public static class ArenaGeometry
+    {
+        public const double ExpandedRadius = 26d;
+        public const double HalfWidth = 18d;
+        public const double Height = 12d;
+        public const double ArenaMinimum = -10d;
+        public const double LegacyHalfWidth = 12d;
+        public const double LegacyHeight = 8d;
+        public const double LegacyArenaMinimum = -4d;
+
+        public static bool Expanded(PrisonRegion region)
+        { return region != null && region.Radius >= ExpandedRadius - .001d; }
+        public static double RoomHalfWidth(PrisonRegion region)
+        { return Expanded(region) ? HalfWidth : LegacyHalfWidth; }
+        public static double RoomHeight(PrisonRegion region)
+        { return Expanded(region) ? Height : LegacyHeight; }
+        public static double Divider(PrisonRegion region)
+        { return Expanded(region) ? ArenaMinimum : LegacyArenaMinimum; }
+
+        // Order alternates opposite corners, then the four side approaches. Even
+        // a two-enemy wave therefore starts on different sides of the prisoner.
+        public static PrisonPoint Spawn(PrisonRegion region, int index)
+        {
+            if (index < 0 || index >= 8) throw new ArgumentOutOfRangeException("index");
+            if (!Expanded(region)) {
+                int spoke;
+                switch (index) {
+                    case 0: spoke = 0; break; case 1: spoke = 4; break;
+                    case 2: spoke = 2; break; case 3: spoke = 6; break;
+                    case 4: spoke = 1; break; case 5: spoke = 5; break;
+                    case 6: spoke = 3; break; default: spoke = 7; break;
+                }
+                double angle = spoke * Math.PI / 4d;
+                return new PrisonPoint(4d + Math.Cos(angle) * 4d, 1d, 4d + Math.Sin(angle) * 4d);
+            }
+            switch (index) {
+                case 0: return new PrisonPoint(-6d, 1d, -6d);
+                case 1: return new PrisonPoint(14d, 1d, 14d);
+                case 2: return new PrisonPoint(-6d, 1d, 14d);
+                case 3: return new PrisonPoint(14d, 1d, -6d);
+                case 4: return new PrisonPoint(4d, 1d, -6d);
+                case 5: return new PrisonPoint(14d, 1d, 6d);
+                case 6: return new PrisonPoint(-6d, 1d, 4d);
+                default: return new PrisonPoint(4d, 1d, 14d);
+            }
+        }
     }
 }
