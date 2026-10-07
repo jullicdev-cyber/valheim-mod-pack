@@ -67,7 +67,8 @@ namespace ValheimModPack.InterfaceInputFix
                 finally { test.UnpatchSelf(); if (panel != null) UnityEngine.Object.DestroyImmediate(panel); }
             }
             return "InterfaceInputFix native PASS: " + checks + " assertions; real patched XPortal lifecycle with isolated panel/counter (no player inventory mutated)."
-                + (hasBackpacks ? " Backpack API and Harmony hook verified." : "\nSKIP: Adventure Backpacks API checks; optional plugin is absent.");
+                + (hasBackpacks ? " Backpack API and Harmony hook verified." : "\nSKIP: Adventure Backpacks API checks; optional plugin is absent.")
+                + "\n" + ValheimPlusEditingNativeChecks.Run();
         }
         private static bool HasPatch(MethodInfo method)
         {

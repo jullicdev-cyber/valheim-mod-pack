@@ -1,5 +1,5 @@
 {
-  "packVersion": "1.27.6",
+  "packVersion": "1.27.7",
   "created": "2026-09-25",
   "targetGameVersion": "1.0.17",
   "packages": [
@@ -391,8 +391,8 @@
         "denikson-BepInExPack_Valheim-5.4.2351",
         "ValheimModding-Jotunn-2.30.2"
       ],
-      "version": "1.1.2",
-      "sha256": "0f549f498f28952dc1b9b01eee85833c00355eae61fdacdab59837647bdd556f"
+      "version": "1.1.3",
+      "sha256": "f3a6e326f28c4ff6ba86b955bf9ab396c877a1cd0e17f5735ead476e7e559e91"
     },
     {
       "id": "ValheimModPack-RenewableResourceTimers",
@@ -407,10 +407,10 @@
     },
     {
       "id": "ValheimModPack-WorldCharacters",
-      "version": "1.1.1",
+      "version": "1.1.2",
       "source": "local-plugins/WorldCharacters.dll",
       "destination": "BepInEx/plugins/ValheimModPack-WorldCharacters/WorldCharacters.dll",
-      "sha256": "d85b6c5a9e3c25296b56030296a19d766fb27f61045cfb3c47c774fb77b7c7f1",
+      "sha256": "9e8ba66f47aff7b70d605b389cba5c796e7c1635eba12947a53cdb3c45bfd77e",
       "dependencies": [
         "denikson-BepInExPack_Valheim-5.4.2351",
         "ValheimModding-Jotunn-2.30.2"

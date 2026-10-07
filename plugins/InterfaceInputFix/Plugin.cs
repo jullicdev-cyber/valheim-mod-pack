@@ -16,10 +16,12 @@ namespace ValheimModPack.InterfaceInputFix
     [BepInDependency("yay.spikehimself.xportal", BepInDependency.DependencyFlags.SoftDependency)]
     [BepInDependency("vapok.mods.adventurebackpacks", BepInDependency.DependencyFlags.SoftDependency)]
     [BepInDependency("isimp.Bindrune", BepInDependency.DependencyFlags.SoftDependency)]
+    [BepInDependency("org.bepinex.plugins.valheim_plus", BepInDependency.DependencyFlags.SoftDependency)]
+    [BepInDependency("valheimmodpack.partyprison", BepInDependency.DependencyFlags.SoftDependency)]
     [NetworkCompatibility(CompatibilityLevel.NotEnforced, VersionStrictness.None)]
     public sealed class Plugin : BaseUnityPlugin
     {
-        public const string Id = "valheimmodpack.interfaceinputfix", Version = "1.1.2";
+        public const string Id = "valheimmodpack.interfaceinputfix", Version = "1.1.3";
         private static Plugin active;
         private Harmony harmony;
         private InputLease portalLease;
@@ -43,6 +45,7 @@ namespace ValheimModPack.InterfaceInputFix
             catch (Exception e) { harmony.UnpatchSelf(); PortalPatched = false; Logger.LogError("XPortal compatibility disabled: " + e); }
             try { PatchBackpack(); } catch (Exception e) { Logger.LogError("Backpack compatibility disabled: " + e); }
             try { BindruneCompat.Install(e => Logger.LogError(e)); } catch (Exception e) { Logger.LogError("Bindrune compatibility disabled: " + e); }
+            try { ValheimPlusEditingCompat.Install(s => Logger.LogWarning(s)); } catch (Exception e) { Logger.LogError("Valheim Plus editing compatibility disabled: " + e); }
             Logger.LogInfo("Interface fixes ready: XPortal=" + PortalPatched + ", AdventureBackpacks=" + BackpackPatched);
         }
         private Type SupportedType(string guid, string version, string name)
@@ -204,7 +207,7 @@ namespace ValheimModPack.InterfaceInputFix
         }
         private void OnDestroy()
         {
-            try { BindruneCompat.Dispose(); if (portalLease != null) ClosePortal(); }
+            try { ValheimPlusEditingCompat.Dispose(); BindruneCompat.Dispose(); if (portalLease != null) ClosePortal(); }
             finally { if (harmony != null) harmony.UnpatchSelf(); if (ReferenceEquals(active, this)) active = null; }
         }
     }

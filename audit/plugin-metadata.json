@@ -32,6 +32,11 @@
                            "file":  "BepInEx/plugins/Azumatt-AzuCraftyBoxes/AzuCraftyBoxes.dll"
                        },
                        {
+                           "name":  "Recycle_N_Reclaim",
+                           "version":  "1.4.5.0",
+                           "file":  "BepInEx/plugins/Azumatt-Recycle_N_Reclaim/Recycle_N_Reclaim.dll"
+                       },
+                       {
                            "name":  "EpicLoot",
                            "version":  "0.13.0.0",
                            "file":  "BepInEx/plugins/EpicLoot/EpicLoot.dll"
@@ -40,6 +45,11 @@
                            "name":  "QuickStackStore",
                            "version":  "1.4.15.0",
                            "file":  "BepInEx/plugins/Goldenrevolver-Quick_Stack_Store_Sort_Trash_Restock/QuickStackStore.dll"
+                       },
+                       {
+                           "name":  "Bindrune",
+                           "version":  "0.5.0.0",
+                           "file":  "BepInEx/plugins/isimp-Bindrune/Bindrune.dll"
                        },
                        {
                            "name":  "MushroomSync",
@@ -82,7 +92,7 @@
                            "file":  "BepInEx/plugins/ValheimModding-YamlDotNet/YamlDotNetDetector.dll"
                        },
                        {
-                           "name":  "ChestSearch",
+                           "name":  "ChestSearch-1.2.1",
                            "version":  "0.0.0.0",
                            "file":  "BepInEx/plugins/ValheimModPack-ChestSearch/ChestSearch.dll"
                        },
@@ -97,9 +107,14 @@
                            "file":  "BepInEx/plugins/ValheimModPack-EAQSQuickStackBridge/EAQSQuickStackBridge.dll"
                        },
                        {
-                           "name":  "ExpeditionLoadouts",
+                           "name":  "ExpeditionLoadouts-1.2.1",
                            "version":  "0.0.0.0",
                            "file":  "BepInEx/plugins/ValheimModPack-ExpeditionLoadouts/ExpeditionLoadouts.dll"
+                       },
+                       {
+                           "name":  "FermenterCompatibility",
+                           "version":  "0.0.0.0",
+                           "file":  "BepInEx/plugins/ValheimModPack-FermenterCompatibility/FermenterCompatibility.dll"
                        },
                        {
                            "name":  "InterfaceInputFix",
@@ -107,9 +122,29 @@
                            "file":  "BepInEx/plugins/ValheimModPack-InterfaceInputFix/InterfaceInputFix.dll"
                        },
                        {
+                           "name":  "InventoryAdmin",
+                           "version":  "0.0.0.0",
+                           "file":  "BepInEx/plugins/ValheimModPack-InventoryAdmin/InventoryAdmin.dll"
+                       },
+                       {
                            "name":  "NordicRadio",
                            "version":  "0.0.0.0",
                            "file":  "BepInEx/plugins/ValheimModPack-NordicRadio/NordicRadio.dll"
+                       },
+                       {
+                           "name":  "PartyPrison",
+                           "version":  "0.0.0.0",
+                           "file":  "BepInEx/plugins/ValheimModPack-PartyPrison/PartyPrison.dll"
+                       },
+                       {
+                           "name":  "PlayerSectorSync",
+                           "version":  "0.0.0.0",
+                           "file":  "BepInEx/plugins/ValheimModPack-PlayerSectorSync/PlayerSectorSync.dll"
+                       },
+                       {
+                           "name":  "PortalFinder",
+                           "version":  "0.0.0.0",
+                           "file":  "BepInEx/plugins/ValheimModPack-PortalFinder/PortalFinder.dll"
                        },
                        {
                            "name":  "RenewableResourceTimers",
@@ -117,13 +152,18 @@
                            "file":  "BepInEx/plugins/ValheimModPack-RenewableResourceTimers/RenewableResourceTimers.dll"
                        },
                        {
-                           "name":  "AdventureBackpacks",
-                           "version":  "2.1.13.0",
-                           "file":  "BepInEx/plugins/Vapok-AdventureBackpacks/AdventureBackpacks.dll"
+                           "name":  "WorldCharacters",
+                           "version":  "0.0.0.0",
+                           "file":  "BepInEx/plugins/ValheimModPack-WorldCharacters/WorldCharacters.dll"
+                       },
+                       {
+                           "name":  "VentureValheim.FloatingItems",
+                           "version":  "1.0.1.0",
+                           "file":  "BepInEx/plugins/VentureValheim-Venture_Floating_Items/VentureValheim.FloatingItems.dll"
                        },
                        {
                            "name":  "XPortal",
-                           "version":  "1.2.25.0",
+                           "version":  "1.3.1.0",
                            "file":  "BepInEx/plugins/XPortal/XPortal.dll"
                        }
                    ],
@@ -271,6 +311,30 @@
                                       ]
                     },
                     {
+                        "guid":  "Azumatt.Recycle_N_Reclaim",
+                        "name":  "Recycle_N_Reclaim",
+                        "version":  "1.4.5",
+                        "file":  "BepInEx/plugins/Azumatt-Recycle_N_Reclaim/Recycle_N_Reclaim.dll",
+                        "dependencies":  [
+                                             {
+                                                 "guid":  "randyknapp.mods.epicloot",
+                                                 "hard":  false,
+                                                 "minimum":  null
+                                             },
+                                             {
+                                                 "guid":  "org.bepinex.plugins.jewelcrafting",
+                                                 "hard":  false,
+                                                 "minimum":  null
+                                             }
+                                         ],
+                        "incompatible":  [
+
+                                         ],
+                        "processes":  [
+
+                                      ]
+                    },
+                    {
                         "guid":  "randyknapp.mods.epicloot",
                         "name":  "Epic Loot",
                         "version":  "0.14.13",
@@ -336,6 +400,25 @@
                                          ],
                         "processes":  [
 
+                                      ]
+                    },
+                    {
+                        "guid":  "isimp.Bindrune",
+                        "name":  "Bindrune",
+                        "version":  "0.5.0",
+                        "file":  "BepInEx/plugins/isimp-Bindrune/Bindrune.dll",
+                        "dependencies":  [
+                                             {
+                                                 "guid":  "com.jotunn.jotunn",
+                                                 "hard":  false,
+                                                 "minimum":  null
+                                             }
+                                         ],
+                        "incompatible":  [
+
+                                         ],
+                        "processes":  [
+                                          "valheim.exe"
                                       ]
                     },
                     {
@@ -463,7 +546,7 @@
                     {
                         "guid":  "valheimmodpack.chestsearch",
                         "name":  "Chest Search",
-                        "version":  "1.1.0",
+                        "version":  "1.2.1",
                         "file":  "BepInEx/plugins/ValheimModPack-ChestSearch/ChestSearch.dll",
                         "dependencies":  [
                                              {
@@ -482,7 +565,7 @@
                     {
                         "guid":  "valheimmodpack.confirmpinremoval",
                         "name":  "Confirm Map Pin Removal",
-                        "version":  "1.3.2",
+                        "version":  "1.5.1",
                         "file":  "BepInEx/plugins/ValheimModPack-ConfirmMapPinRemoval/ConfirmMapPinRemoval.dll",
                         "dependencies":  [
                                              {
@@ -501,7 +584,7 @@
                     {
                         "guid":  "valheimmodpack.eaqsquickstackbridge",
                         "name":  "EAQS Quick Stack Bridge",
-                        "version":  "1.1.1",
+                        "version":  "1.2.0",
                         "file":  "BepInEx/plugins/ValheimModPack-EAQSQuickStackBridge/EAQSQuickStackBridge.dll",
                         "dependencies":  [
                                              {
@@ -530,9 +613,14 @@
                     {
                         "guid":  "valheimmodpack.expeditionloadouts",
                         "name":  "Expedition Loadouts",
-                        "version":  "1.1.1",
+                        "version":  "1.2.1",
                         "file":  "BepInEx/plugins/ValheimModPack-ExpeditionLoadouts/ExpeditionLoadouts.dll",
                         "dependencies":  [
+                                             {
+                                                 "guid":  "goldenrevolver.quick_stack_store",
+                                                 "hard":  false,
+                                                 "minimum":  null
+                                             },
                                              {
                                                  "guid":  "randyknapp.mods.equipmentandquickslots",
                                                  "hard":  false,
@@ -542,9 +630,28 @@
                                                  "guid":  "com.jotunn.jotunn",
                                                  "hard":  true,
                                                  "minimum":  "2.30.2"
+                                             }
+                                         ],
+                        "incompatible":  [
+
+                                         ],
+                        "processes":  [
+
+                                      ]
+                    },
+                    {
+                        "guid":  "valheimmodpack.fermentercompatibility",
+                        "name":  "Fermenter Compatibility",
+                        "version":  "1.0.0",
+                        "file":  "BepInEx/plugins/ValheimModPack-FermenterCompatibility/FermenterCompatibility.dll",
+                        "dependencies":  [
+                                             {
+                                                 "guid":  "org.bepinex.plugins.valheim_plus",
+                                                 "hard":  false,
+                                                 "minimum":  null
                                              },
                                              {
-                                                 "guid":  "goldenrevolver.quick_stack_store",
+                                                 "guid":  "Azumatt.AzuCraftyBoxes",
                                                  "hard":  false,
                                                  "minimum":  null
                                              }
@@ -559,11 +666,21 @@
                     {
                         "guid":  "valheimmodpack.interfaceinputfix",
                         "name":  "Interface Input Fix",
-                        "version":  "1.0.0",
+                        "version":  "1.1.3",
                         "file":  "BepInEx/plugins/ValheimModPack-InterfaceInputFix/InterfaceInputFix.dll",
                         "dependencies":  [
                                              {
+                                                 "guid":  "isimp.Bindrune",
+                                                 "hard":  false,
+                                                 "minimum":  null
+                                             },
+                                             {
                                                  "guid":  "vapok.mods.adventurebackpacks",
+                                                 "hard":  false,
+                                                 "minimum":  null
+                                             },
+                                             {
+                                                 "guid":  "valheimmodpack.partyprison",
                                                  "hard":  false,
                                                  "minimum":  null
                                              },
@@ -576,6 +693,35 @@
                                                  "guid":  "yay.spikehimself.xportal",
                                                  "hard":  false,
                                                  "minimum":  null
+                                             },
+                                             {
+                                                 "guid":  "org.bepinex.plugins.valheim_plus",
+                                                 "hard":  false,
+                                                 "minimum":  null
+                                             }
+                                         ],
+                        "incompatible":  [
+
+                                         ],
+                        "processes":  [
+
+                                      ]
+                    },
+                    {
+                        "guid":  "valheimmodpack.inventoryadmin",
+                        "name":  "Inventory Admin",
+                        "version":  "1.2.0",
+                        "file":  "BepInEx/plugins/ValheimModPack-InventoryAdmin/InventoryAdmin.dll",
+                        "dependencies":  [
+                                             {
+                                                 "guid":  "com.jotunn.jotunn",
+                                                 "hard":  true,
+                                                 "minimum":  "2.30.2"
+                                             },
+                                             {
+                                                 "guid":  "valheimmodpack.worldcharacters",
+                                                 "hard":  true,
+                                                 "minimum":  "1.0.4"
                                              }
                                          ],
                         "incompatible":  [
@@ -588,9 +734,87 @@
                     {
                         "guid":  "valheimmodpack.nordicradio",
                         "name":  "Nordic Radio - Skald\u0027s Horn",
-                        "version":  "1.1.2",
+                        "version":  "1.3.4",
                         "file":  "BepInEx/plugins/ValheimModPack-NordicRadio/NordicRadio.dll",
                         "dependencies":  [
+                                             {
+                                                 "guid":  "com.jotunn.jotunn",
+                                                 "hard":  true,
+                                                 "minimum":  "2.30.2"
+                                             }
+                                         ],
+                        "incompatible":  [
+
+                                         ],
+                        "processes":  [
+
+                                      ]
+                    },
+                    {
+                        "guid":  "valheimmodpack.partyprison",
+                        "name":  "Party Prison",
+                        "version":  "1.5.5",
+                        "file":  "BepInEx/plugins/ValheimModPack-PartyPrison/PartyPrison.dll",
+                        "dependencies":  [
+                                             {
+                                                 "guid":  "valheimmodpack.inventoryadmin",
+                                                 "hard":  false,
+                                                 "minimum":  null
+                                             },
+                                             {
+                                                 "guid":  "com.jotunn.jotunn",
+                                                 "hard":  true,
+                                                 "minimum":  "2.30.2"
+                                             },
+                                             {
+                                                 "guid":  "valheimmodpack.worldcharacters",
+                                                 "hard":  true,
+                                                 "minimum":  "1.0.4"
+                                             },
+                                             {
+                                                 "guid":  "TastyChickenLegs.AutomaticFuel",
+                                                 "hard":  false,
+                                                 "minimum":  null
+                                             }
+                                         ],
+                        "incompatible":  [
+
+                                         ],
+                        "processes":  [
+
+                                      ]
+                    },
+                    {
+                        "guid":  "valheimmodpack.playersectorsync",
+                        "name":  "Player Sector Sync",
+                        "version":  "1.0.0",
+                        "file":  "BepInEx/plugins/ValheimModPack-PlayerSectorSync/PlayerSectorSync.dll",
+                        "dependencies":  [
+
+                                         ],
+                        "incompatible":  [
+
+                                         ],
+                        "processes":  [
+
+                                      ]
+                    },
+                    {
+                        "guid":  "valheimmodpack.portalfinder",
+                        "name":  "Portal Finder",
+                        "version":  "1.0.1",
+                        "file":  "BepInEx/plugins/ValheimModPack-PortalFinder/PortalFinder.dll",
+                        "dependencies":  [
+                                             {
+                                                 "guid":  "valheimmodpack.confirmpinremoval",
+                                                 "hard":  false,
+                                                 "minimum":  null
+                                             },
+                                             {
+                                                 "guid":  "yay.spikehimself.xportal",
+                                                 "hard":  false,
+                                                 "minimum":  null
+                                             },
                                              {
                                                  "guid":  "com.jotunn.jotunn",
                                                  "hard":  true,
@@ -629,34 +853,38 @@
                                       ]
                     },
                     {
-                        "guid":  "vapok.mods.adventurebackpacks",
-                        "name":  "Adventure Backpacks",
-                        "version":  "2.1.13",
-                        "file":  "BepInEx/plugins/Vapok-AdventureBackpacks/AdventureBackpacks.dll",
+                        "guid":  "valheimmodpack.worldcharacters",
+                        "name":  "World Characters",
+                        "version":  "1.1.2",
+                        "file":  "BepInEx/plugins/ValheimModPack-WorldCharacters/WorldCharacters.dll",
+                        "dependencies":  [
+                                             {
+                                                 "guid":  "com.jotunn.jotunn",
+                                                 "hard":  true,
+                                                 "minimum":  "2.30.2"
+                                             }
+                                         ],
+                        "incompatible":  [
+                                             "org.bepinex.plugins.servercharacters"
+                                         ],
+                        "processes":  [
+
+                                      ]
+                    },
+                    {
+                        "guid":  "com.orianaventure.mod.VentureFloatingItems",
+                        "name":  "VentureFloatingItems",
+                        "version":  "1.0.1",
+                        "file":  "BepInEx/plugins/VentureValheim-Venture_Floating_Items/VentureValheim.FloatingItems.dll",
                         "dependencies":  [
                                              {
                                                  "guid":  "com.jotunn.jotunn",
                                                  "hard":  true,
                                                  "minimum":  null
-                                             },
-                                             {
-                                                 "guid":  "com.ValheimModding.YamlDotNetDetector",
-                                                 "hard":  true,
-                                                 "minimum":  null
-                                             },
-                                             {
-                                                 "guid":  "com.chebgonaz.ChebsNecromancy",
-                                                 "hard":  false,
-                                                 "minimum":  null
-                                             },
-                                             {
-                                                 "guid":  "com.maxsch.valheim.contentswithin",
-                                                 "hard":  false,
-                                                 "minimum":  null
                                              }
                                          ],
                         "incompatible":  [
-                                             "JotunnBackpacks"
+
                                          ],
                         "processes":  [
 
@@ -664,8 +892,8 @@
                     },
                     {
                         "guid":  "yay.spikehimself.xportal",
-                        "name":  "XPortal",
-                        "version":  "1.2.25",
+                        "name":  "AnyPortal+",
+                        "version":  "1.3.1",
                         "file":  "BepInEx/plugins/XPortal/XPortal.dll",
                         "dependencies":  [
                                              {

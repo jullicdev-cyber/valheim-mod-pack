@@ -15,7 +15,7 @@ namespace ValheimModPack.WorldCharacters
     [BepInIncompatibility("org.bepinex.plugins.servercharacters")]
     public sealed partial class Plugin : BaseUnityPlugin
     {
-        public const string Id = "valheimmodpack.worldcharacters", Version = "1.1.1";
+        public const string Id = "valheimmodpack.worldcharacters", Version = "1.1.2";
         private const string RpcName = "VMP_WorldCharacters_v1";
         private const int SnapshotQueueCapacity = 64;
         internal static Plugin Instance;
@@ -24,6 +24,7 @@ namespace ValheimModPack.WorldCharacters
         private int saveGeneration;
         private long produced, localDurable;
         private byte[] cachedWorldData;
+        private readonly MapCapturePolicy mapCapture = new MapCapturePolicy();
         private double lastCaptureMs, lastWriteMs;
         private int lastPacketBytes;
         private float nextSlowWarning;
@@ -459,7 +460,15 @@ namespace ValheimModPack.WorldCharacters
                     if (failed) throw new IOException("Previous character save failed.");
                 }
                 bool includesMap = final || saveMap || lastMapCapture <= 0 || Time.realtimeSinceStartup - lastMapCapture >= 60;
-                if (includesMap && Minimap.instance) { Minimap.instance.SaveMapData(); lastMapCapture = Time.realtimeSinceStartup; }
+                Minimap map = Minimap.instance;
+                MapCaptureSnapshot mapCandidate = null;
+                if (includesMap && map)
+                {
+                    mapCandidate = GameMapCapture.TryRead(map, ZNet.instance);
+                    includesMap = mapCapture.RequiresCapture(mapCandidate, final || saveMap || cachedWorldData == null);
+                    if (includesMap) map.SaveMapData();
+                    else lastMapCapture = Time.realtimeSinceStartup;
+                }
                 CharacterState update = GameState.FromProfile(protectedProfile, offered.World, offered.Owner, Fingerprint, Player.m_localPlayer != null, includesMap);
                 if (includesMap) cachedWorldData = update.WorldData;
                 byte[] mapSource = cachedWorldData ?? new byte[0];
@@ -515,6 +524,12 @@ namespace ValheimModPack.WorldCharacters
                     })) throw new IOException("Snapshot writer stopped accepting saves.");
                     produced = sequence;
                 }
+                if (includesMap && map)
+                {
+                    // The full map is now guaranteed to be part of the queued
+                    // durable state/RPC, even if a previous snapshot is in flight.
+                    mapCapture.Admit(mapCandidate); lastMapCapture = Time.realtimeSinceStartup;
+                }
             }
             finally { captureClock.Stop(); lastCaptureMs = captureClock.Elapsed.TotalMilliseconds; saving = false; }
         }
@@ -551,6 +566,7 @@ namespace ValheimModPack.WorldCharacters
             ready = failed = firstLoadSeen = saving = closing = continuingLogout = loadCompleted = exitOnUpdate = false;
             loadedPlayer = null; sent = acknowledged = 0; lastMapCapture = 0;
             produced = localDurable = 0; cachedWorldData = null;
+            mapCapture.Reset();
         }
         private void Command(Terminal.ConsoleEventArgs args)
         {

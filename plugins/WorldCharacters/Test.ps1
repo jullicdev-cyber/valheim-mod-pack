@@ -28,5 +28,12 @@ foreach ($suite in @('SnapshotWriterTests','SessionAsyncTests','StateAllocationT
     & $asyncRunner (Join-Path $folder ($suite + '-state'))
     if ($LASTEXITCODE -ne 0) { throw "$suite failed" }
 }
+$mapRunner = Join-Path $folder 'MapCaptureTests.exe'
+$mapSources = @('MapCapturePolicy.cs','MapCaptureCompatibility.cs','GameMapCapture.cs','MapCaptureTestDoubles.cs','MapCaptureTests.cs','SnapshotWriter.cs','State.cs','NativeInventory.cs','StateStore.cs','Session.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
+& $compiler /nologo /codepage:65001 /target:exe /optimize+ /nowarn:0649 "/out:$mapRunner" @mapSources
+if ($LASTEXITCODE -ne 0) { throw 'Map capture tests build failed' }
+& $mapRunner
+if ($LASTEXITCODE -ne 0) { throw 'Map capture regressions failed' }
 & (Join-Path $PSScriptRoot 'Build.ps1') -GameDirectory $GameDirectory -OutputFile (Join-Path $folder 'WorldCharacters.dll')
 & (Join-Path $PSScriptRoot 'Test-Contracts.ps1') -GameDirectory $GameDirectory -PluginAssembly (Join-Path $folder 'WorldCharacters.dll')
+& (Join-Path $PSScriptRoot 'Test-MapCaptureNativeGuard.ps1') -GameDirectory $GameDirectory -PluginAssembly (Join-Path $folder 'WorldCharacters.dll')

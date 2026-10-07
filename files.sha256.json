@@ -305,7 +305,7 @@
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-InterfaceInputFix/InterfaceInputFix.dll",
-    "sha256": "0f549f498f28952dc1b9b01eee85833c00355eae61fdacdab59837647bdd556f"
+    "sha256": "f3a6e326f28c4ff6ba86b955bf9ab396c877a1cd0e17f5735ead476e7e559e91"
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-InventoryAdmin/InventoryAdmin.dll",
@@ -333,7 +333,7 @@
   },
   {
     "path": "BepInEx/plugins/ValheimModPack-WorldCharacters/WorldCharacters.dll",
-    "sha256": "d85b6c5a9e3c25296b56030296a19d766fb27f61045cfb3c47c774fb77b7c7f1"
+    "sha256": "9e8ba66f47aff7b70d605b389cba5c796e7c1635eba12947a53cdb3c45bfd77e"
   },
   {
     "path": "BepInEx/plugins/ValheimPlus.dll",

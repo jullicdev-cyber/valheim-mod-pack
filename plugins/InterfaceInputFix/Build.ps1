@@ -11,7 +11,7 @@ foreach ($ref in $refs) { if (-not (Test-Path -LiteralPath $ref)) { throw "Missi
 New-Item -ItemType Directory -Force -Path (Split-Path $OutputFile -Parent) | Out-Null
 $argsList = @('/nologo','/codepage:65001','/target:library','/optimize+',('/out:' + $OutputFile))
 $argsList += $refs | ForEach-Object { '/reference:' + $_ }
-$argsList += @('Plugin.cs','BindruneCompat.cs','InputLease.cs','InputDiagnostics.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
+$argsList += @('Plugin.cs','BindruneCompat.cs','ValheimPlusEditingCompat.cs','PrisonEditingAccess.cs','InputLease.cs','InputDiagnostics.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
 & $compiler @argsList
 if ($LASTEXITCODE -ne 0) { throw 'InterfaceInputFix compilation failed' }
 Write-Output "Built InterfaceInputFix: $OutputFile"
