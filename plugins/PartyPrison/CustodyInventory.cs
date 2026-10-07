@@ -12,6 +12,10 @@ using WCInventory = ValheimModPack.WorldCharacters.NativeInventory;
 
 namespace ValheimModPack.PartyPrison
 {
+    public sealed class CustodyCapacityException : InvalidOperationException
+    {
+        public CustodyCapacityException(string message) : base(message) { }
+    }
     public sealed class CustodyInsertionException : InvalidOperationException
     {
         public bool AppliedAmbiguously { get; private set; }
@@ -27,6 +31,8 @@ namespace ValheimModPack.PartyPrison
         private static readonly MethodInfo ContainerLoad = AccessTools.Method(typeof(Container), "Load", Type.EmptyTypes);
         private static readonly FieldInfo ContainerInventory = AccessTools.Field(typeof(Container), "m_inventory");
         private static readonly FieldInfo ContainerView = AccessTools.Field(typeof(Container), "m_nview");
+        private static readonly FieldInfo ContainerLoading = AccessTools.Field(typeof(Container), "m_loading");
+        private static readonly FieldInfo ContainerRevision = AccessTools.Field(typeof(Container), "m_lastRevision");
         // Inventory operations are hot paths even when nobody is imprisoned.
         // Weak identity keys avoid retaining unloaded container/inventory cycles;
         // the live ZDO marker is checked below, since builders tag after Awake.
@@ -120,7 +126,40 @@ namespace ValheimModPack.PartyPrison
                     throw new InvalidDataException("Unsupported item stack in custody payload.");
             return inventory;
         }
-        private static byte[] Save(Inventory inventory) { var package = new ZPackage(); inventory.Save(package); return package.GetArray(); }
+        private static byte[] Save(Inventory inventory)
+        {
+            // Native ItemData.Save truncates wear*100 while Load multiplies
+            // by float .01: a saved 5 can become .049999997 and then save as
+            // 4. Serialize detached copies at a stable point inside the same
+            // native hundredth; neither live item wear nor references change.
+            var detached = new Inventory("PartyPrison.NativeSnapshot", null, inventory.GetWidth(), inventory.GetHeight());
+            foreach (ItemDrop.ItemData source in inventory.GetAllItems()) {
+                ItemDrop.ItemData item = source.Clone(); int cents = DurabilityHundredths(source.m_durability);
+                item.m_durability = (float)((cents + (cents < 0 ? -.25d : .25d)) / 100d);
+                if ((int)(item.m_durability * 100f) != cents)
+                    throw new InvalidDataException("Item durability exceeds stable native serialization precision; belongings retained.");
+                detached.GetAllItems().Add(item);
+            }
+            var package = new ZPackage(); detached.Save(package); return package.GetArray();
+        }
+        private static int DurabilityHundredths(float value)
+        {
+            if (!FiniteDurability(value)) throw new InvalidDataException("Non-finite item durability; belongings retained.");
+            double nearest = Math.Round((double)value * 100d, MidpointRounding.AwayFromZero);
+            // Recognize exactly the float produced by native Load. Arbitrary
+            // live wear still uses native truncation, e.g. .059 saves as 5.
+            // Mono may keep the multiplication in a wider register while
+            // native Load stores a float field. Materialize both float32 bit
+            // patterns before comparison instead of comparing wider values.
+            if (nearest >= Int32.MinValue && nearest <= Int32.MaxValue
+                && BitConverter.ToInt32(BitConverter.GetBytes(value), 0)
+                    == BitConverter.ToInt32(BitConverter.GetBytes((float)nearest * .01f), 0))
+                return (int)nearest;
+            float scaled = value * 100f;
+            if (scaled < Int32.MinValue || (double)scaled > Int32.MaxValue)
+                throw new InvalidDataException("Item durability exceeds the native format; belongings retained.");
+            return (int)scaled;
+        }
         private static bool IsLoan(ItemDrop.ItemData item)
         { string value; return item != null && item.m_customData != null && item.m_customData.TryGetValue(ArenaBuilder.LoanKey, out value) && value == "1"; }
 
@@ -267,7 +306,7 @@ namespace ValheimModPack.PartyPrison
         {
             if (width < 1 || width > 32 || height < 1 || height > 32) throw new InvalidDataException("Unsupported custody chest dimensions.");
             List<ItemDrop.ItemData> items = Decode(originalPayload).GetAllItems(); int capacity = width * height;
-            if (items.Count > 4 * capacity) throw new InvalidOperationException("All personal belongings must fit in the four iron chests before confiscation.");
+            if (items.Count > 4 * capacity) throw new CustodyCapacityException("All current personal belongings must fit in four empty iron chests; no items removed.");
             var chests = new Inventory[4]; for (int i = 0; i < 4; ++i) chests[i] = new Inventory("PartyPrison.Custody." + i, null, width, height);
             for (int n = 0; n < items.Count; ++n)
             {
@@ -280,13 +319,106 @@ namespace ValheimModPack.PartyPrison
             for (int i = 0; i < 4; ++i) { payloads[i] = Save(chests[i]); actual.AddRange(Decode(payloads[i]).GetAllItems()); }
             RequireEquivalent(items, actual); return payloads;
         }
+        public static void RequireAdmissionChests(ZDO[] chests)
+        {
+            RequireFour(chests);
+            foreach (ZDO chest in chests) {
+                // This is only a short transfer reservation, never a check of
+                // whether previous property was collected or stolen. A remote
+                // owner's native in-use flag also covers an open client cache.
+                GameObject instance = ZNetScene.instance == null ? null : ZNetScene.instance.FindInstance(chest.m_uid);
+                Container container = instance == null ? null : instance.GetComponent<Container>();
+                if (chest.GetInt(ZDOVars.s_inUse, 0) != 0 || container != null && container.IsInUse())
+                    throw new InvalidOperationException("A custody chest is open. Close it before the transfer; no belongings removed.");
+            }
+        }
+        public static byte[][] PrepareAdmissionPayloads(ZDO[] chests, byte[] originalPayload, int width, int height)
+        {
+            RequireAdmissionChests(chests);
+            return PrepareAdmissionPayloads(chests.Select(chest => chest.GetByteArray(ZDOVars.s_items, null)).ToArray(), originalPayload, width, height);
+        }
+        public static byte[][] PrepareAdmissionPayloads(byte[][] existingPayloads, byte[] originalPayload, int width, int height)
+        {
+            // Validate the new character's complete snapshot before considering
+            // replacement of old, publicly accessible property. The resulting
+            // immutable four-chest plan is journaled before the clear request.
+            byte[][] replacement = PrepareChestPayloads(originalPayload, width, height);
+            if (existingPayloads == null || existingPayloads.Length != 4)
+                throw new InvalidDataException("Four existing chest snapshots are required.");
+            var chests = new Inventory[4]; var expected = new List<ItemDrop.ItemData>();
+            for (int index = 0; index < 4; ++index) {
+                chests[index] = new Inventory("PartyPrison.Append." + index, null, width, height);
+                if (existingPayloads[index] == null) continue;
+                Inventory existing = Decode(existingPayloads[index]);
+                foreach (ItemDrop.ItemData old in existing.GetAllItems()) {
+                    if (old.m_gridPos.x >= width || old.m_gridPos.y >= height)
+                        throw new InvalidDataException("Existing chest items are outside the native chest dimensions; belongings retained.");
+                    chests[index].GetAllItems().Add(old.Clone()); expected.Add(old);
+                }
+            }
+            List<ItemDrop.ItemData> incoming = Decode(originalPayload).GetAllItems();
+            if (expected.Count + incoming.Count > 4 * width * height) return replacement;
+            int chestIndex = 0, slot = 0;
+            foreach (ItemDrop.ItemData source in incoming) {
+                while (chestIndex < 4) {
+                    while (slot < width * height && chests[chestIndex].GetAllItems().Any(occupied => occupied.m_gridPos.x == slot % width && occupied.m_gridPos.y == slot / width)) ++slot;
+                    if (slot < width * height) break;
+                    ++chestIndex; slot = 0;
+                }
+                if (chestIndex == 4) throw new InvalidDataException("Native append allocation disagrees with the validated capacity.");
+                ItemDrop.ItemData item = source.Clone(); item.m_equipped = false;
+                item.m_gridPos = new Vector2i(slot % width, slot / width);
+                foreach (string key in EquipmentKeys) item.m_customData.Remove(key);
+                chests[chestIndex].GetAllItems().Add(item); expected.Add(source); ++slot;
+            }
+            var payloads = new byte[4][]; var actual = new List<ItemDrop.ItemData>();
+            for (int index = 0; index < 4; ++index) { payloads[index] = Save(chests[index]); actual.AddRange(Decode(payloads[index]).GetAllItems()); }
+            RequireEquivalent(expected, actual); return payloads;
+        }
+        private static byte[][] DepositPayloads(CustodyRecord record, int width, int height)
+        {
+            if (record.DepositPayloads != null && record.DepositPayloads.Length != 0 && record.DepositPayloads.Length != 4)
+                throw new InvalidDataException("Incomplete prepared custody chest plan.");
+            byte[][] payloads = record.DepositPayloads != null && record.DepositPayloads.Length == 4
+                ? record.DepositPayloads : PrepareChestPayloads(record.OriginalPayload, width, height);
+            if (width < 1 || width > 32 || height < 1 || height > 32) throw new InvalidDataException("Unsupported custody chest dimensions.");
+            var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (byte[] payload in payloads) foreach (ItemDrop.ItemData item in Decode(payload).GetAllItems()) {
+                if (item.m_gridPos.x >= width || item.m_gridPos.y >= height)
+                    throw new InvalidDataException("Prepared custody item is outside the native chest dimensions.");
+                string id = ItemIdentity(item); int count; counts.TryGetValue(id, out count); counts[id] = count + 1;
+            }
+            foreach (ItemDrop.ItemData item in Decode(record.OriginalPayload).GetAllItems()) {
+                string id = ItemIdentity(item); int count;
+                if (!counts.TryGetValue(id, out count) || count == 0)
+                    throw new InvalidDataException("Prepared chest plan lost the current prisoner's belongings; original backup retained.");
+                counts[id] = count - 1;
+            }
+            return payloads;
+        }
+        public static string[] ChestPayloadFingerprints(ZDO[] chests)
+        { RequireFour(chests); return chests.Select(chest => NativePayloadFingerprint(chest.GetByteArray(ZDOVars.s_items, null))).ToArray(); }
+        private static string NativePayloadFingerprint(byte[] payload)
+        { return Fingerprint(payload ?? new byte[] { 0 }); }
         private static string ItemIdentity(ItemDrop.ItemData source)
         {
-            ItemDrop.ItemData item = source.Clone(); item.m_gridPos = new Vector2i(0, 0); item.m_equipped = false;
-            foreach (string key in EquipmentKeys) item.m_customData.Remove(key);
+            if (source == null || source.m_dropPrefab == null || source.m_customData == null)
+                throw new InvalidDataException("Incomplete native item data; belongings retained.");
             const string magic = "randyknapp.mods.epicloot#EpicLoot.MagicItemComponent";
-            string value; if (item.m_customData.TryGetValue(magic, out value) && value == "") item.m_customData.Remove(magic);
-            var package = new ZPackage(); item.Save(package); return Fingerprint(package.GetArray());
+            var custom = source.m_customData.Where(pair => !EquipmentKeys.Contains(pair.Key)
+                && !(pair.Key == magic && pair.Value == "")).OrderBy(pair => pair.Key, StringComparer.Ordinal).ToArray();
+            // Compare all native persisted fields independently of dictionary
+            // insertion order and float re-encoding. Grid/equipped bookkeeping
+            // is the only native state deliberately changed by confiscation.
+            using (var stream = new MemoryStream()) using (var writer = new BinaryWriter(stream)) {
+                writer.Write(source.m_dropPrefab.name); writer.Write(source.m_stack); writer.Write(source.m_quality);
+                writer.Write(source.m_variant); writer.Write(source.m_worldLevel); writer.Write(source.m_pickedUp);
+                writer.Write(source.m_cheated); writer.Write(DurabilityHundredths(source.m_durability));
+                writer.Write(source.m_crafterID); writer.Write(source.m_crafterID == 0 ? "" : source.m_crafterName);
+                writer.Write(custom.Length);
+                foreach (var pair in custom) { writer.Write(pair.Key); writer.Write(pair.Value); }
+                writer.Flush(); return Fingerprint(stream.ToArray());
+            }
         }
         private static void RequireEquivalent(IEnumerable<ItemDrop.ItemData> expected, IEnumerable<ItemDrop.ItemData> actual)
         {
@@ -360,40 +492,96 @@ namespace ValheimModPack.PartyPrison
             foreach (ZDO chest in chests)
             { byte[] bytes = chest.GetByteArray(ZDOVars.s_items, null); if (bytes != null && Count(bytes) != 0) throw new InvalidOperationException("Collect the previous belongings from all four custody chests first."); }
         }
-        // Writing is allowed solely after the protected empty character save is
-        // durable. A partially applied Cleared deposit resumes by matching each
-        // chest's token and original hash; it never overwrites changed contents.
+        private sealed class ChestSnapshot
+        {
+            internal byte[] Items;
+            internal string Owner, Token, Hash;
+            internal long NativeOwner;
+            internal bool Persistent, Released, Public;
+            internal ChestSnapshot(ZDO chest)
+            {
+                byte[] items = chest.GetByteArray(ZDOVars.s_items, null); Items = items == null ? null : (byte[])items.Clone();
+                Owner = chest.GetString(OwnerKey, ""); Token = chest.GetString(TokenKey, ""); Hash = chest.GetString(HashKey, "");
+                NativeOwner = chest.GetOwner(); Persistent = chest.Persistent;
+                Released = chest.GetBool(ReleasedKey, false); Public = chest.GetBool(PublicKey, false);
+            }
+            internal void Restore(ZDO chest)
+            {
+                chest.SetOwner(NativeOwner); chest.Persistent = Persistent;
+                chest.Set(OwnerKey, Owner); chest.Set(TokenKey, Token); chest.Set(HashKey, Hash);
+                chest.Set(ReleasedKey, Released); chest.Set(PublicKey, Public);
+                if (Items == null) ZDOExtraData.RemoveByteArray(chest.m_uid, ZDOVars.s_items);
+                else chest.Set(ZDOVars.s_items, (byte[])Items.Clone());
+            }
+        }
+        // All four full target payloads are validated and journaled before the
+        // character clear. Only the durable cleared character may publish them.
+        // A failed four-chest publication restores its exact prior ZDO contents;
+        // a crash resumes the immutable plan, never recomputing an append.
         public static void Deposit(ZDO[] chests, CustodyRecord record, int width, int height)
         {
-            RequireHost(); RequireFour(chests);
+            RequireHost(); PublishDeposit(chests, record, width, height, ZNet.GetUID(), ReloadLoadedChest);
+        }
+        private static void PublishDeposit(ZDO[] chests, CustodyRecord record, int width, int height, long nativeOwner, Action<ZDO> reload)
+        {
+            RequireFour(chests);
             if (record == null || record.Closed || record.NeedsRecovery || record.PublicAccess || record.Stage != CustodyStage.Cleared)
                 throw new InvalidOperationException("Custody deposit requires durable, unreleased confiscation.");
-            byte[][] payloads = PrepareChestPayloads(record.OriginalPayload, width, height);
+            byte[][] payloads = DepositPayloads(record, width, height);
+            var before = new ChestSnapshot[4]; var complete = new bool[4];
             for (int i = 0; i < 4; ++i)
             {
                 ZDO chest = chests[i]; string assigned = chest.GetString(TokenKey, ""); byte[] current = chest.GetByteArray(ZDOVars.s_items, null);
+                before[i] = new ChestSnapshot(chest);
                 if (assigned == record.SentenceId)
                 {
                     if (chest.GetString(OwnerKey, "") != record.AccountId || chest.GetString(HashKey, "") != Fingerprint(payloads[i])
                         || chest.GetBool(ReleasedKey, false) || current == null) throw new InvalidDataException("Partial custody chest does not match its journal.");
                     RequireEquivalent(Decode(payloads[i]).GetAllItems(), Decode(current).GetAllItems());
+                    complete[i] = true;
                 }
-                else if (current != null && Count(current) != 0) throw new InvalidOperationException("Custody chest is occupied; belongings preserved.");
+                else if (record.DepositBaselineHashes != null && record.DepositBaselineHashes.Length == 4
+                    && NativePayloadFingerprint(current) != record.DepositBaselineHashes[i])
+                    throw new InvalidDataException("A chest changed during the private transfer; current belongings and their original backup retained.");
+                else if ((record.DepositPayloads == null || record.DepositPayloads.Length == 0) && current != null && Count(current) != 0)
+                    throw new InvalidDataException("Unfinished legacy custody has no combined chest plan; existing contents and original character backup retained.");
             }
-            for (int i = 0; i < 4; ++i)
-            {
-                ZDO chest = chests[i]; if (chest.GetString(TokenKey, "") == record.SentenceId) continue;
-                chest.SetOwner(ZNet.GetUID()); chest.Persistent = true;
-                chest.Set(OwnerKey, record.AccountId); chest.Set(TokenKey, record.SentenceId); chest.Set(ReleasedKey, false); chest.Set(PublicKey, false);
-                chest.Set(HashKey, Fingerprint(payloads[i])); chest.Set(ZDOVars.s_items, payloads[i]);
-                ReloadLoadedChest(chest);
+            try {
+                for (int i = 0; i < 4; ++i) {
+                    if (complete[i]) continue;
+                    ZDO chest = chests[i]; chest.SetOwner(nativeOwner); chest.Persistent = true;
+                    chest.Set(OwnerKey, record.AccountId); chest.Set(ReleasedKey, false); chest.Set(PublicKey, false);
+                    chest.Set(HashKey, Fingerprint(payloads[i])); chest.Set(ZDOVars.s_items, (byte[])payloads[i].Clone());
+                    if (reload != null) reload(chest);
+                    // The completion marker follows both the native payload and
+                    // its loaded-cache validation, enabling bounded crash retry.
+                    chest.Set(TokenKey, record.SentenceId);
+                }
+                if (!ChestsMatch(chests, record, width, height)) throw new InvalidDataException("Custody chest deposit verification failed.");
             }
-            if (!ChestsMatch(chests, record, width, height)) throw new InvalidDataException("Custody chest deposit verification failed.");
+            catch (Exception failure) {
+                var rollbackErrors = new List<Exception>();
+                for (int i = 3; i >= 0; --i) {
+                    try { before[i].Restore(chests[i]); }
+                    catch (Exception error) { rollbackErrors.Add(error); }
+                }
+                // Restore durable bytes for all four before attempting vendor
+                // callbacks; a failed local reload must not truncate a backup.
+                for (int i = 0; i < 4; ++i) {
+                    try { if (reload != null) reload(chests[i]); }
+                    catch (Exception error) { rollbackErrors.Add(error); }
+                }
+                if (rollbackErrors.Count != 0) {
+                    rollbackErrors.Insert(0, failure);
+                    throw new AggregateException("Custody publication failed; original character backup retained and chest recovery requires reload.", rollbackErrors);
+                }
+                throw;
+            }
         }
         public static bool ChestsMatch(ZDO[] chests, CustodyRecord record, int width, int height)
         {
             RequireFour(chests); if (record == null) return false;
-            byte[][] expected = PrepareChestPayloads(record.OriginalPayload, width, height);
+            byte[][] expected = DepositPayloads(record, width, height);
             for (int i = 0; i < 4; ++i)
             {
                 ZDO chest = chests[i]; byte[] current = chest.GetByteArray(ZDOVars.s_items, null);
@@ -517,7 +705,24 @@ namespace ValheimModPack.PartyPrison
             if (ZNetScene.instance == null || ContainerLoad == null) return;
             GameObject instance = ZNetScene.instance.FindInstance(chest.m_uid);
             Container container = instance == null ? null : instance.GetComponent<Container>();
-            if (container != null) ContainerLoad.Invoke(container, null);
+            if (container == null) return;
+            if (ContainerLoading == null || ContainerRevision == null || ContainerInventory == null)
+                throw new MissingMemberException("Native custody container transaction ABI is unavailable.");
+            if (container.IsInUse()) throw new InvalidOperationException("Custody chest cache is in use; prepared belongings retained.");
+            bool loading = (bool)ContainerLoading.GetValue(container);
+            ContainerRevision.SetValue(container, chest.DataRevision ^ UInt32.MaxValue);
+            try {
+                byte[] payload = chest.GetByteArray(ZDOVars.s_items, null);
+                Inventory inventory = ContainerInventory.GetValue(container) as Inventory;
+                if (inventory == null) throw new InvalidDataException("Native custody chest cache is unavailable.");
+                if (payload == null) {
+                    ContainerLoading.SetValue(container, true); inventory.RemoveAll();
+                    ContainerRevision.SetValue(container, chest.DataRevision); return;
+                }
+                ContainerLoad.Invoke(container, null);
+                RequireEquivalent(Decode(payload).GetAllItems(), inventory.GetAllItems());
+            }
+            finally { ContainerLoading.SetValue(container, loading); }
         }
         private static void RequireHost()
         { if (ZNet.instance == null || !ZNet.instance.IsServer()) throw new UnauthorizedAccessException("Only the host may write custody chests."); }

@@ -15,6 +15,10 @@ namespace ValheimModPack.PartyPrison
         private static PrisonRegion storedGearRegion;
         private static List<ZDO> storedGearChests;
         private static readonly MethodInfo NativeContainerSave = typeof(Container).GetMethod("Save", BindingFlags.Instance | BindingFlags.NonPublic, null, Type.EmptyTypes, null);
+        private static readonly MethodInfo NativeFoodTotals = typeof(Player).GetMethod("GetTotalFoodValue", BindingFlags.Instance | BindingFlags.NonPublic,
+            null, new[] { typeof(float).MakeByRefType(), typeof(float).MakeByRefType(), typeof(float).MakeByRefType() }, null);
+        private static readonly MethodInfo NativeSetMaxEitr = typeof(Player).GetMethod("SetMaxEitr", BindingFlags.Instance | BindingFlags.NonPublic,
+            null, new[] { typeof(float), typeof(bool) }, null);
         private sealed class SeenGear { internal float At; }
         private static ConditionalWeakTable<ItemDrop.ItemData, SeenGear> observedGear = new ConditionalWeakTable<ItemDrop.ItemData, SeenGear>();
 
@@ -53,6 +57,10 @@ namespace ValheimModPack.PartyPrison
                 if (healthFood != (i < 2)) throw new InvalidOperationException("Неверный тип пайка арены: " + prefab.name);
                 food.Add(prefab);
             }
+            GameObject emetic = RequireItemPrefab(CombatCatalog.EmeticPrefab);
+            if (!IsIssuedEmetic(emetic.GetComponent<ItemDrop>().m_itemData)
+                || emetic.GetComponent<ItemDrop>().m_itemData.m_shared.m_maxStackSize != 1)
+                throw new InvalidOperationException("Некорректный тошник арены.");
             if (ContainerLoad == null) throw new MissingMethodException("Container", "Load");
             var storage = new PrisonKitStorage(kit, chest.GetInventory());
             chest.GetComponent<ZNetView>().ClaimOwnership(); ContainerLoad.Invoke(chest, null);
@@ -67,18 +75,16 @@ namespace ValheimModPack.PartyPrison
                 item.m_dropPrefab = prefab; item.m_equipped = false;
                 bool supplies = item.m_shared.m_maxStackSize > 1;
                 if (supplies) {
-                    bool present = false;
-                    foreach (ItemDrop.ItemData existing in candidate.GetAllItems()) if (existing.m_shared.m_name == item.m_shared.m_name) { present = true; break; }
-                    if (present) continue;
+                    if (!IsIssuedAmmo(item)) throw new InvalidOperationException("Неизолированные боеприпасы набора: " + prefab.name);
                     item.m_stack = Math.Min(100, item.m_shared.m_maxStackSize);
                 }
                 else {
                     if (!IsGearType(item)) throw new InvalidOperationException("Предмет набора не является бронёй или оружием: " + prefab.name);
                     item.m_stack = 1; item.m_quality = Math.Max(1, Math.Min(loadout.GearQuality, item.m_shared.m_maxQuality));
                     item.m_durability = item.GetMaxDurability();
-                    item.m_customData = item.m_customData == null ? new Dictionary<string, string>() : new Dictionary<string, string>(item.m_customData);
-                    item.m_customData[GearKey] = tag; item.m_customData[KitStockKey] = token;
                 }
+                item.m_customData = item.m_customData == null ? new Dictionary<string, string>() : new Dictionary<string, string>(item.m_customData);
+                item.m_customData[GearKey] = tag; item.m_customData[KitStockKey] = token;
                 if (!candidate.AddItem(item)) throw new InvalidOperationException("Освободите место в сундуке снаряжения. Личные вещи в нём сохранены.");
             }
             foreach (GameObject prefab in food)
@@ -89,6 +95,13 @@ namespace ValheimModPack.PartyPrison
                     item.m_customData[GearKey] = tag; item.m_customData[KitStockKey] = token;
                     if (!candidate.AddItem(item)) throw new InvalidOperationException("Освободите место для пайков в сундуке снаряжения. Личные вещи в нём сохранены.");
                 }
+            for (int serving = 0; serving < loadout.EmeticServings; ++serving) {
+                ItemDrop.ItemData item = emetic.GetComponent<ItemDrop>().m_itemData.Clone();
+                item.m_dropPrefab = emetic; item.m_stack = item.m_quality = 1; item.m_equipped = false;
+                item.m_customData = item.m_customData == null ? new Dictionary<string, string>() : new Dictionary<string, string>(item.m_customData);
+                item.m_customData[GearKey] = tag; item.m_customData[KitStockKey] = token;
+                if (!candidate.AddItem(item)) throw new InvalidOperationException("Освободите место для тошников в сундуке снаряжения. Личные вещи в нём сохранены.");
+            }
             storage.Publish(chest, candidate);
             kit.Set(CustodyInventory.PublicKey, true);
             kit.Set(KitFamilyKey, family); kit.Set(KitDifficultyKey, difficulty); kit.Set(KitRevisionKey, revision);
@@ -98,7 +111,7 @@ namespace ValheimModPack.PartyPrison
 
         public static bool IsGeneratedGear(ItemDrop.ItemData item)
         {
-            if (!IsGearType(item) || item.m_shared.m_maxStackSize != 1 || item.m_customData == null) return false;
+            if (!IsGearType(item) || item.m_shared.m_maxStackSize != 1 && !IsIssuedAmmo(item) || item.m_customData == null) return false;
             string value; long world; string token; int revision; Guid legacy;
             if (item.m_customData.TryGetValue(GearKey, out value)) return PrisonGearPolicy.TryParse(value, out world, out token, out revision);
             return item.m_customData.TryGetValue(KitStockKey, out value) && Guid.TryParseExact(value, "N", out legacy);
@@ -107,7 +120,7 @@ namespace ValheimModPack.PartyPrison
         private static bool IsGearType(ItemDrop.ItemData item)
         {
             if (item == null || item.m_shared == null) return false;
-            if (IsFoodLoanType(item)) return true;
+            if (IsFoodLoanType(item) || IsIssuedAmmo(item) || IsIssuedEmetic(item)) return true;
             switch (item.m_shared.m_itemType) {
                 case ItemDrop.ItemData.ItemType.OneHandedWeapon:
                 case ItemDrop.ItemData.ItemType.TwoHandedWeapon:
@@ -128,6 +141,34 @@ namespace ValheimModPack.PartyPrison
             return item != null && item.m_shared != null && item.m_dropPrefab != null
                 && item.m_shared.m_food > 0f && item.m_shared.m_foodStamina > 0f
                 && item.m_shared.m_maxStackSize == 1 && CombatCatalog.IsFoodPrefab(item.m_dropPrefab.name);
+        }
+
+        public static bool IsIssuedAmmo(ItemDrop.ItemData item)
+        {
+            return item != null && item.m_shared != null && item.m_dropPrefab != null
+                && item.m_shared.m_itemType == ItemDrop.ItemData.ItemType.Ammo
+                && CombatCatalog.IsArrowPrefab(item.m_dropPrefab.name);
+        }
+
+        public static bool IsIssuedEmetic(ItemDrop.ItemData item)
+        {
+            return item != null && item.m_shared != null && item.m_dropPrefab != null
+                && item.m_shared.m_maxStackSize == 1 && item.m_shared.m_consumeStatusEffect != null
+                && item.m_dropPrefab.name == CombatCatalog.EmeticPrefab;
+        }
+
+        // Vanilla compares shared names and ignores custom data when stacking.
+        // All issued ammo has a separate name; its revisions also stay separate.
+        public static bool CanStackIssuedAmmo(ItemDrop.ItemData existing, ItemDrop.ItemData incoming)
+        {
+            if (existing == null || incoming == null) return true;
+            bool a = IsIssuedAmmo(existing), b = IsIssuedAmmo(incoming);
+            if (!a && !b) return true;
+            if (!a || !b || existing.m_dropPrefab.name != incoming.m_dropPrefab.name
+                || existing.m_customData == null || incoming.m_customData == null) return false;
+            string first, second; long world; string token; int revision;
+            return existing.m_customData.TryGetValue(GearKey, out first) && incoming.m_customData.TryGetValue(GearKey, out second)
+                && first == second && PrisonGearPolicy.TryParse(first, out world, out token, out revision);
         }
 
         /// <summary>Every owning peer removes obsolete loan gear from its character, leaving farm loot intact.</summary>
@@ -158,11 +199,44 @@ namespace ValheimModPack.PartyPrison
         public static int RemoveObsoleteInventoryGear(Inventory inventory, long world, string activeToken, int activeRevision)
         { return inventory == null ? 0 : RemoveGearCore(inventory, world, activeToken, activeRevision, null); }
 
+        /// <summary>Expire only arena-food buffs; ordinary foods keep their exact native time and benefits.</summary>
+        public static int RemoveObsoleteFoodEffects(Player player, long world, string activeToken, int activeRevision, bool expireRestored)
+        {
+            if (player == null || world == 0) return 0;
+            if (NativeFoodTotals == null || NativeSetMaxEitr == null) throw new MissingMethodException("Player", "Arena food totals ABI");
+            int removed = RemoveObsoleteFoodEffectsFrom(player.GetFoods(), world, activeToken, activeRevision, expireRestored);
+            if (removed == 0) return 0;
+            // UpdateFood advances EVERY food's clock even for a zero dt. Read
+            // totals and use the same native setters without ticking personal food.
+            object[] totals = { 0f, 0f, 0f }; NativeFoodTotals.Invoke(player, totals);
+            player.SetMaxHealth((float)totals[0], false); player.SetMaxStamina((float)totals[1], false);
+            NativeSetMaxEitr.Invoke(player, new object[] { totals[2], false });
+            return removed;
+        }
+
+        public static int RemoveObsoleteFoodEffectsFrom(List<Player.Food> foods, long world, string activeToken, int activeRevision, bool expireRestored)
+        {
+            if (foods == null || world == 0) return 0;
+            int removed = 0;
+            for (int i = foods.Count - 1; i >= 0; --i) {
+                Player.Food food = foods[i];
+                if (food == null || !CombatCatalog.IsFoodPrefab(food.m_name) && !IsFoodLoanType(food.m_item)) continue;
+                string gear; long taggedWorld; string token; int revision;
+                bool tagged = food.m_item != null && food.m_item.m_customData != null
+                    && food.m_item.m_customData.TryGetValue(GearKey, out gear)
+                    && PrisonGearPolicy.TryParse(gear, out taggedWorld, out token, out revision);
+                bool obsolete = tagged ? IsObsoleteGear(food.m_item, world, activeToken, activeRevision)
+                    : expireRestored || String.IsNullOrEmpty(activeToken);
+                if (obsolete) { foods.RemoveAt(i); ++removed; }
+            }
+            return removed;
+        }
+
         public static bool IsObsoleteGear(ItemDrop.ItemData item, long world, string activeToken, int activeRevision)
         {
             if (!IsGearType(item) || item.m_customData == null) return false;
             string gear, legacy; item.m_customData.TryGetValue(GearKey, out gear); item.m_customData.TryGetValue(KitStockKey, out legacy);
-            return PrisonGearPolicy.ShouldRemove(gear, legacy, item.m_shared.m_maxStackSize, world, activeToken, activeRevision);
+            return PrisonGearPolicy.ShouldRemove(gear, legacy, item.m_shared.m_maxStackSize, world, activeToken, activeRevision, IsIssuedAmmo(item));
         }
 
         private static int RemoveGearCore(Inventory inventory, long world, string activeToken, int activeRevision, Action<ItemDrop.ItemData> beforeRemove, Func<ItemDrop.ItemData, bool> canRemove = null)
@@ -175,11 +249,12 @@ namespace ValheimModPack.PartyPrison
                 }
             }
             if (remove == null) return 0;
+            int removed = 0;
             foreach (ItemDrop.ItemData item in remove) {
                 if (beforeRemove != null) beforeRemove(item);
-                inventory.RemoveItem(item);
+                if (inventory.RemoveItem(item)) ++removed;
             }
-            return remove.Count;
+            return removed;
         }
 
         /// <summary>Loan gear stored in the five prison chests expires too; native personal deposits remain.</summary>

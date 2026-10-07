@@ -15,21 +15,24 @@ namespace ValheimModPack.PartyPrison
     public static class PrisonContent
     {
         public const string PrisonCampfirePrefab = "vmp_prison_campfire", PrisonCampfireMarker = "VMP_PP_Campfire";
-        private static bool consoleRegistered, campfireRegistered, localized;
+        private static bool consoleRegistered, campfireRegistered, emeticRegistered, localized;
         private static readonly HashSet<string> foodsRegistered = new HashSet<string>(StringComparer.Ordinal);
+        private static readonly HashSet<string> arrowsRegistered = new HashSet<string>(StringComparer.Ordinal);
 
         public static void Register()
         {
             if (!localized) {
                 LocalizationManager.Instance.GetLocalization().AddJsonFile("English",
-                    "{\"vmp_pp_food_description\":\"Arena ration. Uneaten servings expire when equipment changes or imprisonment ends. Eaten food keeps its normal duration.\",\"vmp_pp_campfire\":\"Cell campfire\"}");
+                    "{\"vmp_pp_food_description\":\"Arena ration. Servings and their food effects expire when opponents change or imprisonment ends.\",\"vmp_pp_arrow_suffix\":\"(arena)\",\"vmp_pp_arrow_description\":\"Issued arena arrows. Remaining arrows expire when opponents change or imprisonment ends.\",\"vmp_pp_emetic_description\":\"Arena pukeberry. Use to remove food effects before changing meals. Unused servings expire when opponents change or imprisonment ends.\",\"vmp_pp_campfire\":\"Cell campfire\"}");
                 LocalizationManager.Instance.GetLocalization().AddJsonFile("Russian",
-                    "{\"vmp_pp_food_description\":\"Паёк арены. Несъеденные порции исчезают при смене набора или освобождении. Съеденная еда действует обычное время.\",\"vmp_pp_campfire\":\"Костёр камеры\"}");
+                    "{\"vmp_pp_food_description\":\"Паёк арены. Порции и их пищевые эффекты исчезают при смене противников или освобождении.\",\"vmp_pp_arrow_suffix\":\"(арена)\",\"vmp_pp_arrow_description\":\"Выданные стрелы арены. Остаток исчезает при смене противников или освобождении.\",\"vmp_pp_emetic_description\":\"Тошник арены. Сбрасывает пищевые эффекты перед сменой еды. Неиспользованные порции исчезают при смене противников или освобождении.\",\"vmp_pp_campfire\":\"Костёр камеры\"}");
                 localized = true;
             }
             RegisterConsole();
             RegisterCampfire();
             foreach (string source in CombatCatalog.AllFoodSources()) RegisterFood(source);
+            foreach (string source in CombatCatalog.AllArrowSources()) RegisterArrows(source);
+            RegisterEmetic();
         }
 
         private static void RegisterCampfire()
@@ -77,7 +80,19 @@ namespace ValheimModPack.PartyPrison
             try {
                 // Keep native furniture visuals/colliders but remove the native
                 // interaction so this object cannot open crafting or repair.
-                foreach (CraftingStation station in prefab.GetComponentsInChildren<CraftingStation>(true)) Object.DestroyImmediate(station);
+                foreach (CraftingStation station in prefab.GetComponentsInChildren<CraftingStation>(true)) {
+                    // CraftingStation.Start normally hides this preview; its
+                    // OnDestroy does not. Removing the station before Start
+                    // leaves CircleProjector drawing and raycasting each frame.
+                    GameObject marker = station.m_areaMarker;
+                    if (marker) {
+                        if (marker == prefab || !marker.transform.IsChildOf(prefab.transform))
+                            throw new InvalidOperationException("Prison console area marker is not part of its cloned prefab.");
+                        marker.SetActive(false);
+                        Object.DestroyImmediate(marker);
+                    }
+                    Object.DestroyImmediate(station);
+                }
                 foreach (StationExtension extension in prefab.GetComponentsInChildren<StationExtension>(true)) Object.DestroyImmediate(extension);
                 Piece piece = prefab.GetComponent<Piece>();
                 piece.m_name = "Arena controls"; piece.m_description = "Prison inmate activity controls";
@@ -115,6 +130,9 @@ namespace ValheimModPack.PartyPrison
                 item.m_dropPrefab = prefab; item.m_stack = item.m_quality = 1;
                 item.m_customData = new Dictionary<string, string>();
                 item.m_shared.m_maxStackSize = item.m_shared.m_maxQuality = 1;
+                // An ordinary ground-food receiver must not absorb a tagged
+                // ration candidate and discard that candidate's provenance.
+                item.m_shared.m_autoStack = false;
                 item.m_shared.m_description = "$vmp_pp_food_description\n" + original.m_itemData.m_shared.m_description;
                 // Native food names, icons, health/stamina, burn time and eating
                 // rules remain unchanged. A separate prefab and max stack 1
@@ -122,6 +140,63 @@ namespace ValheimModPack.PartyPrison
                 if (!ItemManager.Instance.AddItem(new CustomItem(prefab, false)))
                     throw new InvalidOperationException("Jotunn rejected the prison food prefab: " + sourceName);
                 foodsRegistered.Add(sourceName);
+            }
+            catch { Object.DestroyImmediate(prefab); throw; }
+        }
+
+        private static void RegisterArrows(string sourceName)
+        {
+            if (arrowsRegistered.Contains(sourceName)) return;
+            GameObject source = PrefabManager.Instance.GetPrefab(sourceName);
+            ItemDrop original = source ? source.GetComponent<ItemDrop>() : null;
+            if (!original || original.m_itemData == null || original.m_itemData.m_shared == null
+                || original.m_itemData.m_shared.m_itemType != ItemDrop.ItemData.ItemType.Ammo
+                || original.m_itemData.m_shared.m_maxStackSize < 1)
+                throw new InvalidOperationException("PartyPrison arrow definition is unavailable: " + sourceName);
+            GameObject prefab = PrefabManager.Instance.CreateClonedPrefab(CombatCatalog.ArrowPrefab(sourceName), source);
+            if (!prefab) throw new InvalidOperationException("PartyPrison arrow prefab name is already registered: " + sourceName);
+            try {
+                ItemDrop.ItemData item = prefab.GetComponent<ItemDrop>().m_itemData;
+                if (ReferenceEquals(item.m_shared, original.m_itemData.m_shared))
+                    throw new InvalidOperationException("Native arrow clone shares mutable item data: " + sourceName);
+                item.m_dropPrefab = prefab; item.m_stack = item.m_quality = 1;
+                item.m_customData = new Dictionary<string, string>();
+                // Native inventory matching uses this name rather than prefab
+                // identity. A unique key keeps ordinary arrow stacks separate.
+                string nativeName = original.m_itemData.m_shared.m_name;
+                item.m_shared.m_name = nativeName + " $vmp_pp_arrow_suffix";
+                item.m_shared.m_maxQuality = 1; item.m_shared.m_autoStack = false;
+                item.m_shared.m_description = "$vmp_pp_arrow_description\n" + original.m_itemData.m_shared.m_description;
+                if (!ItemManager.Instance.AddItem(new CustomItem(prefab, false)))
+                    throw new InvalidOperationException("Jotunn rejected the prison arrow prefab: " + sourceName);
+                arrowsRegistered.Add(sourceName);
+            }
+            catch { Object.DestroyImmediate(prefab); throw; }
+        }
+
+        private static void RegisterEmetic()
+        {
+            if (emeticRegistered) return;
+            GameObject source = PrefabManager.Instance.GetPrefab(CombatCatalog.EmeticSource);
+            ItemDrop original = source ? source.GetComponent<ItemDrop>() : null;
+            if (!original || original.m_itemData == null || original.m_itemData.m_shared == null
+                || original.m_itemData.m_shared.m_consumeStatusEffect == null
+                || original.m_itemData.m_shared.m_consumeStatusEffect.GetType().Name != "SE_Puke")
+                throw new InvalidOperationException("PartyPrison requires native pukeberries with the vomiting status effect.");
+            GameObject prefab = PrefabManager.Instance.CreateClonedPrefab(CombatCatalog.EmeticPrefab, source);
+            if (!prefab) throw new InvalidOperationException("PartyPrison pukeberry prefab name is already registered.");
+            try {
+                ItemDrop.ItemData item = prefab.GetComponent<ItemDrop>().m_itemData;
+                if (ReferenceEquals(item.m_shared, original.m_itemData.m_shared))
+                    throw new InvalidOperationException("Native pukeberry clone shares mutable item data.");
+                item.m_dropPrefab = prefab; item.m_stack = item.m_quality = 1;
+                item.m_customData = new Dictionary<string, string>();
+                item.m_shared.m_maxStackSize = item.m_shared.m_maxQuality = 1; item.m_shared.m_autoStack = false;
+                item.m_shared.m_name = original.m_itemData.m_shared.m_name + " $vmp_pp_arrow_suffix";
+                item.m_shared.m_description = "$vmp_pp_emetic_description\n" + original.m_itemData.m_shared.m_description;
+                if (!ItemManager.Instance.AddItem(new CustomItem(prefab, false)))
+                    throw new InvalidOperationException("Jotunn rejected the prison pukeberry prefab.");
+                emeticRegistered = true;
             }
             catch { Object.DestroyImmediate(prefab); throw; }
         }

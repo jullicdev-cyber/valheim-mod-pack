@@ -349,6 +349,41 @@ try {
     # Native death ABI: the arena borrows only the game's skill-loss branch;
     # the detached Unity fixture covers its behavior when a launch is possible.
     $playerType = @($native.MainModule.Types | Where-Object FullName -eq 'Player')[0]
+    $foodType = @($playerType.NestedTypes | Where-Object Name -eq 'Food')
+    Check ($foodType.Count -eq 1) 'Native consumed food must keep its explicit food record type.'
+    foreach ($entry in @(@('m_name','System.String'), @('m_item','ItemDrop/ItemData'), @('m_time','System.Single'), @('m_health','System.Single'), @('m_stamina','System.Single'), @('m_eitr','System.Single'))) {
+        $field = @($foodType[0].Fields | Where-Object Name -eq $entry[0])
+        Check ($field.Count -eq 1 -and $field[0].IsPublic -and $field[0].FieldType.FullName -eq $entry[1]) ('Native food record ABI changed: ' + $entry[0])
+    }
+    $getFoods = @($playerType.Methods | Where-Object { $_.Name -eq 'GetFoods' -and $_.Parameters.Count -eq 0 })
+    Check ($getFoods.Count -eq 1 -and $getFoods[0].IsPublic -and $getFoods[0].ReturnType.FullName -eq 'System.Collections.Generic.List`1<Player/Food>') 'Exact consumed food removal needs the public native food list.'
+    $foodTotals = @($playerType.Methods | Where-Object { $_.Name -eq 'GetTotalFoodValue' -and $_.Parameters.Count -eq 3 })
+    Check ($foodTotals.Count -eq 1 -and -not $foodTotals[0].IsStatic -and $foodTotals[0].ReturnType.FullName -eq 'System.Void' -and
+        @($foodTotals[0].Parameters | Where-Object { $_.ParameterType.FullName -ne 'System.Single&' }).Count -eq 0) 'Native exact-food total recomputation ABI changed.'
+    $setEitr = @($playerType.Methods | Where-Object { $_.Name -eq 'SetMaxEitr' -and $_.Parameters.Count -eq 2 })
+    Check ($setEitr.Count -eq 1 -and $setEitr[0].Parameters[0].ParameterType.FullName -eq 'System.Single' -and $setEitr[0].Parameters[1].ParameterType.FullName -eq 'System.Boolean') 'Native exact-food eitr clamp ABI changed.'
+    $foodExpiry = Method $arenaType 'RemoveObsoleteFoodEffects' 5
+    Check ([bool](Calls $foodExpiry 'Player::GetFoods') -and [bool](Calls $foodExpiry 'ArenaBuilder::RemoveObsoleteFoodEffectsFrom')) 'Food expiry must use the exact production food-list predicate.'
+    foreach ($method in @(Graph $foodExpiry)) {
+        Check (-not [bool](Calls $method 'Player::ClearFood|Player::RemoveOneFood|Player::UpdateFood')) 'Issued food expiry must not remove random/personal food or advance every food clock.'
+    }
+    Check ([bool](Calls $foodExpiry 'Character::SetMaxHealth|Player::SetMaxHealth') -and [bool](Calls $foodExpiry 'Player::SetMaxStamina')) 'Food removal must immediately clamp native health and stamina totals.'
+    Check (@($foodExpiry.Body.Instructions | Where-Object { $_.OpCode.Name -eq 'ldsfld' -and $_.Operand.Name -eq 'NativeFoodTotals' }).Count -gt 0 -and
+        @($foodExpiry.Body.Instructions | Where-Object { $_.OpCode.Name -eq 'ldsfld' -and $_.Operand.Name -eq 'NativeSetMaxEitr' }).Count -gt 0) 'Food total/private eitr ABI resolution must be cached rather than repeated during maintenance.'
+    Clock-Gate $maintenance 'nextGearMaintenance' 0.5 'ArenaBuilder::RemoveObsoleteFoodEffects'
+    Check ([bool](Calls (Method $pluginType 'FinishRelease' 0) 'ArenaBuilder::RemoveObsoleteFoodEffects')) 'Durable release must remove consumed issued-food effects before its checkpoint.'
+    $foodRefresh = Method 'ValheimModPack.PartyPrison.PrisonFoodRefreshPatch' 'Postfix' 3
+    foreach ($name in @('m_name','m_item')) {
+        Check ([bool]($foodRefresh.Body.Instructions | Where-Object { $_.OpCode.Name -eq 'stfld' -and $_.Operand.Name -eq $name })) ('A successful native food refresh must adopt the actual consumed serving identity: ' + $name)
+    }
+    foreach ($name in @('m_time','m_health','m_stamina','m_eitr')) {
+        Check (-not [bool]($foodRefresh.Body.Instructions | Where-Object { $_.OpCode.Name -eq 'stfld' -and $_.Operand.Name -eq $name })) ('The identity postfix must not alter native food clocks or benefits: ' + $name)
+    }
+    $ammoPair = Method $arenaType 'CanStackIssuedAmmo' 2
+    Check ([bool](Calls $ammoPair 'ArenaBuilder::IsIssuedAmmo') -and [bool](Calls $ammoPair 'PrisonGearPolicy::TryParse')) 'Issued ammo stacking must compare an isolated type and valid exact provenance.'
+    foreach ($guard in @((Method 'ValheimModPack.PartyPrison.StackIsolationPatch' 'Prefix'), (Method 'ValheimModPack.PartyPrison.SlotStackIsolationPatch' 'Prefix'))) {
+        Check ([bool](@(Graph $guard) | ForEach-Object { Calls $_ 'ArenaBuilder::CanStackIssuedAmmo' })) ('Both native automatic and manual-slot stacking need issued-ammo provenance isolation: ' + $guard.Name)
+    }
     $hardDeath = @($playerType.Methods | Where-Object { $_.Name -eq 'HardDeath' -and $_.Parameters.Count -eq 0 })
     Check ($hardDeath.Count -eq 1 -and -not $hardDeath[0].IsStatic -and $hardDeath[0].ReturnType.FullName -eq 'System.Boolean') 'Native HardDeath must remain the instance bool cooldown policy.'
     foreach ($name in @('m_timeSinceDeath','m_hardDeathCooldown')) {

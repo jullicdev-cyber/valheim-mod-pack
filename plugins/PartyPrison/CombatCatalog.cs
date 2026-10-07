@@ -9,12 +9,16 @@ namespace ValheimModPack.PartyPrison
         public readonly int MobLevel, WaveCount, GearQuality;
         public readonly string[] GearPrefabs;
         public readonly string[] FoodSources, FoodPrefabs;
+        public readonly string ArrowSource, ArrowPrefab;
         public readonly int FoodServings;
-        internal PrisonCombatLoadout(string prefab, string russian, string english, string[] gear, string[] foods, int difficulty)
+        public readonly int EmeticServings = CombatCatalog.EmeticServings;
+        internal PrisonCombatLoadout(string prefab, string russian, string english, string[] gear, string[] foods, string arrows, int difficulty)
         {
             MobPrefab = prefab; RussianName = russian; EnglishName = english;
             MobLevel = difficulty + 1; WaveCount = difficulty + 2; GearQuality = difficulty + 1;
-            GearPrefabs = (string[])gear.Clone();
+            ArrowSource = arrows; ArrowPrefab = CombatCatalog.ArrowPrefab(arrows);
+            GearPrefabs = new string[gear.Length + 1]; Array.Copy(gear, GearPrefabs, gear.Length);
+            GearPrefabs[gear.Length] = ArrowPrefab;
             FoodSources = (string[])foods.Clone(); FoodPrefabs = new string[foods.Length];
             for (int i = 0; i < foods.Length; ++i) FoodPrefabs[i] = CombatCatalog.FoodPrefab(foods[i]);
             // Four choices, each in its own nonstackable loan serving. Native
@@ -28,17 +32,20 @@ namespace ValheimModPack.PartyPrison
     public static class CombatCatalog
     {
         public const int FamilyCount = 6, DifficultyCount = 3;
+        public const string EmeticSource = "Pukeberries", EmeticPrefab = "vmp_prison_emetic_Pukeberries";
+        public const int EmeticServings = 3;
         private static readonly string[] Mobs = { "Greyling", "Greydwarf", "Draugr", "Skeleton", "Hatchling", "Wolf" };
         private static readonly string[] Russian = { "Грейдлинги", "Грейдворфы", "Драугры", "Скелеты", "Драконы", "Волки" };
         private static readonly string[] English = { "Greylings", "Greydwarfs", "Draugr", "Skeletons", "Drakes", "Wolves" };
         private static readonly string[][] Gear = {
-            new[] { "ArmorLeatherChest", "ArmorLeatherLegs", "HelmetLeather", "Club", "ShieldWood", "Bow", "ArrowWood" },
-            new[] { "ArmorLeatherChest", "ArmorLeatherLegs", "HelmetLeather", "SwordBronze", "MaceBronze", "AxeBronze", "ShieldBronzeBuckler", "BowFineWood", "ArrowWood" },
-            new[] { "ArmorBronzeChest", "ArmorBronzeLegs", "HelmetBronze", "SwordIron", "MaceIron", "ShieldBanded", "BowHuntsman", "ArrowWood" },
-            new[] { "ArmorBronzeChest", "ArmorBronzeLegs", "HelmetBronze", "SwordBronze", "MaceBronze", "ShieldBronzeBuckler", "BowFineWood", "ArrowWood" },
-            new[] { "ArmorIronChest", "ArmorIronLegs", "HelmetIron", "CapeWolf", "SwordIron", "ShieldBanded", "BowHuntsman", "ArrowWood" },
-            new[] { "ArmorWolfChest", "ArmorWolfLegs", "HelmetDrake", "SwordSilver", "ShieldSilver", "BowDraugrFang", "ArrowWood" }
+            new[] { "ArmorLeatherChest", "ArmorLeatherLegs", "HelmetLeather", "Club", "ShieldWood", "Bow" },
+            new[] { "ArmorLeatherChest", "ArmorLeatherLegs", "HelmetLeather", "SwordBronze", "MaceBronze", "AxeBronze", "ShieldBronzeBuckler", "BowFineWood" },
+            new[] { "ArmorBronzeChest", "ArmorBronzeLegs", "HelmetBronze", "SwordIron", "MaceIron", "ShieldBanded", "BowHuntsman" },
+            new[] { "ArmorBronzeChest", "ArmorBronzeLegs", "HelmetBronze", "SwordBronze", "MaceBronze", "ShieldBronzeBuckler", "BowFineWood" },
+            new[] { "ArmorIronChest", "ArmorIronLegs", "HelmetIron", "CapeWolf", "SwordIron", "ShieldBanded", "BowHuntsman" },
+            new[] { "ArmorWolfChest", "ArmorWolfLegs", "HelmetDrake", "SwordSilver", "ShieldSilver", "BowDraugrFang" }
         };
+        private static readonly string[] Arrows = { "ArrowWood", "ArrowFlint", "ArrowIron", "ArrowFlint", "ArrowObsidian", "ArrowObsidian" };
 
         // Entries 0 and 1 favor health; 2 and 3 favor stamina. The weak
         // loadout uses the previous biome's available recipes, then upgrades
@@ -95,6 +102,20 @@ namespace ValheimModPack.PartyPrison
             return !String.IsNullOrEmpty(name) && FoodNames.Contains(name);
         }
 
+        public static string ArrowPrefab(string source)
+        {
+            if (String.IsNullOrEmpty(source)) throw new ArgumentException("Arrow source is missing.");
+            return "vmp_prison_arrow_" + source;
+        }
+
+        public static bool IsArrowPrefab(string name)
+        {
+            return name == "vmp_prison_arrow_ArrowWood" || name == "vmp_prison_arrow_ArrowFlint"
+                || name == "vmp_prison_arrow_ArrowIron" || name == "vmp_prison_arrow_ArrowObsidian";
+        }
+
+        public static string[] AllArrowSources() { return new[] { "ArrowWood", "ArrowFlint", "ArrowIron", "ArrowObsidian" }; }
+
         public static string[] AllFoodSources()
         {
             var names = new System.Collections.Generic.SortedSet<string>(StringComparer.Ordinal);
@@ -106,7 +127,7 @@ namespace ValheimModPack.PartyPrison
         {
             if (family < 0 || family >= FamilyCount || difficulty < 0 || difficulty >= DifficultyCount)
                 throw new ArgumentOutOfRangeException("family", "Выберите один из шести видов мобов и сложность 1–3.");
-            return new PrisonCombatLoadout(Mobs[family], Russian[family], English[family], Gear[family], Food[family][difficulty], difficulty);
+            return new PrisonCombatLoadout(Mobs[family], Russian[family], English[family], Gear[family], Food[family][difficulty], Arrows[family], difficulty);
         }
 
         public static string Name(int family, bool russian) { return russian ? Get(family, 0).RussianName : Get(family, 0).EnglishName; }
@@ -132,12 +153,14 @@ namespace ValheimModPack.PartyPrison
             token = id.ToString("N"); return true;
         }
 
-        // Supplies can merge with normal loot. Never remove a mixed arrow/resource
-        // stack. Generated armor/weapons and separate arena-food prefabs each
-        // occupy one nonstackable slot before they receive provenance tags.
+        // Ordinary supplies may already contain personal loot. Only explicitly
+        // isolated arena ammo prefabs can opt into stackable expiration.
         public static bool ShouldRemove(string gear, string legacy, int maximumStack, long world, string activeToken, int activeRevision)
+        { return ShouldRemove(gear, legacy, maximumStack, world, activeToken, activeRevision, false); }
+
+        public static bool ShouldRemove(string gear, string legacy, int maximumStack, long world, string activeToken, int activeRevision, bool isolatedSupply)
         {
-            if (maximumStack != 1 || world == 0) return false;
+            if (maximumStack != 1 && !isolatedSupply || world == 0) return false;
             long taggedWorld; string taggedToken; int taggedRevision;
             if (!String.IsNullOrEmpty(gear)) return TryParse(gear, out taggedWorld, out taggedToken, out taggedRevision) && taggedWorld == world
                 && (String.IsNullOrEmpty(activeToken) || taggedToken != activeToken || taggedRevision < activeRevision);

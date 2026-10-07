@@ -1,5 +1,5 @@
 {
-  "packVersion": "1.27.1",
+  "packVersion": "1.27.2",
   "created": "2026-09-25",
   "targetGameVersion": "1.0.17",
   "packages": [
@@ -464,10 +464,10 @@
     },
     {
       "id": "ValheimModPack-PartyPrison",
-      "version": "1.5.1",
+      "version": "1.5.2",
       "source": "local-plugins/PartyPrison.dll",
       "destination": "BepInEx/plugins/ValheimModPack-PartyPrison/PartyPrison.dll",
-      "sha256": "167a4a5dc8288d81787c5f9cfb2a27241ffc09935986ceb14164b2de09f20342",
+      "sha256": "c98a615e3904fea8bacbf33212d4258310dc61367918c91e4cbfbb12d5123022",
       "dependencies": [
         "denikson-BepInExPack_Valheim-5.4.2351",
         "ValheimModding-Jotunn-2.30.2",

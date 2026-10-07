@@ -25,8 +25,12 @@ if ($GameDirectory) {
     $assembly = [Reflection.Assembly]::LoadFrom($runner)
     $sources = $assembly.GetType('ValheimModPack.PartyPrison.CombatCatalog').GetMethod('AllFoodSources').Invoke($null, $null)
     foreach ($name in $sources) { if (-not $known.Contains($name)) { throw "Missing canonical native arena food prefab: $name" } }
+    $arrows = $assembly.GetType('ValheimModPack.PartyPrison.CombatCatalog').GetMethod('AllArrowSources').Invoke($null, $null)
+    foreach ($name in $arrows) { if (-not $known.Contains($name)) { throw "Missing canonical native arena arrow prefab: $name" } }
+    if (-not $known.Contains('Pukeberries')) { throw 'Native pukeberries prefab is missing.' }
     if (-not $known.Contains('fire_pit')) { throw 'Native campfire prefab is missing.' }
     Write-Output "PASS: $($sources.Length) arena food sources resolve in the installed native game asset manifest."
+    Write-Output "PASS: $($arrows.Length) biome arrow sources resolve in the installed native game asset manifest."
     [void][Reflection.Assembly]::LoadFrom((Join-Path $packRoot 'Game/BepInEx/core/Mono.Cecil.dll'))
     $native = [Mono.Cecil.AssemblyDefinition]::ReadAssembly((Join-Path $GameDirectory 'valheim_Data/Managed/assembly_valheim.dll'))
     try {

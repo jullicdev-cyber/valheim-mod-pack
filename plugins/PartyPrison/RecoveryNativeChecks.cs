@@ -15,6 +15,7 @@ namespace ValheimModPack.PartyPrison.NativeVerification
     {
         private const BindingFlags All = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance;
         private static readonly HashSet<GameObject> DetachedPlayers = new HashSet<GameObject>();
+        private static readonly HashSet<ZDO> PublicationZdos = new HashSet<ZDO>();
         private static Type backpackApi;
         public static bool BackpackFixtureSkipped { get; private set; }
 
@@ -24,6 +25,7 @@ namespace ValheimModPack.PartyPrison.NativeVerification
             backpackApi = AppDomain.CurrentDomain.GetAssemblies().Select(assembly => assembly.GetType("AdventureBackpacks.API.ABAPI", false)).FirstOrDefault(type => type != null);
             CheckEmergencyState(check);
             CheckDurableReceipt(check);
+            CheckPublicationRetry(check);
             CheckNestedBackpackGear(check);
         }
 
@@ -67,6 +69,83 @@ namespace ValheimModPack.PartyPrison.NativeVerification
 
         private static bool DetachedPlayerLifecycle(Player __instance)
         { return __instance == null || !DetachedPlayers.Contains(__instance.gameObject); }
+
+        private static bool DetachedPublicationRevision(ZDO __instance)
+        {
+            if (!PublicationZdos.Contains(__instance)) return true;
+            FieldInfo revision = typeof(ZDO).GetField("<DataRevision>k__BackingField", All);
+            revision.SetValue(__instance, unchecked((uint)revision.GetValue(__instance) + 1)); return false;
+        }
+        private static void CheckPublicationRetry(Action<bool, string> check)
+        {
+            string root = Environment.GetEnvironmentVariable("VMP_PARTYPRISON_PROBE");
+            if (String.IsNullOrEmpty(root)) throw new InvalidOperationException("Public handoff fixture requires its isolated probe directory.");
+            check(Player.m_localPlayer == null && Game.instance == null, "handoff retry fixture has no live world or player");
+            MethodInfo publish = typeof(Plugin).GetMethod("PublishCustodyAccess", All);
+            check(publish != null && publish.IsStatic, "public handoff fixture uses the production access-only publication seam");
+            var fixture = new Harmony("valheimmodpack.partyprison.publicationretry." + Guid.NewGuid().ToString("N"));
+            ZDO[] chests = new ZDO[4];
+            try {
+                fixture.Patch(typeof(ZDO).GetMethod("IncreaseDataRevision", All),
+                    prefix: new HarmonyMethod(typeof(RecoveryNativeChecks).GetMethod("DetachedPublicationRevision", All)));
+                string token = Guid.NewGuid().ToString("N"), account = "Steam_76561198000000032";
+                for (int index = 0; index < chests.Length; ++index) {
+                    ZDO chest = new ZDO(); chest.m_uid = new ZDOID(-92873501, (uint)(index + 1)); PublicationZdos.Add(chest); chests[index] = chest;
+                    chest.Set(CustodyInventory.TokenKey, token); chest.Set(CustodyInventory.PublicKey, false);
+                    // Deliberately opaque bytes: public access must not decode,
+                    // compare or reconstruct already handed-off inventories.
+                    chest.Set(ZDOVars.s_items, new byte[] { 91, (byte)index });
+                }
+                using (var store = new CustodyStore(Path.Combine(root, "RecoveryPublication-" + token), 57891)) {
+                    store.Prepare(account, token, new byte[] { 1 }); store.MarkCleared(account, token, 1);
+                    store.MarkDeposited(account, token, chests.Select(chest => chest.m_uid.ToString()).ToArray());
+                    CustodyRecord state = store.FindState(account, token);
+                    int durableMarks = 0, flagWrites = 0;
+                    Action mark = () => { ++durableMarks; store.MarkPublicAccess(account, token); };
+                    Action<ZDO[]> partial = values => {
+                        for (int index = 0; index < values.Length; ++index) {
+                            if (index == 1) throw new InvalidOperationException("Controlled partial native access failure");
+                            values[index].Set(CustodyInventory.PublicKey, true); ++flagWrites;
+                        }
+                    };
+                    bool failed = false;
+                    try { publish.Invoke(null, new object[] { state, chests, mark, partial }); }
+                    catch (TargetInvocationException error) {
+                        if (!(error.InnerException is InvalidOperationException)) throw;
+                        failed = true;
+                    }
+                    check(failed && durableMarks == 1 && flagWrites == 1 && store.FindState(account, token).PublicAccess
+                        && CustodyInventory.IsPublic(chests[0]) && chests.Skip(1).All(chest => !CustodyInventory.IsPublic(chest)),
+                        "a partial native flag failure follows durable handoff and leaves a retryable access boundary");
+                    // Ordinary access can change one opened chest before retry.
+                    chests[0].Set(ZDOVars.s_items, new byte[] { 19 });
+                    byte[][] afterTheft = chests.Select(chest => (byte[])chest.GetByteArray(ZDOVars.s_items, null).Clone()).ToArray();
+                    state = store.FindState(account, token);
+                    Action<ZDO[]> reopen = values => {
+                        foreach (ZDO chest in values) { chest.Set(CustodyInventory.PublicKey, true); ++flagWrites; }
+                    };
+                    publish.Invoke(null, new object[] { state, chests, mark, reopen });
+                    check(durableMarks == 1 && chests.All(CustodyInventory.IsPublic)
+                        && chests.Select((chest, index) => chest.GetByteArray(ZDOVars.s_items, null).SequenceEqual(afterTheft[index])).All(same => same),
+                        "public retry reopens all assigned chests without replaying or inspecting items changed by ordinary access");
+                    publish.Invoke(null, new object[] { state, chests, mark, reopen });
+                    check(durableMarks == 1 && !store.HasOutstanding && chests.All(CustodyInventory.IsPublic),
+                        "repeated public flag repair creates no new journal handoff or collection debt");
+                    string previous = chests[3].GetString(CustodyInventory.TokenKey, ""); chests[3].Set(CustodyInventory.TokenKey, Guid.NewGuid().ToString("N"));
+                    int writesBefore = flagWrites; failed = false;
+                    try { publish.Invoke(null, new object[] { state, chests, mark, reopen }); }
+                    catch (TargetInvocationException error) { if (!(error.InnerException is InvalidDataException)) throw; failed = true; }
+                    check(failed && flagWrites == writesBefore && durableMarks == 1,
+                        "access-only retry refuses a chest assigned to another sentence before changing any native flags");
+                    chests[3].Set(CustodyInventory.TokenKey, previous);
+                }
+            }
+            finally {
+                foreach (ZDO chest in PublicationZdos) typeof(ZDO).GetMethod("Reset", All).Invoke(chest, null);
+                PublicationZdos.Clear(); fixture.UnpatchSelf();
+            }
+            check(Player.m_localPlayer == null && Game.instance == null, "handoff retry fixture releases all detached native records");
+        }
 
         private static void CheckDurableReceipt(Action<bool, string> check)
         {

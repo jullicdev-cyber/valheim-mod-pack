@@ -17,6 +17,13 @@ namespace ValheimModPack.PartyPrison
         private long grantSave;
         private readonly Dictionary<string, long> withdrawalBaselines = new Dictionary<string, long>();
         private readonly Dictionary<string, float> legacyGrantAfter = new Dictionary<string, float>();
+        private CustodyWithdrawal LegacyWithdrawals()
+        {
+            // Ordinary public chests have no withdrawal ledger dependency.
+            // Open old journals only when recovering a pre-public migration.
+            if (withdrawal == null) withdrawal = new CustodyWithdrawal(Path.GetDirectoryName(store.StatePath), world);
+            return withdrawal;
+        }
         private void ResetWithdrawal()
         {
             if (withdrawal != null) { withdrawal.Dispose(); withdrawal = null; }
@@ -42,8 +49,8 @@ namespace ValheimModPack.PartyPrison
             string account = WC.GetAdministrativeOwner(peer);
             if (index < 0 || index > 3 || token.Length != 32) throw new InvalidDataException("Invalid custody withdrawal identity.");
             CustodyRecord custodyRecord = custody.Find(account, token);
-            if (custodyRecord == null || custodyRecord.Closed || custodyRecord.NeedsRecovery || custodyRecord.Stage != CustodyStage.Released) return true;
-            WithdrawalRecord record = withdrawal.Find(token, index);
+            if (custodyRecord == null || custodyRecord.Closed || custodyRecord.PublicAccess || custodyRecord.NeedsRecovery || custodyRecord.Stage != CustodyStage.Released) return true;
+            WithdrawalRecord record = LegacyWithdrawals().Find(token, index);
             if (record == null || record.NeedsRecovery) return true;
             if (kind == PrisonProtocol.WithdrawalAck)
             {
@@ -112,7 +119,7 @@ namespace ValheimModPack.PartyPrison
                 CustodyRecord state = custody.FindState(custodyRecord.AccountId, custodyRecord.SentenceId);
                 if (state == null || state.Closed || state.Stage != CustodyStage.Released || state.NeedsRecovery)
                 { pendingLegacyWithdrawals.Remove(custodyRecord); continue; }
-                WithdrawalRecord[] balances = withdrawal.All(custodyRecord.SentenceId);
+                WithdrawalRecord[] balances = LegacyWithdrawals().All(custodyRecord.SentenceId);
                 if (!balances.Any(b => b.PendingId.Length != 0))
                 { custody.MarkCollected(state.AccountId, state.SentenceId); pendingLegacyWithdrawals.Remove(custodyRecord); continue; }
                 ZNetPeer peer = peers.Values.FirstOrDefault(p => Ready(p) && WC.GetAdministrativeOwner(p) == state.AccountId);

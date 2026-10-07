@@ -12,6 +12,7 @@ namespace ValheimModPack.PartyPrison
         private int combatFamily, combatDifficulty, combatRevision;
         private string combatToken = "";
         private float nextGearMaintenance, nextStoredGearMaintenance, nextDefeat;
+        private bool expireRestoredFood;
         private readonly Dictionary<ZRpc, float> combatRequests = new Dictionary<ZRpc, float>();
         private readonly Dictionary<ZRpc, float> defeatRequests = new Dictionary<ZRpc, float>();
 
@@ -19,6 +20,7 @@ namespace ValheimModPack.PartyPrison
         {
             combatFamily = combatDifficulty = combatRevision = 0; combatToken = "";
             nextGearMaintenance = nextStoredGearMaintenance = nextDefeat = 0;
+            expireRestoredFood = false;
             combatRequests.Clear(); defeatRequests.Clear();
         }
 
@@ -47,7 +49,12 @@ namespace ValheimModPack.PartyPrison
         private void ReadCombatState(int family, int difficulty, string token, int revision)
         {
             ValidateCombatState(family, difficulty, token, revision);
-            if (combatToken != token || combatRevision != revision) nextGearMaintenance = nextStoredGearMaintenance = 0;
+            if (combatToken != token || combatRevision != revision) {
+                nextGearMaintenance = nextStoredGearMaintenance = 0;
+                // Native Player.Save stores food prefab/time, not serving tags.
+                // Previously restored rations must expire on this loadout epoch.
+                expireRestoredFood = true;
+            }
             combatFamily = family; combatDifficulty = difficulty; combatToken = token; combatRevision = revision;
         }
 
@@ -71,6 +78,8 @@ namespace ValheimModPack.PartyPrison
             {
                 int removed = ArenaBuilder.RemoveObsoleteGearWhenSettled(Player.m_localPlayer, world, combatToken, combatRevision);
                 removed += CustodyInventory.ExpireBackpackGear(Player.m_localPlayer, world, combatToken, combatRevision);
+                removed += ArenaBuilder.RemoveObsoleteFoodEffects(Player.m_localPlayer, world, combatToken, combatRevision, expireRestoredFood);
+                expireRestoredFood = false;
                 if (removed > 0) WC.RequestAdministrativeSave();
             }
         }
@@ -106,7 +115,7 @@ namespace ValheimModPack.PartyPrison
             // keep their separate durability barriers.
             PrisonCombatLoadout choice = CombatCatalog.Get(family, difficulty);
             notice = T("Противники: ", "Enemies: ") + T(choice.RussianName, choice.EnglishName)
-                + T("; сложность ", "; difficulty ") + (difficulty + 1) + T(". Снаряжение и четыре вида еды — в сундуке камеры.", ". Equipment and four food choices are in the cell chest.");
+                + T("; сложность ", "; difficulty ") + (difficulty + 1) + T(". Снаряжение, четыре вида еды и три тошника — в сундуке камеры.", ". Equipment, four food choices and three pukeberries are in the cell chest.");
         }
 
         private bool ServerCombatMessage(ZNetPeer peer, int kind, BinaryReader reader)

@@ -267,17 +267,34 @@ namespace ValheimModPack.PartyPrison
         private static Exception Finalizer(Exception __exception, ItemDrop.ItemData __state)
         { PrisonGuard.AddingItem = __state; return __exception; }
     }
+    [HarmonyPatch(typeof(Inventory), "AddItem", new Type[] { typeof(ItemDrop.ItemData), typeof(Vector2i) })]
+    internal static class PositionedAddItemPatch
+    {
+        // The preferred-position overload searches stack candidates directly;
+        // it does not pass through AddItem(ItemData).
+        private static bool Prefix(Inventory __instance, ItemDrop.ItemData __0, ref bool __result, out ItemDrop.ItemData __state)
+        {
+            __state = PrisonGuard.AddingItem;
+            if (!PrisonGuard.InventoryAccess(__instance) || !PrisonGuard.LoanDestination(__instance, __0)) { __result = false; return false; }
+            PrisonGuard.AddingItem = __0; return true;
+        }
+        private static Exception Finalizer(Exception __exception, ItemDrop.ItemData __state)
+        { PrisonGuard.AddingItem = __state; return __exception; }
+    }
     [HarmonyPatch(typeof(Inventory), "FindFreeStackItem")]
     internal static class StackIsolationPatch
     {
         private static bool Prefix(Inventory __instance, string __0, int __1, float __2, ref ItemDrop.ItemData __result)
         {
-            // Vanilla stacking ignores custom data. Preserve the ownership of
-            // personal arrows when the same prefab exists in the prison armory.
-            bool loan = Plugin.IsLoan(PrisonGuard.AddingItem);
-            if (!loan && !__instance.GetAllItems().Any(Plugin.IsLoan)) return true;
-            __result = __instance.GetAllItems().FirstOrDefault(item => item.m_shared.m_name == __0 && item.m_quality == __1
-                && item.m_worldLevel == __2 && item.m_stack < item.m_shared.m_maxStackSize && Plugin.IsLoan(item) == loan);
+            // Native stacking ignores custom data. Issued ammo may stack only
+            // with ammunition from the same world, sentence and kit revision.
+            ItemDrop.ItemData incoming = PrisonGuard.AddingItem;
+            bool loan = Plugin.IsLoan(incoming);
+            List<ItemDrop.ItemData> items = __instance.GetAllItems();
+            if (!loan && !ArenaBuilder.IsIssuedAmmo(incoming) && !items.Any(item => Plugin.IsLoan(item) || ArenaBuilder.IsIssuedAmmo(item))) return true;
+            __result = items.FirstOrDefault(item => item.m_shared.m_name == __0 && item.m_quality == __1
+                && item.m_worldLevel == __2 && item.m_stack < item.m_shared.m_maxStackSize && Plugin.IsLoan(item) == loan
+                && ArenaBuilder.CanStackIssuedAmmo(item, incoming));
             return false;
         }
     }
@@ -298,19 +315,51 @@ namespace ValheimModPack.PartyPrison
         private static bool Prefix(Inventory __instance, ItemDrop.ItemData __0, int __2, int __3, ref bool __result)
         {
             ItemDrop.ItemData existing = __instance.GetAllItems().FirstOrDefault(item => item.m_gridPos.x == __2 && item.m_gridPos.y == __3);
-            if (!ReferenceEquals(__instance, PrisonGuard.Inaccessible) && (PrisonGuard.InventoryAccess(__instance) || PrisonGuard.LoadingCustody != 0) && PrisonGuard.LoanDestination(__instance, __0) && CompatibleFood(existing, __0) && (existing == null || Plugin.IsLoan(existing) == Plugin.IsLoan(__0))) return true;
+            if (!ReferenceEquals(__instance, PrisonGuard.Inaccessible) && (PrisonGuard.InventoryAccess(__instance) || PrisonGuard.LoadingCustody != 0)
+                && PrisonGuard.LoanDestination(__instance, __0) && CompatibleFood(existing, __0) && ArenaBuilder.CanStackIssuedAmmo(existing, __0)
+                && (existing == null || Plugin.IsLoan(existing) == Plugin.IsLoan(__0))) return true;
             __result = false; return false;
         }
     }
     [HarmonyPatch(typeof(Inventory), "StackAll")]
     internal static class QuickStackIsolationPatch
     {
+        // StackAll transfers each eligible item through AddItem(ItemData), so
+        // issued ammo is filtered per stack without disabling ordinary items.
         private static bool Prefix(Inventory __instance, Inventory __0, ref int __result)
         { if (PrisonGuard.InventoryAccess(__instance) && PrisonGuard.InventoryAccess(__0) && !__instance.GetAllItems().Any(Plugin.IsLoan) && !__0.GetAllItems().Any(Plugin.IsLoan)) return true; __result = 0; return false; }
     }
     [HarmonyPatch(typeof(ItemDrop), "AutoStackItems")]
     internal static class WorldStackIsolationPatch
-    { private static bool Prefix(ItemDrop __instance) { return !ArenaBuilder.IsArmory(__instance.gameObject) && !PrisonGuard.Protected(__instance); } }
+    {
+        private static bool Prefix(ItemDrop __instance)
+        {
+            ItemDrop.ItemData item = __instance.m_itemData;
+            // World stacking bypasses Inventory. The cloned definitions also
+            // disable m_autoStack so a native receiver cannot absorb them.
+            return !ArenaBuilder.IsIssuedAmmo(item) && !(item != null && item.m_dropPrefab != null && CombatCatalog.IsFoodPrefab(item.m_dropPrefab.name))
+                && !ArenaBuilder.IsArmory(__instance.gameObject) && !PrisonGuard.Protected(__instance);
+        }
+    }
+    [HarmonyPatch(typeof(Player), "EatFood", new Type[] { typeof(ItemDrop.ItemData) })]
+    internal static class PrisonFoodRefreshPatch
+    {
+        private static void Postfix(Player __instance, ItemDrop.ItemData __0, bool __result)
+        {
+            if (!__result || __instance == null || __0 == null || __0.m_shared == null || __0.m_dropPrefab == null) return;
+            bool incomingRation = CombatCatalog.IsFoodPrefab(__0.m_dropPrefab.name);
+            foreach (Player.Food food in __instance.GetFoods()) {
+                if (food.m_item == null || food.m_item.m_shared == null || food.m_item.m_shared.m_name != __0.m_shared.m_name) continue;
+                if (incomingRation || CombatCatalog.IsFoodPrefab(food.m_name)
+                    || food.m_item.m_dropPrefab != null && CombatCatalog.IsFoodPrefab(food.m_item.m_dropPrefab.name)) {
+                    // Native refresh updates time and benefits but retains the
+                    // previous serving's identity. Save only records m_name.
+                    food.m_name = __0.m_dropPrefab.name; food.m_item = __0;
+                }
+                break;
+            }
+        }
+    }
     [HarmonyPatch]
     internal static class GroupRadiusCompatibilityPatch
     {

@@ -56,12 +56,20 @@ namespace ValheimModPack.PartyPrison.NativeVerification
                         ItemDrop.ItemData item = Item(name, 1);
                         check(item.m_shared.m_maxQuality >= 1 && item.m_shared.m_maxStackSize >= 1,
                             "loadout native item defines quality and stack size: " + name);
-                        if (item.m_shared.m_maxStackSize == 1) {
+                        if (item.m_shared.m_maxStackSize == 1 || ArenaBuilder.IsIssuedAmmo(item)) {
                             item.m_customData[ArenaBuilder.GearKey] = PrisonGearPolicy.Tag(6789, new string('1', 32), 1);
-                            check(ArenaBuilder.IsGeneratedGear(item), "loadout nonstackable item is valid removable armor or weapon: " + name);
+                            check(ArenaBuilder.IsGeneratedGear(item), "loadout item is valid isolated removable equipment or ammunition: " + name);
                             check(!item.m_customData.ContainsKey(ArenaBuilder.LoanKey), "ordinary native chest equipment avoids legacy pickup guards: " + name);
                         }
                     }
+                    ItemDrop.ItemData nativeArrow = Item(loadout.ArrowSource, 1), arrow = Item(loadout.ArrowPrefab, 1);
+                    check(ArenaBuilder.IsIssuedAmmo(arrow) && !ArenaBuilder.IsIssuedAmmo(nativeArrow)
+                        && arrow.m_shared.m_name != nativeArrow.m_shared.m_name && arrow.m_shared.m_ammoType == nativeArrow.m_shared.m_ammoType
+                        && arrow.m_shared.m_damages.Equals(nativeArrow.m_shared.m_damages)
+                        && arrow.m_shared.m_icons[0] == nativeArrow.m_shared.m_icons[0]
+                        && arrow.m_shared.m_maxStackSize == nativeArrow.m_shared.m_maxStackSize && !arrow.m_shared.m_autoStack
+                        && !System.Object.ReferenceEquals(arrow.m_shared, nativeArrow.m_shared),
+                        "biome arrows preserve native combat and icons but isolate their name and ground stacking: " + loadout.ArrowSource);
                     for (int i = 0; i < loadout.FoodPrefabs.Length; ++i) {
                         ItemDrop.ItemData source = Item(loadout.FoodSources[i], 1), food = Item(loadout.FoodPrefabs[i], 1);
                         check(food.m_shared.m_food > 0 && food.m_shared.m_foodStamina > 0
@@ -72,12 +80,15 @@ namespace ValheimModPack.PartyPrison.NativeVerification
                             && food.m_shared.m_foodEitr == source.m_shared.m_foodEitr && food.m_shared.m_name == source.m_shared.m_name
                             && food.m_shared.m_icons.Length == source.m_shared.m_icons.Length && food.m_shared.m_icons[0] == source.m_shared.m_icons[0],
                             "arena food keeps native benefits, duration, food identity and inventory icon: " + loadout.FoodPrefabs[i]);
-                        check(food.m_shared.m_maxStackSize == 1 && source.m_shared.m_maxStackSize > 1
+                        check(food.m_shared.m_maxStackSize == 1 && source.m_shared.m_maxStackSize > 1 && !food.m_shared.m_autoStack
                             && !System.Object.ReferenceEquals(food.m_shared, source.m_shared), "arena ration cannot merge into personal food or alter its native definition");
                     }
                 }
             CheckFoodLoans(check);
             CheckFoodDragging(check);
+            CheckIssuedAmmo(check);
+            CheckIssuedEmetics(check);
+            CheckConsumedFoodLoans(check);
             CheckConsole(check);
             CheckCampfire(check);
             CheckCampfireAutomaticFuel(check);
@@ -161,6 +172,240 @@ namespace ValheimModPack.PartyPrison.NativeVerification
                 && restored.GetAllItems().Any(item => item.m_dropPrefab.name == CombatCatalog.FoodPrefab("ShocklateSmoothie")),
                 "release preserves personal food, other-world rations and untagged data");
             check(ArenaBuilder.RemoveObsoleteInventoryGear(restored, world, "", 0) == 0, "loan food cleanup is idempotent after save and release");
+        }
+
+        private static void CheckIssuedAmmo(Action<bool, string> check)
+        {
+            const long world = 6789; string token = new string('7', 32);
+            var fixture = new Harmony("valheimmodpack.partyprison.nativeprobe.ammoquickstack");
+            MethodInfo nativeStack = AccessTools.Method(typeof(Inventory), "StackAll", new[] { typeof(Inventory), typeof(bool) });
+            check(nativeStack != null, "ammo quick-stack fixture resolves the actual native Inventory.StackAll ABI");
+            try {
+                // Keep the native transfer body and every production/vendor
+                // inventory patch. Replace only its live equipment/stat edges
+                // for the explicitly marked detached fixture inventories.
+                fixture.Patch(nativeStack, transpiler: new HarmonyMethod(typeof(CombatNativeChecks).GetMethod("ScopeQuickStackContext", FireFixtureFlags)));
+            foreach (string name in CombatCatalog.AllArrowSources()) {
+                string loanName = CombatCatalog.ArrowPrefab(name);
+                var inventory = new Inventory("PartyPrison.AmmoNative", null, 8, 4);
+                ItemDrop.ItemData personal = Item(name, 58), old = Gear(loanName, world, token, 1), current = Gear(loanName, world, token, 2);
+                old.m_stack = 25; current.m_stack = 10;
+                check(inventory.AddItem(personal) && inventory.AddItem(old) && inventory.AddItem(current)
+                    && inventory.GetAllItems().Count == 3 && old.m_stack == 25 && current.m_stack == 10 && personal.m_stack == 58,
+                    "native automatic insertion separates personal arrows and old/current issued revisions: " + name);
+                ItemDrop.ItemData sameRevision = Gear(loanName, world, token, 2); sameRevision.m_stack = 12;
+                check(inventory.AddItem(sameRevision) && current.m_stack == 22 && old.m_stack == 25 && inventory.GetAllItems().Count == 3,
+                    "same-provenance issued arrows retain ordinary native stacking: " + name);
+                var source = new Inventory("PartyPrison.AmmoSource", null, 8, 4);
+                ItemDrop.ItemData incoming = Gear(loanName, world, token, 3); incoming.m_stack = 7;
+                check(source.AddItem(incoming), "ammo drag fixture inserts future revision");
+                byte[] before = Save(inventory), sourceBefore = Save(source);
+                check(!inventory.MoveItemToThis(source, incoming, 3, current.m_gridPos.x, current.m_gridPos.y)
+                    && Save(inventory).SequenceEqual(before) && Save(source).SequenceEqual(sourceBefore),
+                    "manual drag cannot merge different-issued revisions or lose provenance: " + name);
+                check(inventory.MoveItemToThis(inventory, current, 3, 3, 0), "issued arrow stack can split into an empty native slot");
+                ItemDrop.ItemData split = inventory.GetItemAt(3, 0);
+                check(split != null && split.m_stack == 3 && current.m_stack == 19
+                    && split.m_customData[ArenaBuilder.GearKey] == current.m_customData[ArenaBuilder.GearKey]
+                    && split.m_dropPrefab.name == loanName, "native splitting retains exact quantity and issued-arrow metadata: " + name);
+                check(ArenaBuilder.RemoveObsoleteInventoryGear(inventory, world, token, 2) == 1
+                    && current.m_stack == 19 && split.m_stack == 3 && personal.m_stack == 58,
+                    "loadout change removes only old issued arrow stacks, keeping split current ammo and personal arrows: " + name);
+                var saved = new ZPackage(); inventory.Save(saved);
+                var restored = new Inventory("PartyPrison.AmmoRestored", null, 8, 4); restored.Load(new ZPackage(saved.GetArray()));
+                check(ArenaBuilder.RemoveObsoleteInventoryGear(restored, world, "", 0) == 2
+                    && restored.GetAllItems().Count == 1 && restored.GetAllItems()[0].m_dropPrefab.name == name && restored.GetAllItems()[0].m_stack == 58,
+                    "native save/reload preserves loan expiry on all split stacks and personal arrows exactly: " + name);
+                check(ArenaBuilder.RemoveObsoleteInventoryGear(restored, world, "", 0) == 0, "issued arrow release cleanup is idempotent");
+
+                var target = new Inventory("PartyPrison.AmmoQuickStackTarget", null, 8, 4);
+                var from = new Inventory("PartyPrison.AmmoQuickStackSource", null, 8, 4);
+                ItemDrop.ItemData targetOld = Gear(loanName, world, token, 1), fromCurrent = Gear(loanName, world, token, 2);
+                targetOld.m_stack = 20; fromCurrent.m_stack = 8;
+                ItemDrop.ItemData targetPersonal = Item(name, 5), fromPersonal = Item(name, 9);
+                check(target.AddItem(targetOld) && target.AddItem(targetPersonal) && from.AddItem(fromCurrent) && from.AddItem(fromPersonal), "quick-stack fixture inserts loan and personal ammo");
+                quickStackInventories.Add(target); int equipmentCalls = quickStackEquipmentCalls, statCalls = quickStackStatCalls;
+                try { target.StackAll(from, false); } finally { quickStackInventories.Remove(target); }
+                check(quickStackEquipmentCalls == equipmentCalls + 2 && quickStackStatCalls == statCalls + 1
+                    && Player.m_localPlayer == null && Game.instance == null,
+                    "native quick-stack transfer runs with only scoped detached equipment/stat context and no player or world registration");
+                check(targetOld.m_stack == 20 && targetPersonal.m_stack == 14 && target.GetAllItems().Any(item =>
+                    item.m_dropPrefab.name == loanName && item.m_stack == 8 && item.m_customData[ArenaBuilder.GearKey] == fromCurrent.m_customData[ArenaBuilder.GearKey])
+                    && from.GetAllItems().Count == 0, "native StackAll transfers loan revisions separately while quick-stacking ordinary arrows: " + name);
+                check(ArenaBuilder.CanStackIssuedAmmo(null, fromCurrent) && ArenaBuilder.CanStackIssuedAmmo(targetOld, null)
+                    && !ArenaBuilder.CanStackIssuedAmmo(targetOld, fromCurrent) && !ArenaBuilder.CanStackIssuedAmmo(targetPersonal, fromCurrent),
+                    "capacity preview stays usable while actual incompatible ammo pairs cannot stack");
+                ItemDrop.ItemData untagged = Item(loanName, 4);
+                check(!ArenaBuilder.CanStackIssuedAmmo(fromCurrent, untagged) && !ArenaBuilder.IsGeneratedGear(untagged),
+                    "untagged isolated ammo cannot contaminate valid provenance");
+                var positioned = new Inventory("PartyPrison.AmmoPreferredPosition", null, 8, 4);
+                ItemDrop.ItemData positionedOld = Gear(loanName, world, token, 1), positionedCurrent = Gear(loanName, world, token, 2);
+                positionedOld.m_stack = 9; positionedCurrent.m_stack = 4;
+                check(positioned.AddItem(positionedOld) && positioned.AddItem(positionedCurrent, new Vector2i(1, 0))
+                    && positionedOld.m_stack == 9 && positionedCurrent.m_stack == 4 && positioned.GetAllItems().Count == 2
+                    && positioned.GetItemAt(1, 0) == positionedCurrent,
+                    "native preferred-position insertion establishes provenance context before its direct stack query: " + name);
+                ItemDrop.ItemData positionedSame = Gear(loanName, world, token, 2); positionedSame.m_stack = 7;
+                check(positioned.AddItem(positionedSame, new Vector2i(2, 0)) && positionedCurrent.m_stack == 11
+                    && positionedOld.m_stack == 9 && positioned.GetAllItems().Count == 2,
+                    "native preferred-position insertion may merge matching issued revisions: " + name);
+                MethodInfo capacity = typeof(Inventory).GetMethod("FindFreeStackItem", FireFixtureFlags);
+                byte[] positionedBefore = Save(positioned);
+                check(System.Object.ReferenceEquals(capacity.Invoke(positioned, new object[] { positionedOld.m_shared.m_name, 1, 0f }), positionedOld)
+                    && Save(positioned).SequenceEqual(positionedBefore), "direct null-context native capacity preview remains read-only and usable: " + name);
+            }
+            }
+            finally { fixture.UnpatchSelf(); quickStackInventories.Clear(); quickStackEquipmentCalls = quickStackStatCalls = 0; }
+        }
+
+        private static readonly HashSet<Inventory> quickStackInventories = new HashSet<Inventory>();
+        private static int quickStackEquipmentCalls, quickStackStatCalls;
+
+        private static bool FixtureStackEquipped(Humanoid actor, ItemDrop.ItemData item, Inventory destination)
+        {
+            if (!quickStackInventories.Contains(destination)) return actor.IsItemEquiped(item);
+            ++quickStackEquipmentCalls;
+            return item.m_equipped;
+        }
+        private static void FixtureStackStat(Game game, PlayerStatType stat, float amount, bool includeClient, Inventory destination)
+        {
+            if (!quickStackInventories.Contains(destination)) { game.IncrementPlayerStat(stat, amount, includeClient); return; }
+            ++quickStackStatCalls;
+        }
+        private static IEnumerable<CodeInstruction> ScopeQuickStackContext(IEnumerable<CodeInstruction> instructions)
+        {
+            MethodInfo equipped = AccessTools.Method(typeof(Humanoid), "IsItemEquiped", new[] { typeof(ItemDrop.ItemData) });
+            MethodInfo stat = AccessTools.Method(typeof(Game), "IncrementPlayerStat", new[] { typeof(PlayerStatType), typeof(float), typeof(bool) });
+            int equipmentCalls = 0, statCalls = 0;
+            foreach (CodeInstruction instruction in instructions) {
+                MethodInfo wrapper = null;
+                if (instruction.Calls(equipped)) { wrapper = typeof(CombatNativeChecks).GetMethod("FixtureStackEquipped", FireFixtureFlags); ++equipmentCalls; }
+                else if (instruction.Calls(stat)) { wrapper = typeof(CombatNativeChecks).GetMethod("FixtureStackStat", FireFixtureFlags); ++statCalls; }
+                if (wrapper == null) { yield return instruction; continue; }
+                var destination = new CodeInstruction(OpCodes.Ldarg_0);
+                destination.labels.AddRange(instruction.labels); destination.blocks.AddRange(instruction.blocks);
+                yield return destination;
+                yield return new CodeInstruction(OpCodes.Call, wrapper);
+            }
+            if (equipmentCalls != 1 || statCalls != 1) throw new InvalidOperationException("Native quick-stack context ABI changed; fixture does not replace transfer behavior.");
+        }
+
+        private static Player.Food Food(ItemDrop.ItemData item, float time)
+        {
+            return new Player.Food { m_name = item.m_dropPrefab.name, m_item = item, m_time = time,
+                m_health = item.m_shared.m_food, m_stamina = item.m_shared.m_foodStamina, m_eitr = item.m_shared.m_foodEitr };
+        }
+
+        private static void CheckIssuedEmetics(Action<bool, string> check)
+        {
+            const long world = 6789; string token = new string('9', 32);
+            ItemDrop.ItemData definition = Item(CombatCatalog.EmeticPrefab, 1), native = Item(CombatCatalog.EmeticSource, 5);
+            check(ArenaBuilder.IsIssuedEmetic(definition) && !ArenaBuilder.IsIssuedEmetic(native)
+                && definition.m_shared.m_maxStackSize == 1 && !definition.m_shared.m_autoStack
+                && definition.m_shared.m_name != native.m_shared.m_name
+                && !System.Object.ReferenceEquals(definition.m_shared, native.m_shared)
+                && definition.m_shared.m_consumeStatusEffect != null && definition.m_shared.m_consumeStatusEffect.GetType().Name == "SE_Puke"
+                && definition.m_shared.m_consumeStatusEffect == native.m_shared.m_consumeStatusEffect
+                && definition.m_shared.m_itemType == native.m_shared.m_itemType && definition.m_shared.m_icons[0] == native.m_shared.m_icons[0]
+                && definition.m_shared.m_food == native.m_shared.m_food && definition.m_shared.m_foodStamina == native.m_shared.m_foodStamina,
+                "isolated emetics preserve actual native pukeberry consumption/status/icon without mutating the ordinary template");
+            var inventory = new Inventory("PartyPrison.EmeticNative", null, 8, 4);
+            ItemDrop.ItemData old = Gear(CombatCatalog.EmeticPrefab, world, token, 1), current = Gear(CombatCatalog.EmeticPrefab, world, token, 2);
+            ItemDrop.ItemData future = Gear(CombatCatalog.EmeticPrefab, world, token, 3), other = Gear(CombatCatalog.EmeticPrefab, world + 1, token, 1);
+            foreach (ItemDrop.ItemData item in new[] { native, old, current, future, other }) check(inventory.AddItem(item), "emetic fixture inserts separate loan servings and personal stack");
+            check(inventory.GetAllItems().Count == 5 && native.m_stack == 5 && old.m_stack == 1 && current.m_stack == 1,
+                "issued single-serving emetics never mix with personal pukeberries or each other");
+            check(ArenaBuilder.IsGeneratedGear(old) && !ArenaBuilder.IsGeneratedGear(native)
+                && ArenaBuilder.RemoveObsoleteInventoryGear(inventory, world, token, 2) == 1 && inventory.GetAllItems().Contains(current)
+                && inventory.GetAllItems().Contains(future) && inventory.GetAllItems().Contains(other),
+                "opponent change expires only old tagged emetics while future/current and other-world serving provenance survives");
+            var saved = new ZPackage(); inventory.Save(saved);
+            var restored = new Inventory("PartyPrison.EmeticRestored", null, 8, 4); restored.Load(new ZPackage(saved.GetArray()));
+            check(ArenaBuilder.RemoveObsoleteInventoryGear(restored, world, "", 0) == 2 && restored.GetAllItems().Count == 2
+                && restored.GetAllItems().Any(item => item.m_dropPrefab.name == CombatCatalog.EmeticSource && item.m_stack == 5)
+                && ArenaBuilder.RemoveObsoleteInventoryGear(restored, world, "", 0) == 0,
+                "save/reload retains emetic expiry and keeps the exact personal stack after release");
+        }
+
+        private static void CheckConsumedFoodLoans(Action<bool, string> check)
+        {
+            const long world = 6789; string token = new string('8', 32);
+            Player.Food personal = Food(Item("Sausages", 1), 123.25f);
+            Player.Food old = Food(Gear(CombatCatalog.FoodPrefab("Sausages"), world, token, 1), 80f);
+            Player.Food current = Food(Gear(CombatCatalog.FoodPrefab("TurnipStew"), world, token, 2), 90f);
+            float health = personal.m_health, stamina = personal.m_stamina, eitr = personal.m_eitr;
+            var foods = new List<Player.Food> { personal, old, current };
+            check(ArenaBuilder.RemoveObsoleteFoodEffectsFrom(foods, world, token, 2, false) == 1
+                && foods.SequenceEqual(new[] { personal, current }), "opponent change removes only expired consumed ration buffs");
+            Player.Food future = Food(Gear(CombatCatalog.FoodPrefab("Honey"), world, token, 3), 70f); foods.Add(future);
+            check(ArenaBuilder.RemoveObsoleteFoodEffectsFrom(foods, world, token, 2, true) == 0,
+                "current and future tagged ration buffs tolerate chest/state delivery ordering");
+            check(ArenaBuilder.RemoveObsoleteFoodEffectsFrom(foods, world, "", 0, true) == 2 && foods.Single() == personal
+                && personal.m_time == 123.25f && personal.m_health == health && personal.m_stamina == stamina && personal.m_eitr == eitr,
+                "release removes issued food effects without ticking or altering personal food benefits");
+            Player.Food restored = Food(Prefab(CombatCatalog.FoodPrefab("Honey")).GetComponent<ItemDrop>().m_itemData, 61f);
+            foods.Add(restored);
+            check(ArenaBuilder.RemoveObsoleteFoodEffectsFrom(foods, world, token, 2, false) == 0 && restored.m_time == 61f,
+                "a natively restored untagged ration remains active within the unchanged sentence");
+            check(ArenaBuilder.RemoveObsoleteFoodEffectsFrom(foods, world, token, 3, true) == 1 && foods.Single() == personal,
+                "a loadout epoch expires restored prefab-only food identity after native food tags were lost");
+            foods.Add(Food(Item(CombatCatalog.FoodPrefab("Honey"), 1), 60f));
+            check(ArenaBuilder.RemoveObsoleteFoodEffectsFrom(foods, world, "", 0, false) == 1 && foods.Single() == personal,
+                "no active sentence always removes restored issued food effects");
+            foods.Add(Food(Gear(CombatCatalog.FoodPrefab("Honey"), world + 1, token, 1), 60f));
+            check(ArenaBuilder.RemoveObsoleteFoodEffectsFrom(foods, world, "", 0, true) == 0,
+                "known other-world consumed-food provenance is preserved");
+            CheckFoodRefresh(check);
+        }
+
+        private static readonly HashSet<GameObject> foodFixtureObjects = new HashSet<GameObject>();
+        private static bool SkipFoodPlayerLifecycle(Component __instance)
+        { return __instance == null || !foodFixtureObjects.Contains(__instance.gameObject); }
+
+        private static void CheckFoodRefresh(Action<bool, string> check)
+        {
+            check(Player.m_localPlayer == null && Game.instance == null, "food refresh fixture uses no live character or world");
+            MethodInfo eat = AccessTools.Method(typeof(Player), "EatFood");
+            Patches patches = Harmony.GetPatchInfo(eat);
+            check(patches != null && patches.Postfixes.Any(patch => patch.owner == Plugin.Id
+                && patch.PatchMethod.DeclaringType.FullName == "ValheimModPack.PartyPrison.PrisonFoodRefreshPatch"),
+                "issued-food identity postfix is installed on actual native EatFood");
+            MethodInfo refresh = typeof(Plugin).Assembly.GetType("ValheimModPack.PartyPrison.PrisonFoodRefreshPatch", true).GetMethod("Postfix", FireFixtureFlags);
+            var fixture = new Harmony("valheimmodpack.partyprison.nativeprobe.foodrefresh"); GameObject node = null;
+            try {
+                var seen = new HashSet<MethodInfo>();
+                foreach (Type type in new[] { typeof(Player), typeof(Humanoid), typeof(Character) })
+                    foreach (string name in new[] { "Awake", "OnDestroy" }) {
+                        MethodInfo method = AccessTools.Method(type, name, Type.EmptyTypes);
+                        if (method != null && seen.Add(method)) fixture.Patch(method,
+                            prefix: new HarmonyMethod(typeof(CombatNativeChecks).GetMethod("SkipFoodPlayerLifecycle", FireFixtureFlags)) { priority = Priority.First });
+                    }
+                node = new GameObject("PartyPrison.DetachedFoodRefresh"); node.SetActive(false); foodFixtureObjects.Add(node);
+                Player player = node.AddComponent<Player>(); var foods = player.GetFoods(); foods.Clear();
+                ItemDrop.ItemData ordinary = Item("Sausages", 1), ration = Gear(CombatCatalog.FoodPrefab("Sausages"), 6789, new string('8', 32), 2);
+                Player.Food food = Food(ordinary, 79.5f); foods.Add(food);
+                refresh.Invoke(null, new object[] { player, Gear(CombatCatalog.EmeticPrefab, 6789, new string('8', 32), 2), true });
+                check(foods.Single() == food && food.m_item == ordinary && food.m_name == "Sausages" && food.m_time == 79.5f,
+                    "non-food emetic consumption is never marked as a consumed-ration buff");
+                refresh.Invoke(null, new object[] { player, ration, true });
+                check(foods.Single() == food && food.m_item == ration && food.m_name == ration.m_dropPrefab.name && food.m_time == 79.5f,
+                    "successful ordinary-food refresh by ration adopts actual issued identity without duplicating or ticking food");
+                refresh.Invoke(null, new object[] { player, ordinary, false });
+                check(food.m_item == ration && food.m_name == ration.m_dropPrefab.name && food.m_time == 79.5f,
+                    "failed EatFood cannot replace or erase consumed-ration provenance");
+                refresh.Invoke(null, new object[] { player, ordinary, true });
+                check(foods.Single() == food && food.m_item == ordinary && food.m_name == "Sausages" && food.m_time == 79.5f
+                    && ArenaBuilder.RemoveObsoleteFoodEffectsFrom(foods, 6789, "", 0, true) == 0,
+                    "successful personal-food refresh adopts actual ordinary identity and survives release");
+                refresh.Invoke(null, new object[] { player, ration, true });
+                check(ArenaBuilder.RemoveObsoleteFoodEffectsFrom(foods, 6789, "", 0, true) == 1 && foods.Count == 0,
+                    "ordinary-to-issued refreshed food expires after release");
+            }
+            finally {
+                if (node != null) { UnityEngine.Object.DestroyImmediate(node); foodFixtureObjects.Remove(node); }
+                fixture.UnpatchSelf(); foodFixtureObjects.Clear();
+            }
+            check(Player.m_localPlayer == null && Game.instance == null, "food identity fixture leaves native player/world registrations unchanged");
         }
 
         private static readonly HashSet<Inventory> foodDragInventories = new HashSet<Inventory>();

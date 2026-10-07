@@ -22,7 +22,7 @@ namespace ValheimModPack.PartyPrison
     [NetworkCompatibility(CompatibilityLevel.EveryoneMustHaveMod, VersionStrictness.Patch)]
     public sealed partial class Plugin : BaseUnityPlugin
     {
-        public const string Id = "valheimmodpack.partyprison", Version = "1.5.1";
+        public const string Id = "valheimmodpack.partyprison", Version = "1.5.2";
         internal const string LoanKey = "VMP_PP_Loan", InmateKey = "VMP_PP_Inmate";
         private const string RpcName = PrisonWire.RpcName;
         internal static Plugin Active;
@@ -105,7 +105,7 @@ namespace ValheimModPack.PartyPrison
             if (current == null || id == 0) return;
             if (Hosting)
             {
-                try { string directory = Path.Combine(Path.GetDirectoryName(BepInEx.Paths.BepInExRootPath), "ValheimModpack", "PartyPrison"); store = new SentenceStore(directory, id); custody = new CustodyStore(directory, id); withdrawal = new CustodyWithdrawal(directory, id); region = store.Region; receivedState = true; }
+                try { string directory = Path.Combine(Path.GetDirectoryName(BepInEx.Paths.BepInExRootPath), "ValheimModpack", "PartyPrison"); store = new SentenceStore(directory, id); custody = new CustodyStore(directory, id); region = store.Region; receivedState = true; }
                 catch (Exception e) { fatalStore = true; Report("Prison state cannot be opened; admissions blocked: " + e.Message); }
             }
             SiteClearer.ConfigureRegion(region);
@@ -196,7 +196,7 @@ namespace ValheimModPack.PartyPrison
             float now = Time.realtimeSinceStartup; if (now < nextHost) return;
             double delta = Math.Min(2, Math.Max(0, now - lastHostTick)); lastHostTick = now; nextHost = now + 1;
             hostPeers.Clear(); hostPeers.AddRange(peers.Values);
-            if (fatalStore || store == null || store.Faulted || custody == null || custody.Faulted || withdrawal == null || withdrawal.Faulted)
+            if (fatalStore || store == null || store.Faulted || custody == null || custody.Faulted)
             {
                 fatalStore = true;
                 foreach (ZNetPeer peer in hostPeers) if (peer.IsReady()) network.Disconnect(peer);
@@ -404,9 +404,10 @@ namespace ValheimModPack.PartyPrison
                 releaseHadCustodyReceipt = localSentence.EmergencyRelease ? CustodyInventory.HasClearReceipt(player, world, localSentence.SentenceId)
                     : CustodyInventory.HasClearReceipt(player, world, localSentence.SentenceId, localCustodyHash);
                 RemoveLoans(); ArenaBuilder.RemoveObsoleteGear(player, world, "", 0);
+                ArenaBuilder.RemoveObsoleteFoodEffects(player, world, "", 0, true);
                 CustodyInventory.ExpireBackpackGear(player, world, "", 0);
                 if (!LegacyLayout) CustodyInventory.ClearReceipt(player, world, localSentence.SentenceId); MarkReleased(player); releaseArrived = true;
-                notice = T("Срок окончен. Решётка откроется после сохранения; заберите вещи из четырёх сундуков.", "Sentence completed. The grille opens after saving; collect your belongings from the four chests.");
+                notice = T("Срок окончен. Решётка откроется после сохранения; можно выйти из тюрьмы.", "Sentence completed. The grille opens after saving; you can leave the prison.");
             }
             if (releaseSave == 0) releaseSave = WC.RequestAdministrativeSave();
             if (WC.IsAdministrativeSaveDurable(releaseSave) && Time.realtimeSinceStartup >= nextReleaseAck)
@@ -448,8 +449,7 @@ namespace ValheimModPack.PartyPrison
         {
             RequireHost(); ZNetPeer peer = peers.Values.FirstOrDefault(p => Ready(p) && WC.GetAdministrativeOwner(p) == account); PrisonPoint position;
             if (region == null || ArenaBuilder.LayoutVersion(region) < 4) throw new InvalidOperationException(T("Сначала постройте тюрьму через Ctrl+F12 или /prison build.", "Build the prison using Ctrl+F12 or /prison build first."));
-            if (custody.HasOutstanding || store.All().Length != 0) throw new InvalidOperationException(T("Четыре сундука заняты. Дождитесь освобождения и возврата всех вещей.", "The four chests are occupied. Wait for release and collection of all belongings."));
-            CustodyInventory.RequireEmptyChests(Chests());
+            if (custody.HasOutstanding || store.All().Length != 0) throw new InvalidOperationException(T("Завершите текущее заключение или незавершённый перенос вещей.", "Complete the current sentence or unfinished inventory transfer first."));
             if (new UTF8Encoding(false, true).GetByteCount(reason ?? "") > 1024) throw new InvalidOperationException(T("Сократите причину наказания.", "Shorten the sentence reason."));
             if (peer == null || !Position(peer, out position)) throw new InvalidOperationException(T("Игрок или его свежие координаты недоступны. Повторите через несколько секунд.", "Player or fresh position unavailable. Retry in a few seconds."));
             if (region != null && region.Contains(position)) throw new InvalidOperationException(T("Назначайте срок игроку снаружи тюрьмы, чтобы сохранить место возвращения.", "Sentence the player outside the prison to preserve a return location."));
@@ -497,7 +497,7 @@ namespace ValheimModPack.PartyPrison
             RequireHost();
             Logger.LogInfo("Prison build requested: center=" + Vector(placement.Origin).ToString("F1") +
                 "; yaw=" + placement.FacingYawDegrees.ToString("F1", CultureInfo.InvariantCulture));
-            if (custody.HasOutstanding) throw new InvalidOperationException("Collect all stored belongings before rebuilding.");
+            if (custody.HasOutstanding) throw new InvalidOperationException("Complete the unfinished inventory transfer before rebuilding.");
             if (store.All().Length != 0) throw new InvalidOperationException("Release all prisoners first.");
             if (region != null) {
                 if (ArenaBuilder.LayoutVersion(region) >= 2) CustodyInventory.RequireEmptyChests(Chests());

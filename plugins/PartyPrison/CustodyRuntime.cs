@@ -136,8 +136,22 @@ namespace ValheimModPack.PartyPrison
                 CustodyRecord record = custody.Find(account, token);
                 if (record != null && record.Stage != CustodyStage.Prepared) return true;
                 int width, height; ArenaBuilder.ChestDimensions(out width, out height);
-                CustodyInventory.PrepareChestPayloads(payload, width, height);
-                if (record == null) { CustodyInventory.RequireEmptyChests(Chests()); record = custody.Prepare(account, token, payload); }
+                try { CustodyInventory.PrepareChestPayloads(payload, width, height); }
+                catch (CustodyCapacityException e) {
+                    // Only the current player's capacity is terminal. No
+                    // clear request or journal deposit has happened yet.
+                    SaveEmergencyRelease(account); CancelAdmissionStorage();
+                    Report(T("Посадка отменена: все вещи игрока не помещаются в четыре сундука. Инвентарь сохранён. ",
+                        "Admission cancelled: the player's belongings do not fit four chests. Inventory preserved. ") + e.Message);
+                    return true;
+                }
+                if (!admissionReserved) PrepareAdmissionStorage();
+                if (record == null) {
+                    ZDO[] chests = Chests();
+                    byte[][] targets = CustodyInventory.PrepareAdmissionPayloads(chests, payload, width, height);
+                    string[] baselines = CustodyInventory.ChestPayloadFingerprints(chests);
+                    record = custody.Prepare(account, token, payload, targets, baselines);
+                }
                 // A retry cannot rebind the immutable backup. Native equipment
                 // bookkeeping may have changed since its first serialization;
                 // the client validates substantive item equivalence before clear.
@@ -203,7 +217,8 @@ namespace ValheimModPack.PartyPrison
             if (region == null || LegacyLayout) return;
             if (emergencyChestsPending && Time.realtimeSinceStartup >= nextEmergencyChests && !admissionReserved && !custody.HasOutstanding)
                 ReopenEmergencyChests();
-            if (!custodyMigrated && Time.realtimeSinceStartup >= nextCustodyMigration)
+            if (!custodyMigrated && !admissionReserved && Time.realtimeSinceStartup >= nextCustodyMigration
+                && !custody.AllStates().Any(r => !r.Closed && !r.PublicAccess && r.Stage < CustodyStage.Deposited))
             {
                 nextCustodyMigration = Time.realtimeSinceStartup + 10;
                 try { MigratePublicChests(); custodyMigrated = true; }
@@ -221,10 +236,17 @@ namespace ValheimModPack.PartyPrison
                 if (sentence.EmergencyRelease || state != null && state.Closed) continue;
                 if (state == null || state.NeedsRecovery) continue;
                 if (state.Stage == CustodyStage.Prepared)
-                { ZNetPeer peer = peers.Values.FirstOrDefault(p => Ready(p) && WC.GetAdministrativeOwner(p) == state.AccountId); if (peer != null && CanSendClear(peer, state.SentenceId)) SendClear(peer, custody.Find(state.AccountId, state.SentenceId)); }
+                {
+                    try {
+                        if (!admissionReserved) PrepareAdmissionStorage();
+                        ZNetPeer peer = peers.Values.FirstOrDefault(p => Ready(p) && WC.GetAdministrativeOwner(p) == state.AccountId);
+                        if (peer != null && CanSendClear(peer, state.SentenceId)) SendClear(peer, custody.Find(state.AccountId, state.SentenceId));
+                    } catch (Exception e) { Report("Custody reservation paused; original inventory preserved: " + e.Message); }
+                }
                 else if (state.Stage == CustodyStage.Cleared)
                 {
                     try {
+                        if (!admissionReserved) PrepareAdmissionStorage();
                         int width, height; ArenaBuilder.ChestDimensions(out width, out height); ZDO[] chests = Chests();
                         CustodyRecord record = custody.Find(state.AccountId, state.SentenceId);
                         CustodyInventory.Deposit(chests, record, width, height);
@@ -235,19 +257,32 @@ namespace ValheimModPack.PartyPrison
                     } catch (Exception e) { Report("Custody deposit paused; original backup preserved: " + e.Message); }
                 }
                 else if (state.Stage == CustodyStage.Deposited)
-                { try { if (!state.PublicAccess) { PublishPublicChests(state, Chests()); network.Save(true, false, false); } EnsureCurrentSentenceKit(state.SentenceId); } catch (Exception e) { Report(e.Message); } }
+                {
+                    try {
+                        // Journal handoff can succeed before one native access
+                        // flag or kit setup fails. Resume only access and kit.
+                        if (!state.PublicAccess || admissionReserved) { PublishPublicChests(state, Chests()); network.Save(true, false, false); }
+                        EnsureCurrentSentenceKit(state.SentenceId); admissionReserved = false;
+                    } catch (Exception e) { Report(e.Message); }
+                }
             }
             ResumeLegacyWithdrawals();
             ArenaBuilder.SetExitLocked(region, store.All().Any(s => { if (s.EmergencyRelease) return false; CustodyRecord r = custody.FindState(s.AccountId, s.SentenceId); return r == null || !r.Closed && (r.Stage < CustodyStage.Released || r.NeedsRecovery); }));
         }
         private void PublishPublicChests(CustodyRecord record, ZDO[] chests)
         {
+            PublishCustodyAccess(record, chests,
+                () => { custody.MarkPublicAccess(record.AccountId, record.SentenceId); },
+                values => CustodyInventory.SetPublic(values, true));
+        }
+        private static void PublishCustodyAccess(CustodyRecord record, ZDO[] chests, Action markDurable, Action<ZDO[]> open)
+        {
             foreach (ZDO chest in chests)
                 if (chest.GetString(CustodyInventory.TokenKey, "") != record.SentenceId) throw new InvalidDataException("Native chest assignment differs from the escrow record.");
             // Durable handoff precedes native access. This record must never
             // project originals again, even after restoring an older world.
-            custody.MarkPublicAccess(record.AccountId, record.SentenceId);
-            CustodyInventory.SetPublic(chests, true);
+            if (!record.PublicAccess) markDurable();
+            open(chests);
         }
         private void EnsureCurrentSentenceKit(string token)
         {
@@ -267,15 +302,14 @@ namespace ValheimModPack.PartyPrison
                 {
                     if (assigned) CustodyInventory.SetPublic(chests, true);
                     if (assigned && record.Stage == CustodyStage.Deposited) EnsureCurrentSentenceKit(record.SentenceId);
-                    if (record.Stage == CustodyStage.Released)
-                    { if (withdrawal.All(record.SentenceId).Any(b => b.PendingId.Length != 0)) TrackLegacyWithdrawal(record); else custody.MarkCollected(record.AccountId, record.SentenceId); }
+                    if (record.Stage == CustodyStage.Released) custody.MarkCollected(record.AccountId, record.SentenceId);
                     continue;
                 }
                 if (assigned && !chests.Any(CustodyInventory.IsPublic))
                 {
                     if (record.Stage >= CustodyStage.Released)
                     {
-                        WithdrawalRecord[] balances = withdrawal.All(record.SentenceId);
+                        WithdrawalRecord[] balances = LegacyWithdrawals().All(record.SentenceId);
                         if (balances.Length != 4 || balances.Any(b => b.NeedsRecovery)) throw new InvalidDataException("Legacy withdrawal balances require host review; no original items replayed.");
                         foreach (WithdrawalRecord balance in balances)
                             CustodyInventory.SetNativeItems(chests[balance.ChestIndex], balance.PendingId.Length == 0 ? balance.RemainingPayload : balance.PendingRemainingPayload);
@@ -284,17 +318,16 @@ namespace ValheimModPack.PartyPrison
                 }
                 custody.MarkPublicAccess(record.AccountId, record.SentenceId);
                 if (assigned) { CustodyInventory.SetPublic(chests, true); if (record.Stage == CustodyStage.Deposited) EnsureCurrentSentenceKit(record.SentenceId); }
-                if (record.Stage == CustodyStage.Released)
-                { if (withdrawal.All(record.SentenceId).Any(b => b.PendingId.Length != 0)) TrackLegacyWithdrawal(record); else custody.MarkCollected(record.AccountId, record.SentenceId); }
+                if (record.Stage == CustodyStage.Released) custody.MarkCollected(record.AccountId, record.SentenceId);
             }
             // Unassigned empty chests also behave as native containers.
             if (!admissionReserved && !store.All().Any(s => { CustodyRecord r = custody.FindState(s.AccountId, s.SentenceId); return r == null || r.Stage < CustodyStage.Deposited; })) CustodyInventory.SetPublic(chests, true);
             network.Save(true, false, false);
         }
         private void PrepareAdmissionStorage()
-        { RequireHost(); ZDO[] chests = Chests(); CustodyInventory.RequireEmptyChests(chests); CustodyInventory.SetPublic(chests, false); admissionReserved = true; }
+        { RequireHost(); ZDO[] chests = Chests(); CustodyInventory.RequireAdmissionChests(chests); CustodyInventory.SetPublic(chests, false); admissionReserved = true; }
         private void CancelAdmissionStorage()
-        { if (admissionReserved) { CustodyInventory.SetPublic(Chests(), true); admissionReserved = false; } }
+        { if (admissionReserved) { admissionReserved = false; ReopenEmergencyChests(); } }
         private bool CompleteHostRelease(string account, string token)
         { return CompleteHostRelease(account, token, false, 0); }
         private bool CompleteHostRelease(string account, string token, bool clientCleared, long durable)
@@ -303,15 +336,17 @@ namespace ValheimModPack.PartyPrison
             if (sentence != null && sentence.SentenceId == token && sentence.EmergencyRelease)
                 return CompleteEmergencyCustodyRelease(account, token, clientCleared, durable);
             CustodyRecord record = custody.Find(account, token);
-            if (record == null || record.Closed || record.NeedsRecovery || record.Stage < CustodyStage.Deposited) return false;
-            if (record.Stage == CustodyStage.Deposited)
-            {
-                ZDO[] chests = Chests();
-                if (!record.PublicAccess) PublishPublicChests(record, chests);
-                custody.Release(account, token); custody.MarkCollected(account, token);
-                CustodyInventory.SetPublic(chests, true); network.Save(true, false, false);
-            }
-            ArenaBuilder.SetExitLocked(region, false); return true;
+            if (record == null || record.Closed || record.Stage < CustodyStage.Deposited) return false;
+            if (!record.PublicAccess || record.NeedsRecovery)
+                return CompleteEmergencyCustodyRelease(account, token, clientCleared, durable);
+            if (record.Stage == CustodyStage.Deposited) custody.Release(account, token);
+            if (record.Stage <= CustodyStage.Released) custody.MarkCollected(account, token);
+            // Native contents have no debt to an escrow journal. Release does
+            // not inspect missing, emptied, stolen or reassigned chest items.
+            admissionReserved = false;
+            try { ArenaBuilder.SetExitLocked(region, false); }
+            catch (Exception e) { Report("Release saved; exit gate cleanup deferred: " + e.Message); }
+            ReopenEmergencyChests(); return true;
         }
         private void ForceRelease(string account)
         { RequireHost(); SaveEmergencyRelease(account); }

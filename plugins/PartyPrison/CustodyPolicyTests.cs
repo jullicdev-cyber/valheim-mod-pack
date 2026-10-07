@@ -28,6 +28,7 @@ namespace ValheimModPack.PartyPrison
                 Basic(Path.Combine(root, "basic")); Recovery(Path.Combine(root, "recovery"));
                 Tampering(Path.Combine(root, "tamper")); Corruption(Path.Combine(root, "corrupt"));
                 PublicHandoff(Path.Combine(root, "public")); LegacyFormat(Path.Combine(root, "legacy"));
+                DepositPlan(Path.Combine(root, "plan"));
                 EmergencyArchive(Path.Combine(root, "emergency"));
                 Check(true, "all fixtures finished");
                 System.Console.WriteLine("PASS: custody journal " + checks + " checks; originals durable, immutable, stage-safe, corruption preserved."); return 0;
@@ -140,42 +141,92 @@ namespace ValheimModPack.PartyPrison
                 CustodyRecord state = store.FindState(A, first);
                 Check(state.PublicAccess && state.OriginalPayload.Length == 0 && state.PayloadHash == CustodyStore.Fingerprint(original), "metadata reads omit large inventory blobs");
                 state.ChestIds[0] = "changed";
-                Check(store.FindState(A).ChestIds[0] == Chests[0], "metadata chest identity isolated");
-                Refuses<InvalidOperationException>(() => store.Prepare(A, second, new byte[] { 10 }), "native public access alone does not permit concurrent imprisonment");
+                Check(store.FindState(A, first).ChestIds[0] == Chests[0], "metadata chest identity isolated");
+                Check(!store.HasOutstanding && store.CanAdmit(A) && store.FindState(A) == null && store.FindState(A, first).Stage == CustodyStage.Deposited,
+                    "public handoff ends inventory debt while token-specific state retains the active sentence stage");
             }
             using (var store = new CustodyStore(root, world))
             {
                 Check(store.Find(A, first).PublicAccess, "native handoff survives restart");
                 Check(store.Find(A, first).OriginalPayload.SequenceEqual(original), "handoff retains the immutable backup");
-                store.Release(A, first); store.MarkCollected(A, first);
+                store.Release(A, first);
                 Check(!store.HasOutstanding && store.FindState(A) == null, "ordinary chest handoff retires escrow on release");
                 store.Prepare(A, second, new byte[] { 10 }); store.MarkCleared(A, second, 2); store.MarkDeposited(A, second, Chests); store.MarkPublicAccess(A, second);
-                Check(store.FindState(A).SentenceId == second && store.Find(A, first).Stage == CustodyStage.Collected, "second sentence has independent custody state");
-                store.Release(A, second); store.MarkCollected(A, second);
+                Check(store.FindState(A, second).SentenceId == second && store.Find(A, first).Stage == CustodyStage.Released, "second sentence needs no retrieval receipt from the first");
+                store.Release(A, second);
             }
             using (var store = new CustodyStore(root, world))
             {
-                Check(store.All().All(record => record.PublicAccess && record.Stage == CustodyStage.Collected) && !store.HasOutstanding, "two public custody handoffs persist without unfinished withdrawal ledgers");
+                Check(store.All().All(record => record.PublicAccess && record.Stage == CustodyStage.Released) && !store.HasOutstanding, "two public custody handoffs persist without retrieval or withdrawal ledgers");
                 Check(store.AllStates().Length == 2 && store.AllStates().All(record => record.OriginalPayload.Length == 0), "history migration omits every original payload buffer");
             }
         }
         private static void LegacyFormat(string root)
         {
-            const long world = 29; string token = Token();
-            using (var store = new CustodyStore(root, world))
-            { store.Prepare(A, token, new byte[] { 5 }); store.MarkCleared(A, token, 1); store.MarkDeposited(A, token, Chests); }
-            string path = Journal(root, world, token); byte[] current = File.ReadAllBytes(path);
-            byte[] body = new byte[current.Length - 34]; Buffer.BlockCopy(current, 32, body, 0, body.Length);
-            Buffer.BlockCopy(BitConverter.GetBytes(1), 0, body, 4, 4);
-            byte[] legacy = new byte[body.Length + 32]; using (var sha = SHA256.Create()) Buffer.BlockCopy(sha.ComputeHash(body), 0, legacy, 0, 32);
-            Buffer.BlockCopy(body, 0, legacy, 32, body.Length); File.WriteAllBytes(path, legacy);
-            using (var store = new CustodyStore(root, world))
-            {
-                Check(!store.FindState(A).PublicAccess && store.FindState(A).Stage == CustodyStage.Deposited, "v1 journal loads with transient locked native access");
-                store.MarkPublicAccess(A, token);
+            for (int version = 1; version <= 3; ++version) {
+                const long world = 29; string token = Token(), directory = Path.Combine(root, "version-" + version);
+                using (var store = new CustodyStore(directory, world))
+                { store.Prepare(A, token, new byte[] { 5 }); store.MarkCleared(A, token, 1); store.MarkDeposited(A, token, Chests); }
+                string path = Journal(directory, world, token); byte[] current = File.ReadAllBytes(path);
+                int removed = version == 1 ? 10 : version == 2 ? 9 : 8;
+                byte[] body = new byte[current.Length - 32 - removed]; Buffer.BlockCopy(current, 32, body, 0, body.Length);
+                Buffer.BlockCopy(BitConverter.GetBytes(version), 0, body, 4, 4);
+                byte[] legacy = new byte[body.Length + 32]; using (var sha = SHA256.Create()) Buffer.BlockCopy(sha.ComputeHash(body), 0, legacy, 0, 32);
+                Buffer.BlockCopy(body, 0, legacy, 32, body.Length); File.WriteAllBytes(path, legacy);
+                using (var store = new CustodyStore(directory, world)) {
+                    CustodyRecord loaded = store.Find(A, token);
+                    Check(!loaded.PublicAccess && loaded.Stage == CustodyStage.Deposited && loaded.DepositPayloads.Length == 0 && loaded.DepositBaselineHashes.Length == 0,
+                        "v" + version + " journal loads without an invented deposit plan");
+                    store.MarkPublicAccess(A, token);
+                }
+                using (var store = new CustodyStore(directory, world))
+                    Check(store.Find(A, token).PublicAccess && store.Find(A, token).OriginalPayload[0] == 5,
+                        "v" + version + " journal upgrades without changing original bytes");
             }
-            using (var store = new CustodyStore(root, world))
-                Check(store.FindState(A).PublicAccess && store.Find(A, token).OriginalPayload[0] == 5, "legacy journal upgrades once without changing original bytes");
+        }
+        private static void DepositPlan(string root)
+        {
+            const long world = 59; string token = Token(), next = Token(); byte[] original = { 1, 2 };
+            byte[][] targets = { new byte[] { 10, 1 }, new byte[] { 11, 2 }, new byte[] { 12 }, new byte[] { 13 } };
+            string[] baselines = targets.Select(CustodyStore.Fingerprint).ToArray();
+            string firstBaseline = baselines[0], secondBaseline = baselines[1];
+            using (var store = new CustodyStore(root, world)) {
+                Refuses<InvalidDataException>(() => store.Prepare(A, token, original, null), "missing deposit plan rejected");
+                Refuses<InvalidDataException>(() => store.Prepare(A, token, original, new[] { new byte[] { 1 } }), "incomplete deposit plan rejected");
+                Refuses<InvalidDataException>(() => store.Prepare(A, token, original, targets, new[] { "bad" }), "incomplete baseline cannot authorize replacing old contents");
+                Refuses<InvalidDataException>(() => store.Prepare(A, token, original, targets, new[] { "bad", "bad", "bad", "bad" }), "malformed baseline cannot authorize replacing old contents");
+                var prepared = store.Prepare(A, token, original, targets, baselines);
+                Check(prepared.Stage == CustodyStage.Prepared && prepared.DepositPayloads.Length == 4, "combined target is durable before the player is cleared");
+                targets[0][0] = 99; prepared.DepositPayloads[1][0] = 99;
+                baselines[0] = new string('0', 64); prepared.DepositBaselineHashes[1] = new string('0', 64);
+                Check(store.Find(A, token).DepositPayloads[0][0] == 10 && store.Find(A, token).DepositPayloads[1][0] == 11,
+                    "deposit target input and output buffers are isolated");
+                Check(store.Find(A, token).DepositBaselineHashes[0] == firstBaseline && store.Find(A, token).DepositBaselineHashes[1] == secondBaseline,
+                    "pre-publication baseline input and output buffers are isolated");
+                CustodyRecord state = store.FindState(A, token);
+                Check(state.DepositPayloads.Length == 0 && state.DepositBaselineHashes.Length == 0 && state.OriginalPayload.Length == 0,
+                    "wire metadata omits original, combined inventories and private transfer baselines");
+                Refuses<InvalidDataException>(() => store.Prepare(A, token, original, targets), "a retry cannot replan against changed public contents");
+                Refuses<InvalidDataException>(() => store.Prepare(A, token, original, store.Find(A, token).DepositPayloads, baselines),
+                    "a retry cannot rebind the baseline after items are removed from old public chests");
+                Check(store.Prepare(A, token, original).DepositPayloads[0][0] == 10, "legacy offer replay retains the original combined plan");
+                store.MarkCleared(A, token, 10);
+                Refuses<InvalidOperationException>(() => store.Prepare(B, next, new byte[] { 3 }), "unpublished durable transfer still blocks concurrent admission");
+            }
+            using (var store = new CustodyStore(root, world)) {
+                CustodyRecord cleared = store.Find(A, token);
+                Check(cleared.Stage == CustodyStage.Cleared && cleared.DepositPayloads[0].SequenceEqual(new byte[] { 10, 1 })
+                    && cleared.DepositPayloads[1].SequenceEqual(new byte[] { 11, 2 }) && cleared.OriginalPayload.SequenceEqual(original)
+                    && cleared.DepositBaselineHashes[0] == firstBaseline && cleared.DepositBaselineHashes[1] == secondBaseline,
+                    "restart preserves exact combined targets and separate player original for partial-deposit retry");
+                store.MarkDeposited(A, token, Chests); store.MarkPublicAccess(A, token); store.Release(A, token);
+                store.RequireRecovery(A, token, "Previous public world inventory changed");
+                Check(!store.HasOutstanding && store.CanAdmit(A) && store.FindState(A) == null,
+                    "old public chest changes create no retrieval debt or new-admission blockade");
+                store.Prepare(A, next, new byte[] { 3 }, new[] { new byte[] { 3 }, new byte[] { 4 }, new byte[] { 5 }, new byte[] { 6 } });
+                Check(store.FindState(A).SentenceId == next && store.Find(A, token).OriginalPayload.SequenceEqual(original),
+                    "new imprisonment selects current snapshot without replaying or deleting old public backups");
+            }
         }
         private static void EmergencyArchive(string root)
         {
@@ -229,7 +280,7 @@ namespace ValheimModPack.PartyPrison
             string path = Journal(root, 10, token); byte[] bytes = File.ReadAllBytes(path); bytes[0] ^= 1; File.WriteAllBytes(path, bytes);
             Refuses<InvalidDataException>(() => { using (var store = new CustodyStore(root, 10)) { } }, "corrupt journal refused");
             Check(File.ReadAllBytes(path).SequenceEqual(bytes), "corruption not overwritten with empty custody");
-            File.WriteAllBytes(path, new byte[CustodyStore.MaximumPayloadBytes + 8193]);
+            File.WriteAllBytes(path, new byte[CustodyStore.MaximumJournalBytes + 1]);
             Refuses<InvalidDataException>(() => { using (var store = new CustodyStore(root, 10)) { } }, "oversized disk journal refused before allocation");
         }
     }

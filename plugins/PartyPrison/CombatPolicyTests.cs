@@ -21,14 +21,16 @@ internal static class CombatPolicyTests
                     Check(choice.GearQuality == difficulty + 1, "equipment follows difficulty");
                     var gear = new HashSet<string>(choice.GearPrefabs);
                     Check(gear.Count == choice.GearPrefabs.Length, "no duplicate equipment definitions");
-                    Check(gear.Contains("ArrowWood") && choice.GearPrefabs.Length <= 12, "supplies and bounded chest stock");
+                    Check(gear.Contains(choice.ArrowPrefab) && CombatCatalog.IsArrowPrefab(choice.ArrowPrefab)
+                        && !gear.Contains(choice.ArrowSource) && choice.GearPrefabs.Length <= 12, "isolated issued supplies and bounded chest stock");
                     Check(choice.RussianName.Length > 0 && choice.EnglishName.Length > 0, "visible mob family names");
                     Check(choice.FoodSources.Length == 4 && choice.FoodPrefabs.Length == 4, "four food choices in every enemy and grade loadout");
                     Check(new HashSet<string>(choice.FoodSources).Count == 4, "four different food types rather than duplicate portions");
                     Check(choice.FoodServings == difficulty + 1 && choice.FoodServings <= 3, "bounded portions scale with enemy grade");
                     for (int food = 0; food < 4; ++food)
                         Check(choice.FoodPrefabs[food] == CombatCatalog.FoodPrefab(choice.FoodSources[food]) && CombatCatalog.IsFoodPrefab(choice.FoodPrefabs[food]), "food uses a registered isolated loan prefab");
-                    Check(choice.GearPrefabs.Length + choice.FoodServings * 4 <= 32, "full kit fits empty native iron chest");
+                    Check(choice.EmeticServings == 3, "every enemy and grade kit includes three temporary pukeberries");
+                    Check(choice.GearPrefabs.Length + choice.FoodServings * 4 + choice.EmeticServings <= 24, "full kit including emetics fits the native cell chest");
                     string saved = choice.GearPrefabs[0]; choice.GearPrefabs[0] = "changed";
                     Check(CombatCatalog.Get(family, difficulty).GearPrefabs[0] == saved, "callers cannot alter catalog equipment");
                     string savedFood = choice.FoodSources[0]; choice.FoodSources[0] = "changed"; choice.FoodPrefabs[0] = "changed";
@@ -37,6 +39,16 @@ internal static class CombatPolicyTests
                 }
             }
             Check(families.SetEquals(new[] { "Greyling", "Greydwarf", "Draugr", "Skeleton", "Hatchling", "Wolf" }), "the six requested mob families use canonical native prefabs");
+            string[] arrows = { "ArrowWood", "ArrowFlint", "ArrowIron", "ArrowFlint", "ArrowObsidian", "ArrowObsidian" };
+            for (int family = 0; family < CombatCatalog.FamilyCount; ++family)
+                for (int difficulty = 0; difficulty < CombatCatalog.DifficultyCount; ++difficulty)
+                    Check(CombatCatalog.Get(family, difficulty).ArrowSource == arrows[family], "arrows follow the enemy's native biome at all grades");
+            Check(new HashSet<string>(CombatCatalog.AllArrowSources()).SetEquals(arrows), "four canonical arrow sources registered once");
+            Check(!CombatCatalog.IsArrowPrefab("ArrowWood") && !CombatCatalog.IsArrowPrefab("vmp_prison_arrow_arbitrary")
+                && !CombatCatalog.IsArrowPrefab(null), "ordinary arrows and arbitrary prefabs cannot opt into supply expiration");
+            Check(CombatCatalog.EmeticSource == "Pukeberries" && CombatCatalog.EmeticPrefab != CombatCatalog.EmeticSource
+                && !CombatCatalog.IsFoodPrefab(CombatCatalog.EmeticPrefab) && !CombatCatalog.IsArrowPrefab(CombatCatalog.EmeticPrefab),
+                "isolated emetics are not falsely classified as a food buff or arrow type");
             string[] sources = CombatCatalog.AllFoodSources();
             Check(new HashSet<string>(sources).Count == sources.Length && sources.Length <= 24, "food registration is unique and bounded");
             Check(!CombatCatalog.IsFoodPrefab("Sausages") && !CombatCatalog.IsFoodPrefab("vmp_prison_food_arbitrary")
@@ -61,6 +73,13 @@ internal static class CombatPolicyTests
             Check(!PrisonGearPolicy.ShouldRemove(tag, null, 1, world + 1, "", 0), "other world provenance preserved");
             foreach (int maxStack in new[] { 2, 10, 20, 50, 100, 999 })
                 Check(!PrisonGearPolicy.ShouldRemove(tag, token, maxStack, world, "", 0), "mixed arrows and farm-resource stacks never removed");
+            Check(!PrisonGearPolicy.ShouldRemove(tag, null, 100, world, token, 3, true), "current isolated arrow stack is usable");
+            Check(!PrisonGearPolicy.ShouldRemove(tag, null, 100, world, token, 2, true), "future isolated arrows survive state ordering");
+            Check(PrisonGearPolicy.ShouldRemove(tag, null, 100, world, token, 4, true), "old isolated arrows expire on opponent change");
+            Check(PrisonGearPolicy.ShouldRemove(tag, null, 100, world, nextToken, 1, true), "previous sentence isolated arrows expire");
+            Check(PrisonGearPolicy.ShouldRemove(tag, null, 100, world, "", 0, true), "all current-world issued arrows expire on release");
+            Check(!PrisonGearPolicy.ShouldRemove(tag, null, 100, world + 1, "", 0, true), "other-world issued arrows are preserved");
+            Check(!PrisonGearPolicy.ShouldRemove(null, null, 100, world, "", 0, true), "an untagged supply cannot become a removable loan");
             Check(!PrisonGearPolicy.ShouldRemove(null, null, 1, world, "", 0), "personal equipment and farm drops remain");
             Check(PrisonGearPolicy.ShouldRemove(null, token, 1, world, "", 0), "previous stock-only gear migrates on release");
             Check(PrisonGearPolicy.ShouldRemove(null, token, 1, world, token, 1), "previous stock-only gear replaced by revisioned loadout");

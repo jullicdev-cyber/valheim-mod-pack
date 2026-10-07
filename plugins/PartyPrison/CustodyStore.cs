@@ -15,19 +15,29 @@ namespace ValheimModPack.PartyPrison
         public long World, ClearSequence;
         public CustodyStage Stage;
         public byte[] OriginalPayload = new byte[0];
+        // The complete four-chest target is frozen before clearing a player.
+        // It can include previous ordinary contents, so retry never appends twice.
+        public byte[][] DepositPayloads = new byte[0][];
+        public string[] DepositBaselineHashes = new string[0];
         public string[] ChestIds = new string[0];
         public bool NeedsRecovery, PublicAccess, Closed;
         public CustodyRecord Copy()
         {
             return new CustodyRecord { AccountId = AccountId, SentenceId = SentenceId, PayloadHash = PayloadHash,
                 RecoveryReason = RecoveryReason, World = World, ClearSequence = ClearSequence, Stage = Stage,
-                OriginalPayload = (byte[])OriginalPayload.Clone(), ChestIds = (string[])ChestIds.Clone(), NeedsRecovery = NeedsRecovery, PublicAccess = PublicAccess, Closed = Closed };
+                OriginalPayload = (byte[])OriginalPayload.Clone(), DepositPayloads = CopyPayloads(DepositPayloads), DepositBaselineHashes = (string[])DepositBaselineHashes.Clone(), ChestIds = (string[])ChestIds.Clone(), NeedsRecovery = NeedsRecovery, PublicAccess = PublicAccess, Closed = Closed };
         }
         public CustodyRecord StateCopy()
         {
             return new CustodyRecord { AccountId = AccountId, SentenceId = SentenceId, PayloadHash = PayloadHash,
                 RecoveryReason = RecoveryReason, World = World, ClearSequence = ClearSequence, Stage = Stage,
                 ChestIds = (string[])ChestIds.Clone(), NeedsRecovery = NeedsRecovery, PublicAccess = PublicAccess, Closed = Closed };
+        }
+        internal static byte[][] CopyPayloads(byte[][] payloads)
+        {
+            var copy = new byte[payloads.Length][];
+            for (int i = 0; i < copy.Length; ++i) copy[i] = (byte[])payloads[i].Clone();
+            return copy;
         }
     }
 
@@ -37,6 +47,7 @@ namespace ValheimModPack.PartyPrison
     public sealed class CustodyStore : IDisposable
     {
         public const int MaximumPayloadBytes = 4 * 1024 * 1024;
+        public const int MaximumJournalBytes = 5 * MaximumPayloadBytes + 8192;
         private const int Magic = 0x50504332, MaximumRecords = 4096;
         private readonly string directory;
         private readonly long world;
@@ -81,7 +92,7 @@ namespace ValheimModPack.PartyPrison
         {
             CheckOpen(); SentencePolicy.RequireAccountId(account);
             foreach (CustodyRecord record in records.Values)
-                if (!record.Closed && record.AccountId == account && (record.Stage != CustodyStage.Collected || record.NeedsRecovery)) return record.Copy();
+                if (BlocksAdmission(record) && record.AccountId == account) return record.Copy();
             return null;
         }
         public CustodyRecord FindState(string account, string token)
@@ -93,7 +104,7 @@ namespace ValheimModPack.PartyPrison
         {
             CheckOpen(); SentencePolicy.RequireAccountId(account);
             foreach (CustodyRecord record in records.Values)
-                if (!record.Closed && record.AccountId == account && (record.Stage != CustodyStage.Collected || record.NeedsRecovery)) return record.StateCopy();
+                if (BlocksAdmission(record) && record.AccountId == account) return record.StateCopy();
             return null;
         }
         public CustodyRecord[] All()
@@ -114,26 +125,46 @@ namespace ValheimModPack.PartyPrison
         { return Find(account) == null; }
         public bool HasOutstanding
         {
-            get { CheckOpen(); foreach (CustodyRecord r in records.Values) if (!r.Closed && (r.Stage != CustodyStage.Collected || r.NeedsRecovery)) return true; return false; }
+            get { CheckOpen(); foreach (CustodyRecord r in records.Values) if (BlocksAdmission(r)) return true; return false; }
+        }
+        private static bool BlocksAdmission(CustodyRecord record)
+        {
+            // Public handoff is final: native chest balances are ordinary world
+            // state. SentenceStore owns the limit of one active prisoner.
+            return !record.Closed && !record.PublicAccess
+                && (record.Stage != CustodyStage.Collected || record.NeedsRecovery);
         }
 
         public CustodyRecord Prepare(string account, string token, byte[] originalPayload)
+        { return Prepare(account, token, originalPayload, new byte[0][]); }
+        public CustodyRecord Prepare(string account, string token, byte[] originalPayload, byte[][] depositPayloads)
+        { return Prepare(account, token, originalPayload, depositPayloads, new string[0]); }
+        public CustodyRecord Prepare(string account, string token, byte[] originalPayload, byte[][] depositPayloads, string[] depositBaselineHashes)
         {
-            CheckOpen(); SentencePolicy.RequireAccountId(account); Token(token); Payload(originalPayload);
+            CheckOpen(); SentencePolicy.RequireAccountId(account); Token(token); Payload(originalPayload); DepositPlan(depositPayloads); DepositBaselines(depositPayloads, depositBaselineHashes);
             string hash = Fingerprint(originalPayload); CustodyRecord old;
             if (records.TryGetValue(token, out old))
             {
                 if (old.AccountId != account || old.PayloadHash != hash)
                     throw new InvalidDataException("Custody token cannot be rebound or its original items changed.");
                 if (old.Closed) throw new InvalidOperationException("An archived custody token cannot be prepared again.");
+                if (depositPayloads.Length != 0) {
+                    if (old.DepositPayloads.Length != depositPayloads.Length) throw new InvalidDataException("Custody deposit plan cannot be changed.");
+                    for (int i = 0; i < depositPayloads.Length; ++i)
+                        if (Fingerprint(old.DepositPayloads[i]) != Fingerprint(depositPayloads[i])) throw new InvalidDataException("Custody deposit plan cannot be changed.");
+                }
+                if (depositBaselineHashes.Length != 0) {
+                    if (old.DepositBaselineHashes.Length != depositBaselineHashes.Length) throw new InvalidDataException("Custody deposit baseline cannot be changed.");
+                    for (int i = 0; i < depositBaselineHashes.Length; ++i)
+                        if (old.DepositBaselineHashes[i] != depositBaselineHashes[i]) throw new InvalidDataException("Custody deposit baseline cannot be changed.");
+                }
                 return old.Copy();
             }
-            // There are exactly four physical chests, so another unresolved
-            // custody must finish before these chests can receive another owner.
-            if (HasOutstanding) throw new InvalidOperationException("Collect the previous prison belongings before admitting another prisoner.");
+            if (HasOutstanding) throw new InvalidOperationException("Finish the active prison admission or release before admitting another prisoner.");
             if (records.Count >= MaximumRecords) throw new InvalidOperationException("Custody journal history limit reached.");
             var value = new CustodyRecord { AccountId = account, SentenceId = token, World = world,
-                Stage = CustodyStage.Prepared, OriginalPayload = (byte[])originalPayload.Clone(), PayloadHash = hash };
+                Stage = CustodyStage.Prepared, OriginalPayload = (byte[])originalPayload.Clone(), DepositPayloads = CustodyRecord.CopyPayloads(depositPayloads),
+                DepositBaselineHashes = (string[])depositBaselineHashes.Clone(), PayloadHash = hash };
             Persist(value); records.Add(token, value); return value.Copy();
         }
 
@@ -253,25 +284,29 @@ namespace ValheimModPack.PartyPrison
             byte[] body;
             using (var stream = new MemoryStream()) using (var w = new BinaryWriter(stream, new UTF8Encoding(false, true)))
             {
-                w.Write(Magic); w.Write(3); w.Write(value.World); Text(w, value.AccountId); Text(w, value.SentenceId);
+                w.Write(Magic); w.Write(4); w.Write(value.World); Text(w, value.AccountId); Text(w, value.SentenceId);
                 w.Write((int)value.Stage); w.Write(value.ClearSequence); w.Write(value.NeedsRecovery); Text(w, value.RecoveryReason);
                 Text(w, value.PayloadHash); w.Write(value.OriginalPayload.Length); w.Write(value.OriginalPayload);
                 w.Write(value.ChestIds.Length); foreach (string id in value.ChestIds) Text(w, id);
                 w.Write(value.PublicAccess);
                 w.Write(value.Closed);
+                w.Write(value.DepositPayloads.Length);
+                foreach (byte[] payload in value.DepositPayloads) { w.Write(payload.Length); w.Write(payload); }
+                w.Write(value.DepositBaselineHashes.Length);
+                foreach (string hash in value.DepositBaselineHashes) Text(w, hash);
                 w.Flush(); body = stream.ToArray();
             }
             using (var stream = new MemoryStream()) { byte[] hash = Hash(body); stream.Write(hash, 0, hash.Length); stream.Write(body, 0, body.Length); return stream.ToArray(); }
         }
         private static CustodyRecord Decode(byte[] bytes)
         {
-            if (bytes.Length < 64 || bytes.Length > MaximumPayloadBytes + 8192) throw new InvalidDataException("Invalid custody journal size.");
+            if (bytes.Length < 64 || bytes.Length > MaximumJournalBytes) throw new InvalidDataException("Invalid custody journal size.");
             byte[] body = new byte[bytes.Length - 32]; Buffer.BlockCopy(bytes, 32, body, 0, body.Length);
             byte[] hash = Hash(body); for (int i = 0; i < 32; ++i) if (hash[i] != bytes[i]) throw new InvalidDataException("Custody journal checksum mismatch; file preserved.");
             using (var stream = new MemoryStream(body, false)) using (var r = new BinaryReader(stream, new UTF8Encoding(false, true)))
             {
                 if (r.ReadInt32() != Magic) throw new InvalidDataException("Unsupported custody journal format.");
-                int version = r.ReadInt32(); if (version < 1 || version > 3) throw new InvalidDataException("Unsupported custody journal format.");
+                int version = r.ReadInt32(); if (version < 1 || version > 4) throw new InvalidDataException("Unsupported custody journal format.");
                 var value = new CustodyRecord { World = r.ReadInt64(), AccountId = Text(r, 64), SentenceId = Text(r, 32),
                     Stage = (CustodyStage)r.ReadInt32(), ClearSequence = r.ReadInt64() };
                 byte flag = r.ReadByte(); if (flag > 1) throw new InvalidDataException("Invalid custody recovery flag.");
@@ -282,13 +317,25 @@ namespace ValheimModPack.PartyPrison
                 value.ChestIds = new string[count]; for (int i = 0; i < count; ++i) value.ChestIds[i] = Text(r, 128);
                 if (version >= 2) { byte access = r.ReadByte(); if (access > 1) throw new InvalidDataException("Invalid custody public access flag."); value.PublicAccess = access == 1; }
                 if (version >= 3) { byte closed = r.ReadByte(); if (closed > 1) throw new InvalidDataException("Invalid custody archive flag."); value.Closed = closed == 1; }
+                if (version >= 4) {
+                    int plans = r.ReadInt32(); if (plans != 0 && plans != 4) throw new InvalidDataException("Custody needs exactly four planned chest payloads.");
+                    value.DepositPayloads = new byte[plans][];
+                    for (int i = 0; i < plans; ++i) {
+                        int length = r.ReadInt32();
+                        if (length <= 0 || length > MaximumPayloadBytes || length > stream.Length - stream.Position) throw new InvalidDataException("Invalid custody deposit plan size.");
+                        value.DepositPayloads[i] = r.ReadBytes(length);
+                    }
+                    int baselines = r.ReadInt32(); if (baselines != 0 && baselines != 4) throw new InvalidDataException("Custody needs exactly four deposit baseline hashes.");
+                    value.DepositBaselineHashes = new string[baselines];
+                    for (int i = 0; i < baselines; ++i) value.DepositBaselineHashes[i] = Text(r, 64);
+                }
                 if (stream.Position != stream.Length) throw new InvalidDataException("Trailing custody journal data.");
                 Validate(value); return value;
             }
         }
         private static void Validate(CustodyRecord value)
         {
-            SentencePolicy.RequireAccountId(value.AccountId); Token(value.SentenceId); Payload(value.OriginalPayload);
+            SentencePolicy.RequireAccountId(value.AccountId); Token(value.SentenceId); Payload(value.OriginalPayload); DepositPlan(value.DepositPayloads); DepositBaselines(value.DepositPayloads, value.DepositBaselineHashes);
             SentencePolicy.RequireText(value.RecoveryReason, 512, "custody recovery reason");
             if (value.World == 0 || value.PayloadHash != Fingerprint(value.OriginalPayload)
                 || value.Stage < CustodyStage.Prepared || value.Stage > CustodyStage.Collected
@@ -308,6 +355,21 @@ namespace ValheimModPack.PartyPrison
         { Guid id; if (token == null || !Guid.TryParseExact(token, "N", out id) || id == Guid.Empty || token != id.ToString("N")) throw new InvalidDataException("Invalid custody token."); }
         internal static void Payload(byte[] bytes)
         { if (bytes == null || bytes.Length == 0 || bytes.Length > MaximumPayloadBytes) throw new InvalidDataException("Custody payload exceeds its size limit."); }
+        private static void DepositPlan(byte[][] payloads)
+        {
+            if (payloads == null || payloads.Length != 0 && payloads.Length != 4) throw new InvalidDataException("Custody needs exactly four planned chest payloads.");
+            foreach (byte[] payload in payloads) Payload(payload);
+        }
+        private static void DepositBaselines(byte[][] payloads, string[] hashes)
+        {
+            if (hashes == null || hashes.Length != 0 && (hashes.Length != 4 || payloads.Length != 4))
+                throw new InvalidDataException("Custody needs exactly four deposit baseline hashes and targets.");
+            foreach (string hash in hashes) {
+                if (hash == null || hash.Length != 64) throw new InvalidDataException("Invalid custody deposit baseline hash.");
+                foreach (char value in hash)
+                    if (!(value >= '0' && value <= '9') && !(value >= 'a' && value <= 'f')) throw new InvalidDataException("Invalid custody deposit baseline hash.");
+            }
+        }
         public static string Fingerprint(byte[] bytes)
         { if (bytes == null) throw new ArgumentNullException("bytes"); return BitConverter.ToString(Hash(bytes)).Replace("-", "").ToLowerInvariant(); }
         private static byte[] Hash(byte[] bytes) { using (var sha = SHA256.Create()) return sha.ComputeHash(bytes); }
@@ -318,7 +380,7 @@ namespace ValheimModPack.PartyPrison
             string value = new UTF8Encoding(false, true).GetString(r.ReadBytes(size)); if (value.Length > limit) throw new InvalidDataException("Oversized custody text."); return value;
         }
         private static byte[] BoundedRead(string path)
-        { RegularPath(path); if (new FileInfo(path).Length > MaximumPayloadBytes + 8192) throw new InvalidDataException("Oversized custody journal."); return File.ReadAllBytes(path); }
+        { RegularPath(path); if (new FileInfo(path).Length > MaximumJournalBytes) throw new InvalidDataException("Oversized custody journal."); return File.ReadAllBytes(path); }
         private static void RegularPath(string path)
         {
             string current = Path.GetFullPath(path);

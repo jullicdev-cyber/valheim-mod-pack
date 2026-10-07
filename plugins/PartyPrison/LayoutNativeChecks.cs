@@ -23,6 +23,7 @@ namespace ValheimModPack.PartyPrison.NativeVerification
             CheckCellLayout(check);
             CheckExpandedLayout(check);
             CheckArenaStairs(check);
+            CheckConsoleAreaMarker(check);
             CheckCellFixtures(check);
             CheckRebuildStorage(check);
         }
@@ -463,6 +464,48 @@ namespace ValheimModPack.PartyPrison.NativeVerification
                 }
                 harmony.UnpatchSelf();
             }
+        }
+
+        private static void CheckConsoleAreaMarker(Action<bool, string> check)
+        {
+            GameObject source = Prefab("piece_workbench"), console = Prefab(PrisonConsole.PrefabName);
+            CraftingStation station = source.GetComponent<CraftingStation>();
+            GameObject marker = station == null ? null : station.m_areaMarker;
+            check(station != null && marker != null && marker != source && marker.transform.IsChildOf(source.transform),
+                "ordinary native workbench retains its separate crafting range marker");
+            check(marker != null && marker.GetComponent<CircleProjector>() != null
+                && Array.Exists(marker.GetComponentsInChildren<Component>(true), value => value.GetType().FullName == "UnityEngine.ParticleSystem"),
+                "native workbench range uses both CircleProjector segments and a particle preview");
+            check(console.GetComponentsInChildren<CraftingStation>(true).Length == 0
+                && console.GetComponentsInChildren<CircleProjector>(true).Length == 0
+                && console.transform.Find("AreaMarker") == null,
+                "registered prison console removes the entire native range preview, including per-frame projector raycasts");
+            PrisonConsole control = console.GetComponent<PrisonConsole>();
+            check(control != null && control is Interactable && control is Hoverable
+                && console.GetComponent<ZNetView>() != null && console.GetComponent<Piece>() != null,
+                "console keeps its native networked furniture and the custom Use/E interaction");
+            check(!control.ValidNetworkObject && !control.Interact(null, false, false),
+                "preview removal does not bypass the console's native network and player interaction guards");
+            Bounds sourceBounds = SolidBounds(source), consoleBounds = SolidBounds(console);
+            Collider[] sourceColliders = source.GetComponentsInChildren<Collider>(true);
+            Collider[] consoleColliders = console.GetComponentsInChildren<Collider>(true);
+            bool collidersPreserved = sourceColliders.Length == consoleColliders.Length;
+            for (int index = 0; collidersPreserved && index < sourceColliders.Length; ++index)
+                collidersPreserved = sourceColliders[index].GetType() == consoleColliders[index].GetType()
+                    && sourceColliders[index].isTrigger == consoleColliders[index].isTrigger
+                    && sourceColliders[index].enabled == consoleColliders[index].enabled;
+            check(collidersPreserved && (sourceBounds.center - consoleBounds.center).sqrMagnitude < .0001f
+                && (sourceBounds.size - consoleBounds.size).sqrMagnitude < .0001f,
+                "removing the visual range subtree preserves all solid furniture and trigger colliders");
+            EffectArea[] sourceAreas = source.GetComponentsInChildren<EffectArea>(true);
+            EffectArea[] consoleAreas = console.GetComponentsInChildren<EffectArea>(true);
+            bool areasPreserved = sourceAreas.Length == consoleAreas.Length;
+            for (int index = 0; areasPreserved && index < sourceAreas.Length; ++index)
+                areasPreserved = sourceAreas[index].m_type == consoleAreas[index].m_type;
+            check(areasPreserved, "visual preview removal leaves the clone's separate native EffectArea gameplay volumes unchanged");
+            check(source.GetComponent<CraftingStation>() == station && station.m_areaMarker == marker
+                && marker.GetComponent<CircleProjector>() != null && marker.transform.IsChildOf(source.transform),
+                "the ordinary workbench crafting behavior and range drawing objects remain untouched");
         }
 
         private static void CheckCellFixtures(Action<bool, string> check)
