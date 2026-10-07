@@ -22,7 +22,7 @@ namespace ValheimModPack.PartyPrison
     [NetworkCompatibility(CompatibilityLevel.EveryoneMustHaveMod, VersionStrictness.Patch)]
     public sealed partial class Plugin : BaseUnityPlugin
     {
-        public const string Id = "valheimmodpack.partyprison", Version = "1.5.0";
+        public const string Id = "valheimmodpack.partyprison", Version = "1.5.1";
         internal const string LoanKey = "VMP_PP_Loan", InmateKey = "VMP_PP_Inmate";
         private const string RpcName = PrisonWire.RpcName;
         internal static Plugin Active;
@@ -33,7 +33,7 @@ namespace ValheimModPack.PartyPrison
         private ZNet network;
         private long world, sequence, receivedSequence;
         private PrisonRegion region;
-        private PrisonRegion consoleReadyRegion;
+        private PrisonRegion consoleReadyRegion, stairsReadyRegion;
         private PrisonPlacementPlan pendingPlacement;
         private SentenceState localSentence;
         private bool receivedState, releaseTeleport, releaseArrived, fatalStore, defeatReturn;
@@ -121,7 +121,7 @@ namespace ValheimModPack.PartyPrison
             ResetCombat();
             peers.Clear(); presences.Clear(); samples.Clear(); requests.Clear(); releaseBaselines.Clear();
             hostPeers.Clear(); verifiedOnline.Clear();
-            region = null; consoleReadyRegion = null; pendingPlacement = null; SiteClearer.ConfigureRegion(null); localSentence = null; network = null; world = sequence = receivedSequence = 0;
+            region = null; consoleReadyRegion = stairsReadyRegion = null; pendingPlacement = null; SiteClearer.ConfigureRegion(null); localSentence = null; network = null; world = sequence = receivedSequence = 0;
             receivedState = releaseTeleport = releaseArrived = fatalStore = defeatReturn = releaseHadCustodyReceipt = false; releaseSave = 0;
             defeatNotificationPending = defeatCheckpointPending = false; nextDefeatRecovery = 0;
             nextArmory = nextWave = nextEnforce = nextMobCleanup = 0; notice = lastError = "";
@@ -202,10 +202,13 @@ namespace ValheimModPack.PartyPrison
                 foreach (ZNetPeer peer in hostPeers) if (peer.IsReady()) network.Disconnect(peer);
                 return;
             }
-            if (region != null && !ReferenceEquals(consoleReadyRegion, region) && now >= nextLayoutUpgrade)
+            if (region != null && (!ReferenceEquals(consoleReadyRegion, region) || !ReferenceEquals(stairsReadyRegion, region)) && now >= nextLayoutUpgrade)
             {
                 nextLayoutUpgrade = now + 5f;
-                try { if (ArenaBuilder.EnsureConsole(region)) consoleReadyRegion = region; }
+                try {
+                    if (!ReferenceEquals(consoleReadyRegion, region) && ArenaBuilder.EnsureConsole(region)) consoleReadyRegion = region;
+                    if (!ReferenceEquals(stairsReadyRegion, region) && ArenaBuilder.EnsureArenaStairs(region)) stairsReadyRegion = region;
+                }
                 catch (Exception e) { Report(T("Обновление постройки ожидает загрузки: ", "Prison upgrade is waiting for loading: ") + e.Message); }
             }
             HostCustodyTick();

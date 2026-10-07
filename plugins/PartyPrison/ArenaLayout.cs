@@ -7,6 +7,8 @@ namespace ValheimModPack.PartyPrison
 {
     public static partial class ArenaBuilder
     {
+        public const string ArenaStairKey = "VMP_PP_ArenaStair180";
+        public const string ArenaStairSupportKey = "VMP_PP_ArenaStairSupport";
         private static readonly FieldInfo SignAuthorField = typeof(Sign).GetField("m_author", BindingFlags.Instance | BindingFlags.NonPublic);
 
         /// <summary>Only the system sign needs the native host-sentinel workaround.</summary>
@@ -117,8 +119,7 @@ namespace ValheimModPack.PartyPrison
             // retaining bodies have no hidden hollow chambers to trap mobs.
             AppendPlatform(plan, bounds, -4f, 8f, 2f);
             AppendPlatform(plan, bounds, 8f, -2f, 4f);
-            AppendStairFlight(plan, bounds["stone_stair"], new Vector3(-1f, 0f, 8f), 0f, 2f);
-            AppendStairFlight(plan, bounds["stone_stair"], new Vector3(8f, 0f, 1f), 90f, 4f);
+            plan.AddRange(CreateArenaStairPlan(bounds));
             // Low independent walls break lines of sight without sealing paths,
             // blocking the inner gate, or occupying any scheduled spawn anchor.
             plan.Add(new Placement("stone_wall_4x2", new Vector3(1f, -wall.min.y, 0f), 0f));
@@ -140,19 +141,131 @@ namespace ValheimModPack.PartyPrison
                 }
         }
 
-        private static void AppendStairFlight(List<Placement> plan, Bounds stair, Vector3 topEdge, float yaw, float top)
+        private static List<Placement> CreateArenaStairPlan(Dictionary<string, Bounds> bounds)
+        {
+            var plan = new List<Placement>();
+            AppendStairFlight(plan, bounds["stone_stair"], bounds["stone_floor_2x2"], new Vector3(-1f, 0f, 8f), 0f, 2f);
+            AppendStairFlight(plan, bounds["stone_stair"], bounds["stone_floor_2x2"], new Vector3(8f, 0f, 1f), 90f, 4f);
+            return plan;
+        }
+
+        private static void AppendStairFlight(List<Placement> plan, Bounds stair, Bounds stone, Vector3 topEdge, float approachYaw, float top)
         {
             float rise = stair.size.y, run = stair.size.z;
             if (rise < .25f || rise > 4f || run < .5f || run > 4f)
                 throw new InvalidOperationException("Изменились размеры каменной лестницы Valheim.");
+            if (stone.size.y < .25f || stone.size.y > 2f || stone.size.x + .1f < stair.size.x || stone.size.z + .1f < run)
+                throw new InvalidOperationException("Изменились размеры каменного основания лестницы Valheim.");
             int steps = Mathf.CeilToInt(top / rise);
-            Quaternion rotation = Quaternion.Euler(0f, yaw, 0f);
+            Quaternion approach = Quaternion.Euler(0f, approachYaw, 0f);
             for (int step = 0; step < steps; ++step) {
                 float baseHeight = top - (steps - step) * rise;
-                Vector3 offset = topEdge + rotation * new Vector3(0f, 0f, -(steps - step - .5f) * run);
+                Vector3 offset = topEdge + approach * new Vector3(0f, 0f, -(steps - step - .5f) * run);
                 offset.y = baseHeight - stair.min.y;
-                plan.Add(new Placement("stone_stair", offset, yaw));
+                // Native stone_stair rises toward its local -Z. Keep the saved
+                // footprints, but reverse only its orientation toward the island.
+                plan.Add(new Placement("stone_stair", offset, approachYaw + 180f, ArenaStairKey, -1));
+                for (float bottom = 0f; bottom + stone.size.y <= baseHeight + .01f; bottom += stone.size.y) {
+                    Vector3 support = offset; support.y = bottom - stone.min.y;
+                    plan.Add(new Placement("stone_floor_2x2", support, approachYaw, ArenaStairSupportKey, -1));
+                }
             }
+        }
+
+        private sealed class ArenaStairRetrofitPlan
+        {
+            internal readonly List<Placement> Create = new List<Placement>();
+            internal readonly List<ZDO> Remove = new List<ZDO>();
+            internal readonly List<ZDO> Keep = new List<ZDO>();
+        }
+
+        /// <summary>A detached bounded plan; only expected protected stair slots can be replaced.</summary>
+        private static ArenaStairRetrofitPlan PlanArenaStairRetrofit(List<ZDO> pieces, List<Placement> desired,
+            Vector3 basePoint, Quaternion rotation)
+        {
+            var plan = new ArenaStairRetrofitPlan();
+            var remove = new HashSet<ZDOID>();
+            foreach (Placement placement in desired) {
+                Vector3 position = basePoint + rotation * placement.Offset;
+                Quaternion facing = rotation * Quaternion.Euler(0f, placement.Yaw, 0f);
+                ZDO correct = null;
+                var matches = new List<ZDO>();
+                foreach (ZDO old in pieces) {
+                    if (old == null || !old.GetBool(ProtectedKey, false) || old.GetPrefab() != placement.Prefab.GetStableHashCode()
+                        || (old.GetPosition() - position).sqrMagnitude > .0016f) continue;
+                    // A support is ours only when marked. Ordinary floors,
+                    // property containers and surrounding scenery are excluded.
+                    if (placement.Marker == ArenaStairSupportKey && !old.GetBool(ArenaStairSupportKey, false)) continue;
+                    if (placement.Marker == ArenaStairKey && !old.GetBool(ArenaStairKey, false)
+                        && Quaternion.Angle(old.GetRotation(), facing) >= .1f
+                        && Quaternion.Angle(old.GetRotation(), facing * Quaternion.Euler(0f, 180f, 0f)) >= .1f)
+                        throw new InvalidOperationException("Неожиданное направление сохранённой лестницы. Предметы и постройка не изменены.");
+                    matches.Add(old);
+                    if (correct == null && old.GetBool(placement.Marker, false) && Quaternion.Angle(old.GetRotation(), facing) < .1f)
+                        correct = old;
+                }
+                if (correct == null) plan.Create.Add(placement);
+                else plan.Keep.Add(correct);
+                foreach (ZDO old in matches)
+                    if (old != correct && remove.Add(old.m_uid)) plan.Remove.Add(old);
+            }
+            return plan;
+        }
+
+        /// <summary>Replace the two saved expanded stair flights once, preserving all storage and terrain.</summary>
+        public static bool EnsureArenaStairs(PrisonRegion region)
+        {
+            RequireHost();
+            if (region == null || !ArenaGeometry.Expanded(region)) return true;
+            if (ZRoutedRpc.instance == null || !ZNetScene.instance.IsAreaReady(Vector(region.Center))) return false;
+            GameObject stair = RequirePrefab("stone_stair"), stone = RequirePrefab("stone_floor_2x2");
+            if (stair.GetComponent<Piece>() == null || stone.GetComponent<Piece>() == null)
+                throw new InvalidOperationException("Не найдены каменная лестница и её основание.");
+            var bounds = new Dictionary<string, Bounds> { { "stone_stair", SolidBounds(stair) }, { "stone_floor_2x2", SolidBounds(stone) } };
+            List<Placement> desired = CreateArenaStairPlan(bounds);
+            Vector3 right = CellRight(region), forward = Vector3.Cross(right, Vector3.up);
+            Vector3 basePoint = Vector(region.Center); basePoint.y = (float)region.CellSpawn.Y - 1f;
+            Quaternion rotation = Quaternion.LookRotation(forward);
+            var pieces = new List<ZDO>();
+            foreach (ZDO piece in TaggedRegionObjects(ProtectedKey, region))
+                if (InsideStructure(region, piece.GetPosition())) pieces.Add(piece);
+            if (pieces.Count == 0) return false;
+            ArenaStairRetrofitPlan retrofit = PlanArenaStairRetrofit(pieces, desired, basePoint, rotation);
+            if (pieces.Count + retrofit.Create.Count > MaximumPieces)
+                throw new InvalidOperationException("Превышен лимит деталей при обновлении лестниц тюрьмы.");
+            foreach (Placement placement in desired)
+                if (!ZNetScene.instance.IsAreaReady(basePoint + rotation * placement.Offset)) return false;
+            foreach (ZDO piece in retrofit.Remove) {
+                ZNetView view = ZNetScene.instance.FindInstance(piece);
+                if (view == null || !view.IsValid()) return false;
+            }
+            foreach (ZDO piece in retrofit.Keep) {
+                ZNetView view = ZNetScene.instance.FindInstance(piece);
+                if (view == null || !view.IsValid()) return false;
+            }
+            if (retrofit.Create.Count == 0 && retrofit.Remove.Count == 0) return true;
+            var created = new List<GameObject>();
+            try {
+                // The correct new network objects reach already loaded clients
+                // with their rotation; static old pieces need no polling patch.
+                foreach (Placement placement in retrofit.Create)
+                    created.Add(CreatePiece(placement.Prefab == "stone_stair" ? stair : stone, placement, basePoint, rotation));
+            }
+            catch {
+                for (int i = created.Count - 1; i >= 0; --i) DestroyCreated(created[i]);
+                SiteClearer.FlushPendingDestruction();
+                throw;
+            }
+            try {
+                foreach (ZDO piece in retrofit.Remove) DestroyWorldObject(piece);
+            }
+            finally {
+                // Native DestroyZDO queues deletion. Flush its table/network
+                // update before the ordinary autosave; a retry remains idempotent.
+                SiteClearer.FlushPendingDestruction();
+                InvalidateLayoutCache();
+            }
+            return true;
         }
 
         public static bool IsCurrentFootprint(PrisonRegion region) { return ArenaGeometry.Expanded(region); }

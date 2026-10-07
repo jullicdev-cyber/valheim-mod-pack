@@ -22,6 +22,7 @@ namespace ValheimModPack.PartyPrison.NativeVerification
             CheckSignPermission(check);
             CheckCellLayout(check);
             CheckExpandedLayout(check);
+            CheckArenaStairs(check);
             CheckCellFixtures(check);
             CheckRebuildStorage(check);
         }
@@ -270,6 +271,199 @@ namespace ValheimModPack.PartyPrison.NativeVerification
 
         private static object FixturePlacement(string prefab, Vector3 position, float yaw)
         { return Activator.CreateInstance(typeof(ArenaBuilder).GetNestedType("Placement", All), All, null, new object[] { prefab, position, yaw }, null); }
+
+        private static void CheckArenaStairs(Action<bool, string> check)
+        {
+            GameObject stairPrefab = Prefab("stone_stair");
+            Bounds stair = SolidBounds(stairPrefab), stone = SolidBounds(Prefab("stone_floor_2x2"));
+            var bounds = new Dictionary<string, Bounds> { { "stone_stair", stair }, { "stone_floor_2x2", stone } };
+            IList desired = (IList)typeof(ArenaBuilder).GetMethod("CreateArenaStairPlan", All).Invoke(null, new object[] { bounds });
+            var supports = new List<Bounds>(); var stairs = new List<object>();
+            foreach (object placement in desired) {
+                string name = (string)Field(placement, "Prefab");
+                if (name == "stone_stair") stairs.Add(placement);
+                else {
+                    check(name == "stone_floor_2x2" && (string)Field(placement, "Marker") == ArenaBuilder.ArenaStairSupportKey,
+                        "stair foundations use independently marked native solid stone blocks");
+                    supports.Add(WorldBounds(placement, stone));
+                }
+            }
+            check(stairs.Count == 6 && supports.Count == 7, "the two native flights retain six segments with seven bounded support blocks");
+            Vector3 topSnap = Vector3.zero, bottomSnap = Vector3.zero; int topCount = 0, bottomCount = 0;
+            foreach (Transform child in stairPrefab.GetComponentsInChildren<Transform>(true)) {
+                if (child.name.StartsWith("$hud_snappoint_top", StringComparison.Ordinal)) {
+                    topSnap += stairPrefab.transform.InverseTransformPoint(child.position); ++topCount;
+                }
+                if (child.name.StartsWith("$hud_snappoint_bottom ", StringComparison.Ordinal)
+                    && !child.name.Contains("inner")) {
+                    bottomSnap += stairPrefab.transform.InverseTransformPoint(child.position); ++bottomCount;
+                }
+            }
+            check(topCount == 2 && bottomCount == 2, "the actual stone stair defines two top and two outer bottom attachment points");
+            topSnap /= topCount; bottomSnap /= bottomCount;
+            check(topSnap.y > bottomSnap.y + .9f && topSnap.z < bottomSnap.z - 1.9f,
+                "installed native stair geometry rises toward local negative Z");
+            foreach (object placement in stairs) {
+                Vector3 offset = (Vector3)Field(placement, "Offset"); float yaw = (float)Field(placement, "Yaw");
+                float expectedYaw = Mathf.Abs(offset.x + 1f) < .1f ? 180f : 270f;
+                check(Mathf.Abs(Mathf.DeltaAngle(yaw, expectedYaw)) < .01f && (string)Field(placement, "Marker") == ArenaBuilder.ArenaStairKey,
+                    "each saved stair footprint receives the absolute requested 180-degree reversal");
+                Bounds corrected = WorldBounds(placement, stair);
+                Bounds previous = WorldBounds(FixturePlacement("stone_stair", offset, yaw - 180f), stair);
+                check(Mathf.Abs(corrected.min.x - previous.min.x) < .01f && Mathf.Abs(corrected.max.x - previous.max.x) < .01f
+                    && Mathf.Abs(corrected.min.z - previous.min.z) < .01f && Mathf.Abs(corrected.max.z - previous.max.z) < .01f,
+                    "reversal preserves the original native horizontal footprint");
+                Quaternion rotation = Quaternion.Euler(0f, yaw, 0f);
+                Vector3 ascent = rotation * (topSnap - bottomSnap); ascent.y = 0;
+                Vector3 towardPlatform = Mathf.Abs(offset.x + 1f) < .1f ? Vector3.forward : Vector3.right;
+                check(Vector3.Dot(ascent.normalized, towardPlatform) > .999f, "native stair ascent points toward its raised platform");
+                for (float y = .125f; y < corrected.min.y - .01f; y += .25f)
+                    foreach (float dx in new[] { -.75f, 0f, .75f })
+                        foreach (float dz in new[] { -.75f, 0f, .75f })
+                            check(Covered(supports, new Vector3(offset.x + dx, y, offset.z + dz)),
+                                "native solid stone fills the accessible volume below the raised stair segment");
+                foreach (Bounds support in supports)
+                    if (Mathf.Abs(support.center.x - offset.x) < .1f && Mathf.Abs(support.center.z - offset.z) < .1f)
+                        check(support.min.y >= -.01f && support.max.y <= corrected.min.y + .01f,
+                            "stone support ends below the native tread instead of obstructing its walking surface");
+                CheckNativeStairSlope(check, stairPrefab, placement, towardPlatform);
+            }
+            foreach (float top in new[] { 2f, 4f }) {
+                bool meetsPlatform = false;
+                foreach (object placement in stairs) {
+                    Vector3 offset = (Vector3)Field(placement, "Offset"); float yaw = (float)Field(placement, "Yaw");
+                    if (top == 2f && Mathf.Abs(offset.x + 1f) > .1f || top == 4f && Mathf.Abs(offset.z - 1f) > .1f) continue;
+                    if (Mathf.Abs(offset.y + stair.max.y - top) > .01f) continue;
+                    Vector3 end = offset + Quaternion.Euler(0f, yaw, 0f) * topSnap;
+                    meetsPlatform = top == 2f ? Mathf.Abs(end.z - 8f) < .02f && Mathf.Abs(end.y - top) < .02f
+                        : Mathf.Abs(end.x - 8f) < .02f && Mathf.Abs(end.y - top) < .02f;
+                }
+                check(meetsPlatform, "the upper native stair attachment joins its " + top + "m platform without a reversed final step");
+            }
+            CheckStairRetrofit(check, desired);
+        }
+
+        private static void CheckNativeStairSlope(Action<bool, string> check, GameObject prefab, object placement, Vector3 ascent)
+        {
+            MeshCollider source = null;
+            foreach (MeshCollider collider in prefab.GetComponentsInChildren<MeshCollider>(true))
+                if (!collider.isTrigger && collider.sharedMesh != null) { source = collider; break; }
+            check(source != null, "installed stone stair supplies its real mesh collider for directional raycasts");
+            GameObject fixture = new GameObject("PartyPrison.LayoutNativeFixture.StairCollider"); fixture.SetActive(false);
+            try {
+                Vector3 offset = (Vector3)Field(placement, "Offset"); offset.y += 700f;
+                Quaternion rotation = Quaternion.Euler(0f, (float)Field(placement, "Yaw"), 0f);
+                fixture.transform.position = offset + rotation * prefab.transform.InverseTransformPoint(source.transform.position);
+                fixture.transform.rotation = rotation * Quaternion.Inverse(prefab.transform.rotation) * source.transform.rotation;
+                fixture.transform.localScale = source.transform.lossyScale;
+                MeshCollider actual = fixture.AddComponent<MeshCollider>();
+                actual.sharedMesh = source.sharedMesh; actual.convex = source.convex; actual.cookingOptions = source.cookingOptions;
+                fixture.SetActive(true); Physics.SyncTransforms();
+                RaycastHit low, high;
+                bool lowHit = actual.Raycast(new Ray(offset - ascent * .7f + Vector3.up * 3f, Vector3.down), out low, 8f);
+                bool highHit = actual.Raycast(new Ray(offset + ascent * .7f + Vector3.up * 3f, Vector3.down), out high, 8f);
+                check(lowHit && highHit, "actual native mesh collider accepts rays on both ends of the corrected stair");
+                check(high.point.y > low.point.y + .6f,
+                    "actual native collider tread elevations rise toward the platform after the 180-degree reversal");
+            }
+            finally { UnityEngine.Object.DestroyImmediate(fixture); }
+        }
+
+        private static IList RetrofitList(object plan, string name)
+        { return (IList)plan.GetType().GetField(name, All).GetValue(plan); }
+
+        private static void ApplyDetachedStairPlan(List<ZDO> objects, object plan, Vector3 origin, Quaternion rotation, ref uint identity)
+        {
+            foreach (ZDO old in RetrofitList(plan, "Remove")) objects.Remove(old);
+            foreach (object placement in RetrofitList(plan, "Create")) {
+                ZDO created = StorageZdo(identity++, (string)Field(placement, "Prefab"), (string)Field(placement, "Marker"), -1,
+                    origin + rotation * (Vector3)Field(placement, "Offset"));
+                created.SetRotation(rotation * Quaternion.Euler(0f, (float)Field(placement, "Yaw"), 0f));
+                objects.Add(created);
+            }
+        }
+
+        private static void CheckStairRetrofit(Action<bool, string> check, IList desired)
+        {
+            var harmony = new Harmony("valheimmodpack.partyprison.nativeprobe.stair-retrofit");
+            var objects = new List<ZDO>(); var chests = new List<ZDO>(); var originalChests = new List<ZDOID>();
+            var savedPayloads = new List<string>();
+            Vector3 origin = new Vector3(1234.5f, 37.25f, -981.75f); Quaternion rotation = Quaternion.Euler(0f, 137f, 0f);
+            MethodInfo planner = typeof(ArenaBuilder).GetMethod("PlanArenaStairRetrofit", All);
+            try {
+                harmony.Patch(typeof(ZDO).GetMethod("IncreaseDataRevision", All),
+                    prefix: new HarmonyMethod(typeof(LayoutNativeChecks).GetMethod("DetachedRevision", All)));
+                uint identity = 400;
+                foreach (object placement in desired) if ((string)Field(placement, "Prefab") == "stone_stair") {
+                    ZDO old = StorageZdo(identity++, "stone_stair", null, -1, origin + rotation * (Vector3)Field(placement, "Offset"));
+                    old.SetRotation(rotation * Quaternion.Euler(0f, (float)Field(placement, "Yaw") - 180f, 0f)); objects.Add(old);
+                }
+                byte[] payload = StoragePayload(true);
+                for (int index = 0; index < 5; ++index) {
+                    Vector3 local = index < 4 ? new Vector3(-12 + index * 4, 0, -16) : new Vector3(-16, 0, 3);
+                    ZDO chest = StorageZdo(identity++, ArenaBuilder.CustodyPrefab, index < 4 ? ArenaBuilder.CustodyKey : ArenaBuilder.KitKey,
+                        index < 4 ? index : -1, origin + rotation * local);
+                    chest.Set(ZDOVars.s_items, payload); objects.Add(chest); chests.Add(chest); originalChests.Add(chest.m_uid);
+                    savedPayloads.Add(Convert.ToBase64String(chest.GetByteArray(ZDOVars.s_items, null)));
+                }
+                object initial = planner.Invoke(null, new object[] { objects, desired, origin, rotation });
+                check(RetrofitList(initial, "Create").Count == 13 && RetrofitList(initial, "Remove").Count == 6,
+                    "layout5 retrofit targets only its six original stairs and seven absent support blocks in a rotated world");
+                ApplyDetachedStairPlan(objects, initial, origin, rotation, ref identity);
+                object repeated = planner.Invoke(null, new object[] { objects, desired, origin, rotation });
+                check(RetrofitList(repeated, "Create").Count == 0 && RetrofitList(repeated, "Remove").Count == 0
+                    && RetrofitList(repeated, "Keep").Count == 13, "a repeated completed retrofit neither rotates again nor creates duplicate pieces");
+                ZDO support = null, correctedStair = null;
+                foreach (ZDO zdo in objects) {
+                    if (support == null && zdo.GetBool(ArenaBuilder.ArenaStairSupportKey, false)) support = zdo;
+                    if (correctedStair == null && zdo.GetBool(ArenaBuilder.ArenaStairKey, false)) correctedStair = zdo;
+                }
+                objects.Remove(support);
+                object partial = planner.Invoke(null, new object[] { objects, desired, origin, rotation });
+                check(RetrofitList(partial, "Create").Count == 1 && RetrofitList(partial, "Remove").Count == 0
+                    && RetrofitList(partial, "Keep").Count == 12, "an interrupted retrofit reuses all surviving supports and stairs");
+                ApplyDetachedStairPlan(objects, partial, origin, rotation, ref identity);
+                ZDO duplicate = StorageZdo(identity++, "stone_stair", null, -1, correctedStair.GetPosition());
+                duplicate.SetRotation(correctedStair.GetRotation() * Quaternion.Euler(0, 180, 0)); objects.Add(duplicate);
+                object duplicatePlan = planner.Invoke(null, new object[] { objects, desired, origin, rotation });
+                check(RetrofitList(duplicatePlan, "Create").Count == 0 && RetrofitList(duplicatePlan, "Remove").Count == 1
+                    && RetrofitList(duplicatePlan, "Remove").Contains(duplicate) && !RetrofitList(duplicatePlan, "Remove").Contains(correctedStair),
+                    "old-plus-new overlap removes only the previous wrongly oriented stair identity");
+                ApplyDetachedStairPlan(objects, duplicatePlan, origin, rotation, ref identity);
+                objects.Remove(correctedStair);
+                ZDO markedWrong = StorageZdo(identity++, "stone_stair", ArenaBuilder.ArenaStairKey, -1, correctedStair.GetPosition());
+                markedWrong.SetRotation(rotation * Quaternion.Euler(0, 23, 0)); objects.Add(markedWrong);
+                object markedRepair = planner.Invoke(null, new object[] { objects, desired, origin, rotation });
+                check(RetrofitList(markedRepair, "Create").Count == 1 && RetrofitList(markedRepair, "Remove").Count == 1
+                    && RetrofitList(markedRepair, "Remove").Contains(markedWrong), "a marked malformed stair is restored to the absolute planned world yaw");
+                ApplyDetachedStairPlan(objects, markedRepair, origin, rotation, ref identity);
+                object readyAgain = planner.Invoke(null, new object[] { objects, desired, origin, rotation });
+                check(RetrofitList(readyAgain, "Create").Count == 0 && RetrofitList(readyAgain, "Remove").Count == 0,
+                    "repairing a malformed marked stair remains idempotent on the following load");
+                ZDO unexpected = StorageZdo(identity++, "stone_stair", null, -1, correctedStair.GetPosition());
+                unexpected.SetRotation(rotation * Quaternion.Euler(0, 23, 0)); objects.Add(unexpected);
+                bool rejected = false;
+                try { planner.Invoke(null, new object[] { objects, desired, origin, rotation }); }
+                catch (TargetInvocationException error) { if (error.InnerException is InvalidOperationException) rejected = true; else throw; }
+                check(rejected, "unexpected unmarked stair yaw fails preflight without deleting an unrecognized protected object");
+                objects.Remove(unexpected);
+                ZDO unrelated = StorageZdo(identity++, "stone_stair", null, -1, correctedStair.GetPosition() + Vector3.up * .5f);
+                objects.Add(unrelated);
+                object scoped = planner.Invoke(null, new object[] { objects, desired, origin, rotation });
+                check(RetrofitList(scoped, "Create").Count == 0 && RetrofitList(scoped, "Remove").Count == 0,
+                    "unrelated protected stone stair outside the exact expected slots is untouched");
+                for (int index = 0; index < chests.Count; ++index)
+                    check(objects.Contains(chests[index]) && chests[index].m_uid == originalChests[index]
+                        && Convert.ToBase64String(chests[index].GetByteArray(ZDOVars.s_items, null)) == savedPayloads[index],
+                        "every property and kit chest retains its native identity and exact occupied payload through retrofit planning and retry");
+            }
+            finally {
+                foreach (ZDO zdo in new List<ZDO>(fixtureZdos)) {
+                    typeof(ZDO).GetMethod("Reset", All).Invoke(zdo, null); fixtureZdos.Remove(zdo);
+                }
+                harmony.UnpatchSelf();
+            }
+        }
 
         private static void CheckCellFixtures(Action<bool, string> check)
         {
