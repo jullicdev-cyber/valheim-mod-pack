@@ -9,7 +9,8 @@ namespace ValheimModPack.PartyPrison
 {
     public sealed partial class Plugin
     {
-        private int combatFamily, combatDifficulty, combatRevision;
+        private int combatFamily, combatDifficulty, combatRevision, combatStartingDifficulty, combatWavesCompleted;
+        private readonly System.Random combatWaveRandom = new System.Random();
         private string combatToken = "";
         private float nextGearMaintenance, nextStoredGearMaintenance, nextDefeat;
         private bool expireRestoredFood;
@@ -18,7 +19,7 @@ namespace ValheimModPack.PartyPrison
 
         private void ResetCombat()
         {
-            combatFamily = combatDifficulty = combatRevision = 0; combatToken = "";
+            combatFamily = combatDifficulty = combatRevision = combatStartingDifficulty = combatWavesCompleted = 0; combatToken = "";
             nextGearMaintenance = nextStoredGearMaintenance = nextDefeat = 0;
             expireRestoredFood = false;
             combatRequests.Clear(); defeatRequests.Clear();
@@ -36,14 +37,18 @@ namespace ValheimModPack.PartyPrison
             int family, difficulty, revision; string token;
             ArenaBuilder.GetCombatChoice(region, out family, out difficulty, out token, out revision);
             SentenceState active = store == null ? null : store.All().FirstOrDefault(s => HostFightReady(s));
+            int completed = 0, startingDifficulty = difficulty;
             if (active == null || active.SentenceId != token) { token = ""; revision = 0; }
-            ReadCombatState(family, difficulty, token, revision);
+            else completed = ArenaBuilder.GetWaveProgress(region, token, revision).Completed;
+            difficulty = ArenaWaveProgressionPolicy.Difficulty(startingDifficulty, completed);
+            ReadCombatState(family, difficulty, token, revision); ReadCombatProgress(startingDifficulty, completed);
         }
 
         private void WriteCombatState(BinaryWriter writer)
         {
             writer.Write(combatFamily); writer.Write(combatDifficulty);
             PrisonProtocol.Text(writer, combatToken); writer.Write(combatRevision);
+            writer.Write(combatStartingDifficulty); writer.Write(combatWavesCompleted);
         }
 
         private void ReadCombatState(int family, int difficulty, string token, int revision)
@@ -54,9 +59,18 @@ namespace ValheimModPack.PartyPrison
                 // Native Player.Save stores food prefab/time, not serving tags.
                 // Previously restored rations must expire on this loadout epoch.
                 expireRestoredFood = true;
+                combatStartingDifficulty = difficulty; combatWavesCompleted = 0;
             }
             combatFamily = family; combatDifficulty = difficulty; combatToken = token; combatRevision = revision;
         }
+
+        private static void ValidateCombatProgress(int difficulty, int startingDifficulty, int completed)
+        {
+            if (ArenaWaveProgressionPolicy.Difficulty(startingDifficulty, completed) != difficulty)
+                throw new InvalidDataException("Invalid prison wave progress.");
+        }
+        private void ReadCombatProgress(int startingDifficulty, int completed)
+        { ValidateCombatProgress(combatDifficulty, startingDifficulty, completed); combatStartingDifficulty = startingDifficulty; combatWavesCompleted = completed; }
 
         private void MaintainCombatGear()
         {

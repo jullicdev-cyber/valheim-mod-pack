@@ -437,11 +437,19 @@ namespace ValheimModPack.PartyPrison
         }
         private void AutoWaves()
         {
-            if (region == null || Time.realtimeSinceStartup < nextWave || !ArenaBuilder.CanSpawnWave(region)) return;
+            if (region == null) return;
             foreach (ZNetPeer peer in peers.Values)
             {
                 SentenceState state = Ready(peer) ? store.Find(WC.GetAdministrativeOwner(peer)) : null; PrisonPoint position;
-                if (HostFightReady(state) && Position(peer, out position) && ArenaBuilder.IsInsideArena(region, Vector(position))) { if (ArenaBuilder.LiveMobCount(region) == 0) SpawnWave(waveTier); return; }
+                if (HostFightReady(state) && Position(peer, out position) && ArenaBuilder.IsInsideArena(region, Vector(position))) {
+                    int family, difficulty, revision; string token; ArenaBuilder.GetCombatChoice(region, out family, out difficulty, out token, out revision);
+                    if (token != state.SentenceId || revision < 1) return;
+                    // Award a finished wave before the next-wave cooldown, and
+                    // only for fully spawned mobs from this sentence/run.
+                    ArenaBuilder.CompleteWaveIfDefeated(region, token, revision);
+                    if (Time.realtimeSinceStartup >= nextWave && ArenaBuilder.CanSpawnWave(region) && ArenaBuilder.LiveMobCount(region) == 0) SpawnWave(waveTier);
+                    return;
+                }
             }
         }
     }

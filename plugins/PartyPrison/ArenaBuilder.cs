@@ -540,23 +540,40 @@ namespace ValheimModPack.PartyPrison
 
         public static int SpawnWave(PrisonRegion region, string prefabName, int count, int level)
         {
+            if (count < 1 || count > MaximumMobs) throw new ArgumentOutOfRangeException("count");
+            var names = new string[count]; for (int i = 0; i < count; ++i) names[i] = prefabName;
+            return SpawnWave(region, names, level, "", 0);
+        }
+
+        public static int SpawnWave(PrisonRegion region, string[] prefabNames, int level, string token, int revision)
+        {
             RequireHost();
             if (region == null) throw new InvalidOperationException("Сначала создайте тюрьму.");
             if (!CanSpawnWave(region)) throw new InvalidOperationException("Арена готовится к следующему бою; подождите несколько секунд.");
-            string canonical = null;
-            foreach (string allowed in MobNames)
-                if (String.Equals(allowed, prefabName, StringComparison.OrdinalIgnoreCase)) { canonical = allowed; break; }
-            if (canonical == null) throw new ArgumentException("Допустимые мобы: " + AllowedMobs);
+            int count = prefabNames == null ? 0 : prefabNames.Length;
             if (count < 1 || count > MaximumMobs || level < 1 || level > 3)
                 throw new ArgumentException("За волну: 1–8 мобов; уровень: 1–3.");
             int existing = LiveMobCount(region);
             if (existing + count > MaximumMobs)
                 throw new InvalidOperationException("В тюрьме уже есть мобы; общий лимит — 8. Сначала завершите или очистите волну.");
-            GameObject prefab = RequirePrefab(canonical);
-            if (prefab.GetComponent<Character>() == null || prefab.GetComponent<MonsterAI>() == null)
-                throw new InvalidOperationException("Неподдерживаемый моб: " + canonical);
+            var prefabs = new GameObject[count];
+            for (int i = 0; i < count; ++i) {
+                string canonical = null;
+                foreach (string allowed in MobNames)
+                    if (String.Equals(allowed, prefabNames[i], StringComparison.OrdinalIgnoreCase)) { canonical = allowed; break; }
+                if (canonical == null) throw new ArgumentException("Допустимые мобы: " + AllowedMobs);
+                prefabs[i] = RequirePrefab(canonical);
+                if (prefabs[i].GetComponent<Character>() == null || prefabs[i].GetComponent<MonsterAI>() == null)
+                    throw new InvalidOperationException("Неподдерживаемый моб: " + canonical);
+            }
             if (pendingWave != null) throw new InvalidOperationException("Дождитесь завершения появления текущей волны.");
-            pendingWave = new WaveRequest { Region = region, Prefab = prefab, Count = count, Level = level,
+            ZDO kit = null; long serial = 0;
+            if (token.Length != 0) {
+                ArenaWaveProgress next = ArenaWaveProgressionPolicy.Start(GetWaveProgress(region, token, revision), count);
+                kit = waveProgressKit; serial = next.ActiveSerial; WriteWaveProgressZdo(kit, next);
+            }
+            pendingWave = new WaveRequest { Region = region, Prefabs = prefabs, Count = count, Level = level, Kit = kit,
+                SentenceToken = token, RunRevision = revision, Serial = serial,
                 Manager = ZDOMan.instance, NextSpawn = Time.realtimeSinceStartup + .1f };
             return count;
         }
@@ -570,50 +587,62 @@ namespace ValheimModPack.PartyPrison
             if (pendingWave == null) return;
             RequireHost();
             WaveRequest wave = pendingWave;
-            if (wave.Manager != ZDOMan.instance || !SameRegion(wave.Region, region)) { pendingWave = null; return; }
+            if (wave.Manager != ZDOMan.instance || !SameRegion(wave.Region, region)) {
+                pendingWave = null;
+                if (wave.Manager == ZDOMan.instance) AbortSpawnWave(wave);
+                return;
+            }
             float now = Time.realtimeSinceStartup;
             if (now < wave.NextSpawn) return;
+            GameObject prefab = wave.Prefabs[wave.Spawned];
             Vector3 position;
-            if (!TryWavePosition(region, wave.Spawned, wave.Prefab.name == "Hatchling", out position)) {
+            if (!TryWavePosition(region, wave.Spawned, prefab.name == "Hatchling", out position)) {
                 // Occupied entrances never become a telefrag or an enemy embedded
                 // in stone. A completely obstructed arena cancels after ten waits.
-                if (++wave.BlockedAttempts >= 10) pendingWave = null;
+                if (++wave.BlockedAttempts >= 10) { pendingWave = null; AbortSpawnWave(wave); }
                 else wave.NextSpawn = now + 1f;
                 return;
             }
             // Drakes start below the solid ceiling, with enough height for their
             // native flying AI to track the prisoner through the viewing grilles.
-            if (wave.Prefab.name == "Hatchling") position.y += 2f;
+            if (prefab.name == "Hatchling") position.y += 2f;
             GameObject mob = null;
             try {
                 Vector3 look = Vector(region.ArenaSpawn) - position; look.y = 0f;
-                mob = UnityEngine.Object.Instantiate(wave.Prefab, position, look.sqrMagnitude > .01f ? Quaternion.LookRotation(look) : Quaternion.identity);
-                MarkPersistent(mob, MobKey); mob.GetComponent<Character>().SetLevel(wave.Level);
+                mob = UnityEngine.Object.Instantiate(prefab, position, look.sqrMagnitude > .01f ? Quaternion.LookRotation(look) : Quaternion.identity);
+                ZDO mobData = MarkPersistent(mob, MobKey);
+                if (wave.Serial != 0) { mobData.Set(MobSentenceKey, wave.SentenceToken); mobData.Set(MobRunRevisionKey, wave.RunRevision); mobData.Set(MobWaveSerialKey, wave.Serial); }
+                mob.GetComponent<Character>().SetLevel(wave.Level); RecordWaveSpawned(wave);
                 // Native mob drops stay enabled; cell access follows the native door.
                 ++wave.Spawned; wave.BlockedAttempts = 0; wave.NextSpawn = now + .6f;
                 if (wave.Spawned >= wave.Count) pendingWave = null;
             }
-            catch { if (mob != null) DestroyCreated(mob); pendingWave = null; throw; }
+            catch { if (mob != null) DestroyCreated(mob); pendingWave = null; AbortSpawnWave(wave); throw; }
         }
 
-        public static void CancelPendingWave() { pendingWave = null; }
+        public static void CancelPendingWave()
+        { WaveRequest wave = pendingWave; pendingWave = null; if (wave != null) AbortSpawnWave(wave); }
 
         private static readonly int SpawnCollisionMask = LayerMask.GetMask("Default", "static_solid", "piece", "character", "character_net", "terrain");
         private static bool TryWavePosition(PrisonRegion region, int index, bool flying, out Vector3 position)
         {
             Vector3 right = CellRight(region), forward = Vector3.Cross(right, Vector3.up);
-            for (int candidate = 0; candidate < 8; ++candidate) {
-                PrisonPoint anchor = ArenaGeometry.Spawn(region, (index + candidate) % 8);
-                position = Vector(region.Center) + right * (float)anchor.X + forward * (float)anchor.Z;
-                position.y = (float)region.CellSpawn.Y;
-                Vector3 bottom = position + Vector3.up * (flying ? 2f : 0f);
-                if (!Physics.CheckCapsule(bottom, bottom + Vector3.up * 1.2f, .55f, SpawnCollisionMask, QueryTriggerInteraction.Ignore)) return true;
-            }
-            position = Vector3.zero; return false;
+            Vector3 center = Vector(region.Center); float floor = (float)region.CellSpawn.Y;
+            PrisonPoint offset;
+            bool found = ArenaSpawnGeometry.TryChoose(region, () => UnityEngine.Random.value, candidate => {
+                Vector3 point = center + right * (float)candidate.X + forward * (float)candidate.Z;
+                point.y = floor;
+                Vector3 bottom = point + Vector3.up * (flying ? 2f : 0f);
+                return !Physics.CheckCapsule(bottom, bottom + Vector3.up * 1.2f, .55f,
+                    SpawnCollisionMask, QueryTriggerInteraction.Ignore);
+            }, out offset);
+            position = found ? center + right * (float)offset.X + forward * (float)offset.Z : Vector3.zero;
+            if (found) position.y = floor;
+            return found;
         }
 
         public static void ResetRuntime()
-        { pendingWave = null; ResetCombatRuntime(); nextMobEnforcement = 0f; cachedLayoutRegion = null; InvalidateLayoutCache(); }
+        { pendingWave = null; ResetWaveProgressRuntime(); ResetCombatRuntime(); nextMobEnforcement = 0f; cachedLayoutRegion = null; InvalidateLayoutCache(); }
 
         public static int LiveMobCount(PrisonRegion region)
         {
@@ -631,7 +660,7 @@ namespace ValheimModPack.PartyPrison
         public static int CleanupMobs(PrisonRegion region, bool all)
         {
             RequireHost();
-            if (all) CancelPendingWave();
+            if (all) { CancelActiveWave(region); CancelPendingWave(); }
             int removed = 0;
             foreach (ZDO zdo in region == null ? TaggedWorldObjects(MobKey) : TaggedRegionObjects(MobKey, region)) {
                 if (!all && (region == null || ContainsRoom(region, zdo.GetPosition()))) continue;
@@ -876,7 +905,11 @@ namespace ValheimModPack.PartyPrison
         private sealed class WaveRequest
         {
             public PrisonRegion Region;
-            public GameObject Prefab;
+            public GameObject[] Prefabs;
+            public ZDO Kit;
+            public string SentenceToken;
+            public int RunRevision;
+            public long Serial;
             public ZDOMan Manager;
             public int Count, Spawned, Level, BlockedAttempts;
             public float NextSpawn;

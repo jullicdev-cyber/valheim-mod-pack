@@ -83,7 +83,9 @@ namespace ValheimModPack.PartyPrison.NativeVerification
                         check(food.m_shared.m_maxStackSize == 1 && source.m_shared.m_maxStackSize > 1 && !food.m_shared.m_autoStack
                             && !System.Object.ReferenceEquals(food.m_shared, source.m_shared), "arena ration cannot merge into personal food or alter its native definition");
                     }
+                    CheckKitCapacity(loadout, family, difficulty, check);
                 }
+            CheckMixedWaves(check);
             CheckFoodLoans(check);
             CheckFoodDragging(check);
             CheckIssuedAmmo(check);
@@ -126,6 +128,48 @@ namespace ValheimModPack.PartyPrison.NativeVerification
                 "native save/reload preserves all farm loot and personal equipment after release");
             check(ArenaBuilder.RemoveObsoleteInventoryGear(restored, world, "", 0) == 0, "release cleanup is idempotent after native persistence");
             CheckBackpackReplacement(check);
+        }
+
+        private static void CheckKitCapacity(PrisonCombatLoadout loadout, int family, int difficulty, Action<bool, string> check)
+        {
+            var chest = new Inventory("PartyPrison.NativeKitCapacity", null, 6, 4);
+            foreach (string name in loadout.GearPrefabs) {
+                ItemDrop.ItemData item = Item(name, 1);
+                if (ArenaBuilder.IsIssuedAmmo(item)) item.m_stack = Math.Min(100, item.m_shared.m_maxStackSize);
+                check(chest.AddItem(item), "native cell chest accepts every selected kit weapon and ammunition: " + family + "/" + difficulty + "/" + name);
+            }
+            foreach (string name in loadout.FoodPrefabs)
+                for (int serving = 0; serving < loadout.FoodServings; ++serving)
+                    check(chest.AddItem(Item(name, 1)), "native cell chest accepts every isolated food portion: " + family + "/" + difficulty);
+            for (int serving = 0; serving < loadout.EmeticServings; ++serving)
+                check(chest.AddItem(Item(CombatCatalog.EmeticPrefab, 1)), "native cell chest accepts every temporary pukeberry: " + family + "/" + difficulty);
+            check(chest.GetAllItems().Count == loadout.GearPrefabs.Length + loadout.FoodPrefabs.Length * loadout.FoodServings + loadout.EmeticServings
+                && chest.GetAllItems().Count <= 24, "complete selected kit keeps every issued item within the actual twenty-four native cell chest slots");
+        }
+
+        private static void CheckMixedWaves(Action<bool, string> check)
+        {
+            var registered = new HashSet<string>(CombatCatalog.AllMobPrefabs(), StringComparer.Ordinal);
+            var inspected = new HashSet<string>(StringComparer.Ordinal);
+            for (int difficulty = 0; difficulty < CombatCatalog.DifficultyCount; ++difficulty) {
+                PrisonCombatLoadout loadout = CombatCatalog.Get(CombatCatalog.MixedFamily, difficulty);
+                var random = new System.Random(710 + difficulty);
+                for (int waveIndex = 0; waveIndex < 20; ++waveIndex) {
+                    string[] wave = CombatCatalog.GetWaveMobPrefabs(loadout, random);
+                    check(wave.Length == difficulty + 2 && new HashSet<string>(wave).Count >= 2,
+                        "every seeded mixed wave has the selected native star tier's bounded size and at least two types");
+                    foreach (string name in wave) {
+                        check(registered.Contains(name), "mixed waves select only registered existing enemy prefabs");
+                        if (!inspected.Add(name)) continue;
+                        GameObject mob = Prefab(name);
+                        check(mob != null && mob.GetComponent<Character>() != null && mob.GetComponent<MonsterAI>() != null
+                            && mob.GetComponent<ZNetView>() != null && mob.GetComponent<CharacterDrop>() != null,
+                            "mixed enemy resolves to a native fighting, networked character with ordinary loot: " + name);
+                    }
+                }
+            }
+            check(inspected.SetEquals(registered) && inspected.Count == CombatCatalog.NativeFamilyCount,
+                "seeded mixed waves resolve all six requested native enemy types in the loaded game");
         }
 
         private static void CheckConsole(Action<bool, string> check)

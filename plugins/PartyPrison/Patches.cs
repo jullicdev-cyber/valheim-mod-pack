@@ -376,6 +376,17 @@ namespace ValheimModPack.PartyPrison
             __result = false; return false;
         }
     }
+    [HarmonyPatch(typeof(BaseAI), "IsEnemy", new[] { typeof(Character), typeof(Character) })]
+    internal static class PrisonEnemyAlliancePatch
+    {
+        private static bool Prefix(Character __0, Character __1, ref bool __result)
+        {
+            // All peers read the persisted sentence markers, so remote owners
+            // and reloaded mixed mobs agree without changing native prefabs.
+            if (!ArenaBuilder.AreAlliedPrisonMobs(__0, __1)) return true;
+            __result = false; return false;
+        }
+    }
     [HarmonyPatch(typeof(Jotunn.Managers.GUIManager), "ResetInputBlock")]
     internal static class InputResetPatch
     { private static void Postfix() { if (Plugin.Active != null) Plugin.Active.ResetInput(); } }

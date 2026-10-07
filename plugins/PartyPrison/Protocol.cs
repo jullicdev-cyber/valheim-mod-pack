@@ -8,7 +8,7 @@ namespace ValheimModPack.PartyPrison
     // Custody inventory blobs may be up to 4MiB; command authority stays host-side.
     internal static class PrisonProtocol
     {
-        internal const int Version = 3;
+        internal const int Version = 4;
         internal const int MaximumBlobBytes = 4 * 1024 * 1024;
         internal const int MaximumBytes = MaximumBlobBytes + 8192;
         internal const int State = 1, Heartbeat = 2, ReleaseAck = 3, Wave = 4,

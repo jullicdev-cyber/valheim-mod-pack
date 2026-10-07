@@ -32,7 +32,7 @@ $testedPrisonHash = (Get-FileHash -LiteralPath $prisonTarget -Algorithm SHA256).
 $probeSource = Join-Path $fixtureRoot 'NativeChecks.cs'
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'NativeChecks.cs') -Destination $probeSource
 $probeSourceHash = (Get-FileHash -LiteralPath $probeSource -Algorithm SHA256).Hash
-$probeHelpers = @('CombatNativeChecks.cs','LayoutNativeChecks.cs','RecoveryNativeChecks.cs','DeathNativeChecks.cs','KitStorageNativeChecks.cs','CustodyInventoryNativeChecks.cs') | ForEach-Object {
+$probeHelpers = @('CombatNativeChecks.cs','LayoutNativeChecks.cs','RecoveryNativeChecks.cs','DeathNativeChecks.cs','KitStorageNativeChecks.cs','CustodyInventoryNativeChecks.cs','RandomSpawnNativeChecks.cs','WaveRuntimeNativeChecks.cs') | ForEach-Object {
     $frozen = Join-Path $fixtureRoot $_
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $_) -Destination $frozen
     $frozen

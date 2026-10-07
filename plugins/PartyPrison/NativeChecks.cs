@@ -121,10 +121,11 @@ namespace ValheimModPack.PartyPrison.NativeVerification
             Patch(typeof(Sign), "UpdateViewPermission", Type.EmptyTypes);
             Patch(typeof(Bed), "Interact", new[] { typeof(Humanoid), typeof(bool), typeof(bool) });
             Patch(typeof(ItemDrop), "AutoStackItems", Type.EmptyTypes);
+            Patch(typeof(BaseAI), "IsEnemy", new[] { typeof(Character), typeof(Character) });
             Patch(typeof(TerrainComp), "ApplyToHeightmap", new[] { typeof(Texture2D), typeof(List<float>), typeof(float[]), typeof(float[]), typeof(Heightmap) });
             report.AppendLine("PASS: Required confinement, death, protection and input-reset Harmony patches bind; native creature loot generation remains available.");
             CheckCommandRouting(); CheckGroupRadiusCompatibility(); CheckUi(); CheckInventoryIsolation(); CheckCustodyInventory(); CheckAdmissionEquivalence(); CheckExactWithdrawalInsertion(); CheckCustodyMask(); CheckCustodyRegistry(); CheckCustodyTransitions(); CheckForcedTerrainHeights(); CheckForceClearance(); CheckLootPickupGuard(); CheckGeometry(); CheckLayoutPlan(); CheckPrefabs();
-            CombatNativeChecks.Run(Check); LayoutNativeChecks.Run(Check); RecoveryNativeChecks.Run(Check); DeathNativeChecks.Run(Check); KitStorageNativeChecks.Run(Check); CustodyInventoryNativeChecks.Run(Check);
+            CombatNativeChecks.Run(Check); LayoutNativeChecks.Run(Check); RecoveryNativeChecks.Run(Check); DeathNativeChecks.Run(Check); KitStorageNativeChecks.Run(Check); CustodyInventoryNativeChecks.Run(Check); RandomSpawnNativeChecks.Run(Check); WaveRuntimeNativeChecks.Run(Check);
             report.AppendLine("PASS: Detached native death-skill adapter matches full-patch percentages, cooldown boundary, soft-death notice and reset-skills world rule; personal items remain byte-identical. Live defeat/teleport/custody remains unverified.");
             if (CombatNativeChecks.BackpackFixtureSkipped) report.AppendLine("SKIP: Adventure Backpacks is absent; native backpack replacement fixture was omitted.");
             if (RecoveryNativeChecks.BackpackFixtureSkipped) report.AppendLine("SKIP: Adventure Backpacks is absent; native nested-backpack equipment expiry fixture was omitted.");
@@ -369,7 +370,7 @@ namespace ValheimModPack.PartyPrison.NativeVerification
 
         private void CheckUi()
         {
-            int baseline = InputCount(), imposed = 0, releases = 0, forced = 0, kits = 0, chosenTier = -1, chosenFamily = 0;
+            int baseline = InputCount(), imposed = 0, releases = 0, forced = 0, kits = 0, chosenTier = -1, chosenFamily = 0, completedWaves = 0, untilUpgrade = 4;
             bool canFight = true;
             string custody = "";
             string released = null, imposedAccount = null, imposedReason = null;
@@ -398,7 +399,8 @@ namespace ValheimModPack.PartyPrison.NativeVerification
                 Impose = (account, minutes, reason) => { ++imposed; imposedAccount = account; imposedMinutes = minutes; imposedReason = reason; },
                 Release = account => { ++releases; released = account; }, ForceRelease = account => { ++forced; released = account; },
                 Wave = tier => chosenTier = tier, Choice = (family, tier) => { chosenFamily = family; chosenTier = tier; },
-                CombatFamily = () => chosenFamily, CombatDifficulty = () => Math.Max(0, chosenTier), Move = arena => { }
+                CombatFamily = () => chosenFamily, CombatDifficulty = () => Math.Max(0, chosenTier),
+                CombatWavesCompleted = () => completedWaves, CombatWavesUntilUpgrade = () => untilUpgrade, Move = arena => { }
             };
             PrisonWindow window = new PrisonWindow(bindings);
             try
@@ -471,10 +473,30 @@ namespace ValheimModPack.PartyPrison.NativeVerification
                     Check(((GameObject)Field(window, "panel")).GetComponent<RectTransform>().rect.height >= 779, "expanded prisoner panel fits custody and equipment controls");
                     Check(((Text)Field(window, "custodyText")).text.Contains("железных сундуках") && ((Text)Field(window, "custodyText")).text.Contains("сохраните добычу"), "prisoner panel explains protected chest custody and keeping arena loot on defeat");
                     Check(((Button)Field(window, "kit")).interactable && ((Button)Field(window, "arena")).interactable, "prepared prisoner may request equipment and enter the arena");
+                    Check(((Text)Field(window, "combatProgress")).text.Contains("Побед: 0")
+                        && ((Text)Field(window, "combatProgress")).text.Contains("До повышения: 4"), "prisoner progress begins with the authoritative four-wave upgrade target");
+                    chosenTier = 1; completedWaves = 3; untilUpgrade = 1; Call(window, "Repaint");
+                    Check(((Text)Field(window, "combatProgress")).text.Contains("Побед: 3")
+                        && ((Text)Field(window, "combatProgress")).text.Contains("До повышения: 1"), "dynamic prisoner progress reads updated server callbacks while the panel stays open");
                     Call(window, "Kit"); Check(kits == 1, "basic equipment offer calls its server binding once");
                     Call(window, "Wave", 2); Check(chosenTier == 2, "difficulty selection submits the chosen future wave tier");
-                    Check(((Button[])Field(window, "families")).Length == 6 && ((Button[])Field(window, "families")).All(button => button != null && button.interactable), "ready prisoner can choose all six native enemy families");
+                    completedWaves = 4; untilUpgrade = 0; Call(window, "Repaint");
+                    Check(((Text)Field(window, "combatProgress")).text.Contains("Побед: 4")
+                        && ((Text)Field(window, "combatProgress")).text.Contains("Максимальная сложность")
+                        && !((Text)Field(window, "combatProgress")).text.Contains("До повышения"), "strongest tier shows its cap instead of promising another nonexistent upgrade");
+                    Check(((Button[])Field(window, "families")).Length == CombatCatalog.FamilyCount && ((Button[])Field(window, "families")).All(button => button != null && button.interactable), "ready prisoner can choose all six native enemy families and mixed mode");
                     Call(window, "SelectFamily", 4); Check(chosenFamily == 4 && chosenTier == 2, "choosing drakes preserves the selected difficulty in the authenticated choice binding");
+                    Call(window, "SelectFamily", CombatCatalog.MixedFamily); Call(window, "Repaint");
+                    Check(chosenFamily == CombatCatalog.MixedFamily && chosenTier == 2
+                        && ((Button[])Field(window, "families"))[CombatCatalog.MixedFamily].GetComponentInChildren<Text>().text.StartsWith("› Смешанные"),
+                        "mixed-mode selection submits its distinct seventh server index, preserves difficulty and highlights the actual button");
+                    RectTransform prisonerRect = ((GameObject)Field(window, "panel")).GetComponent<RectTransform>();
+                    foreach (Button family in (Button[])Field(window, "families")) {
+                        RectTransform familyRect = family.GetComponent<RectTransform>();
+                        Check(Mathf.Abs(familyRect.anchoredPosition.x) + familyRect.rect.width / 2 <= prisonerRect.rect.width / 2
+                            && Mathf.Abs(familyRect.anchoredPosition.y) + familyRect.rect.height / 2 <= prisonerRect.rect.height / 2,
+                            "all seven enemy choices fit inside the native prisoner panel");
+                    }
                     canFight = false; custody = "Вещи сохраняются, подождите."; Call(window, "Repaint");
                     Check(((Text)Field(window, "sentence")).text.Contains("Подготовка") && ((Text)Field(window, "custodyText")).text == custody,
                         "preparation displays its authoritative custody status rather than a running prison countdown");
@@ -485,7 +507,7 @@ namespace ValheimModPack.PartyPrison.NativeVerification
                     canFight = true; custody = ""; Call(window, "Repaint");
                     foreach (Text text in ((GameObject)Field(window, "panel")).GetComponentsInChildren<Text>(true)) Check(!text.supportRichText, "prisoner caption is plain text: " + text.name);
                     state.PendingRelease = true; state.RemainingSeconds = 0; Call(window, "Repaint");
-                    Check(((Text)Field(window, "sentence")).text.Contains("завершён") && ((Text)Field(window, "custodyText")).text.Contains("сундуками"), "pending release explains gate opening and physical chest retrieval without using a client clock");
+                    Check(((Text)Field(window, "sentence")).text.Contains("завершён") && ((Text)Field(window, "custodyText")).text.Contains("сундук"), "pending release explains gate opening and physical chest retrieval without using a client clock");
                     Check(!((Button)Field(window, "kit")).interactable && !((Button)Field(window, "arena")).interactable,
                         "pending release keeps retrieval guidance visible while disabling new arena activity");
                     Check(((Text)Field(window, "custodyText")).text.Contains("удаляются"), "release guidance distinguishes preserved loot from expiring prison armor and weapons");
@@ -507,7 +529,7 @@ namespace ValheimModPack.PartyPrison.NativeVerification
                 window.Hide(); simulatePlacement = failPlacement = false; placementFixture.UnpatchSelf();
                 pendingPlacement.SetValue(actualPlugin, previousPlacement); capturedPlacement = constructedPlacement = null;
             }
-            report.AppendLine("PASS: Native wooden host/prisoner panels, eight-row pagination, offline release, reason/duration, actual captured host-look construction confirmation, equipment offer, difficulty selection, custody preparation and chest retrieval, plain names and independent input leases.");
+            report.AppendLine("PASS: Native wooden host/prisoner panels, eight-row pagination, offline release, reason/duration, actual captured host-look construction confirmation, equipment offer, seven enemy choices including mixed mode, dynamic wave progress and difficulty cap, custody preparation and chest retrieval, plain names and independent input leases.");
         }
 
         private void CheckPrefabs()

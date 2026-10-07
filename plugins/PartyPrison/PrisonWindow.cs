@@ -25,7 +25,7 @@ namespace ValheimModPack.PartyPrison
         public Action PrepareBuild, Build, Kit;
         public Action<int> Wave;
         public Action<int, int> Choice;
-        public Func<int> CombatFamily, CombatDifficulty;
+        public Func<int> CombatFamily, CombatDifficulty, CombatKitDifficulty, CombatWavesCompleted, CombatWavesUntilUpgrade;
         public Action<bool> Move;
         public Func<string> Notice, CustodyStatus;
         public Func<string, string, string> Translate;
@@ -40,12 +40,12 @@ namespace ValheimModPack.PartyPrison
         private readonly PrisonUiBindings bindings;
         private readonly Button[] rows = new Button[PageSize];
         private readonly Button[] tiers = new Button[3];
-        private readonly Button[] families = new Button[6];
+        private readonly Button[] families = new Button[CombatCatalog.FamilyCount];
         private readonly List<PrisonPlayerRow> players = new List<PrisonPlayerRow>();
         private GameObject overlay, panel;
         private Player owner;
         private ZNet network;
-        private Text title, subtitle, selection, pagination, status, buildHint, sentence, reasonText, custodyText, foodText;
+        private Text title, subtitle, selection, pagination, status, buildHint, sentence, reasonText, custodyText, foodText, combatProgress;
         private InputField minutes, reason;
         private Button previous, next, impose, release, forceRelease, build, kit, cell, arena;
         private string selectedAccount, localNotice = "";
@@ -135,7 +135,7 @@ namespace ValheimModPack.PartyPrison
             finally
             {
                 overlay = panel = null; owner = null; network = null;
-                title = subtitle = selection = pagination = status = buildHint = sentence = reasonText = custodyText = foodText = null;
+                title = subtitle = selection = pagination = status = buildHint = sentence = reasonText = custodyText = foodText = combatProgress = null;
                 minutes = reason = null; previous = next = impose = release = forceRelease = build = kit = cell = arena = null;
                 for (int i = 0; i < rows.Length; ++i) rows[i] = null;
                 for (int i = 0; i < tiers.Length; ++i) tiers[i] = null;
@@ -187,8 +187,8 @@ namespace ValheimModPack.PartyPrison
             forceRelease = ButtonAt(T("Принудительно освободить", "Force release"), 255, -39, 440, 40, ForceRelease);
             Label(T("Сложность следующих волн", "Difficulty of future waves"), 255, -87, 440, 30, 20, true);
             WaveButtons(255, -127, 140, 40, 150);
-            Label(T("Волны появляются сами, когда заключённый на арене. Добычу с мобов он сохраняет.",
-                "Waves spawn automatically while the prisoner is in the arena. The prisoner keeps enemy loot."), 255, -183, 440, 49, 16, false);
+            Label(T("Волны появляются сами на арене. Каждые 4 победы сложность растёт до сильной. Добыча сохраняется.",
+                "Waves spawn automatically in the arena. Every 4 wins, difficulty rises up to strong. Loot is kept."), 255, -183, 440, 49, 16, false);
             build = ButtonAt(T("Построить тюрьму возле меня", "Build prison near me"), 0, -235, 580, 45, BuildPrison);
             buildHint = Label("", 0, -283, 984, 48, 16, false);
             status = Label("", 0, -345, 984, 56, 17, false);
@@ -208,13 +208,14 @@ namespace ValheimModPack.PartyPrison
             Label(T("Противники", "Enemies"), 0, 14, 710, 30, 21, true);
             for (int i = 0; i < families.Length; ++i) {
                 int family = i;
-                families[i] = ButtonAt(T(CombatCatalog.Name(i, true), CombatCatalog.Name(i, false)), (i % 3 - 1) * 233, -29 - (i / 3) * 49, 216, 40, () => SelectFamily(family));
+                families[i] = ButtonAt(T(CombatCatalog.Name(i, true), CombatCatalog.Name(i, false)), (i % 4 - 1.5f) * 180, -29 - (i / 4) * 49, 168, 40, () => SelectFamily(family));
             }
             Label(T("Сложность следующих волн", "Difficulty of future waves"), 0, -124, 710, 30, 21, true);
             WaveButtons(0, -169, 216, 40, 233);
-            foodText = Label("", 0, -226, 710, 64, 16, false);
-            custodyText = Label("", 0, -307, 710, 84, 17, false);
-            status = Label("", 0, -393, 710, 65, 16, false);
+            combatProgress = Label("", 0, -202, 710, 26, 16, false);
+            foodText = Label("", 0, -253, 710, 68, 16, false);
+            custodyText = Label("", 0, -332, 710, 84, 17, false);
+            status = Label("", 0, -416, 710, 58, 16, false);
         }
 
         private void WaveButtons(float centerX, float y, float width, float height, float spacing)
@@ -279,8 +280,8 @@ namespace ValheimModPack.PartyPrison
                 reasonText.text = state == null ? "" : T("Причина: ", "Reason: ") + Safe(state.Reason, 180);
                 custodyText.text = String.IsNullOrEmpty(custody)
                     ? state != null && state.PendingRelease
-                        ? T("После открытия решётки взаимодействуйте с сундуками, чтобы забрать вещи.\nДобыча сохраняется; тюремное снаряжение и несъеденные пайки удаляются.",
-                            "Once the gate opens, interact with the chests to retrieve your belongings.\nLoot is kept; loan equipment and uneaten rations are removed.")
+                        ? T("После открытия решётки вещи можно взять из обычных сундуков.\nДобыча сохраняется; тюремные вещи и эффекты тюремной еды удаляются.",
+                            "Once the gate opens, you can take belongings from the normal chests.\nLoot is kept; prison items and prison food effects are removed.")
                         : !ready
                             ? T("Ваши вещи сохраняются в четырёх железных сундуках. Дождитесь окончания подготовки перед боем.",
                                 "Your belongings are being secured in four iron chests. Wait for preparation to finish before fighting.")
@@ -292,7 +293,14 @@ namespace ValheimModPack.PartyPrison
                 if (arena != null) arena.interactable = ready && bindings.Move != null;
                 foreach (Button tier in tiers) if (tier != null) tier.interactable = ready && (bindings.Wave != null || bindings.Choice != null);
                 int selectedFamily = bindings.CombatFamily == null ? 0 : bindings.CombatFamily();
-                RepaintFood(selectedFamily, bindings.CombatDifficulty == null ? 0 : bindings.CombatDifficulty());
+                RepaintFood(selectedFamily, bindings.CombatKitDifficulty != null ? bindings.CombatKitDifficulty()
+                    : bindings.CombatDifficulty == null ? 0 : bindings.CombatDifficulty());
+                int wins = Math.Max(0, bindings.CombatWavesCompleted == null ? 0 : bindings.CombatWavesCompleted());
+                int untilUpgrade = Math.Max(0, bindings.CombatWavesUntilUpgrade == null ? 4 : bindings.CombatWavesUntilUpgrade());
+                bool highestTier = bindings.CombatDifficulty != null && bindings.CombatDifficulty() >= CombatCatalog.DifficultyCount - 1;
+                combatProgress.text = T("Побед: ", "Wins: ") + wins.ToString(CultureInfo.InvariantCulture)
+                    + (highestTier ? T(" · Максимальная сложность", " · Maximum difficulty")
+                        : T(" · До повышения: ", " · Next upgrade in: ") + untilUpgrade.ToString(CultureInfo.InvariantCulture) + T(" волн", " waves"));
                 for (int i = 0; i < families.Length; ++i) if (families[i] != null) {
                     families[i].interactable = ready && bindings.Choice != null;
                     families[i].GetComponentInChildren<Text>().text = (i == selectedFamily ? "› " : "") + T(CombatCatalog.Name(i, true), CombatCatalog.Name(i, false));
@@ -321,7 +329,8 @@ namespace ValheimModPack.PartyPrison
             foodText.text = T("Здоровье: ", "Health: ") + names[0] + ", " + names[1]
                 + "\n" + T("Выносливость: ", "Stamina: ") + names[2] + ", " + names[3]
                 + T(". Порций каждого: ", ". Portions each: ") + choice.FoodServings
-                + "\n" + T("Одновременно — 3 блюда. Съеденная еда действует обычное время.", "Three foods at once. Eaten food keeps its normal duration.");
+                + "\n" + T("3 тошника для смены еды. Тюремная еда удаляется при смене набора и освобождении.",
+                    "3 pukeberries to change food. Prison food expires on loadout change and release.");
             foodFamily = family; foodDifficulty = difficulty; foodLanguage = language;
         }
 

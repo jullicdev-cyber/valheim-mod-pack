@@ -72,8 +72,8 @@ namespace ValheimModPack.PartyPrison
             }
             byte[] valid = Write(delegate(BinaryWriter writer) { PrisonProtocol.WriteHeader(writer, world, PrisonProtocol.State); });
             Truncate(valid, delegate(BinaryReader reader) { PrisonProtocol.ReadHeader(reader, world); }, "envelope header");
-            Check(BitConverter.ToInt32(valid, 0) == 3, "combat and emergency recovery protocol uses version three");
-            foreach (int version in new[] { 0, -1, 1, 2, 4, Int32.MaxValue })
+            Check(BitConverter.ToInt32(valid, 0) == 4, "wave progress snapshots use protocol version four");
+            foreach (int version in new[] { 0, -1, 1, 2, 3, PrisonProtocol.Version + 1, Int32.MaxValue })
             {
                 byte[] wrong = (byte[])valid.Clone(); Buffer.BlockCopy(BitConverter.GetBytes(version), 0, wrong, 0, 4);
                 Reject(delegate { Read(wrong, delegate(BinaryReader reader) { PrisonProtocol.ReadHeader(reader, world); }); }, "unknown protocol version");

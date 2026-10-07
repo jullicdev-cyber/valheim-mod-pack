@@ -7,14 +7,16 @@ namespace ValheimModPack.PartyPrison
     {
         public readonly string MobPrefab, RussianName, EnglishName;
         public readonly int MobLevel, WaveCount, GearQuality;
+        public readonly bool IsMixed;
         public readonly string[] GearPrefabs;
         public readonly string[] FoodSources, FoodPrefabs;
         public readonly string ArrowSource, ArrowPrefab;
         public readonly int FoodServings;
         public readonly int EmeticServings = CombatCatalog.EmeticServings;
-        internal PrisonCombatLoadout(string prefab, string russian, string english, string[] gear, string[] foods, string arrows, int difficulty)
+        internal PrisonCombatLoadout(string prefab, string russian, string english, string[] gear, string[] foods, string arrows, int difficulty, bool mixed)
         {
             MobPrefab = prefab; RussianName = russian; EnglishName = english;
+            IsMixed = mixed;
             MobLevel = difficulty + 1; WaveCount = difficulty + 2; GearQuality = difficulty + 1;
             ArrowSource = arrows; ArrowPrefab = CombatCatalog.ArrowPrefab(arrows);
             GearPrefabs = new string[gear.Length + 1]; Array.Copy(gear, GearPrefabs, gear.Length);
@@ -31,7 +33,7 @@ namespace ValheimModPack.PartyPrison
     // The wire carries two bounded indices, never a client-provided prefab name.
     public static class CombatCatalog
     {
-        public const int FamilyCount = 6, DifficultyCount = 3;
+        public const int NativeFamilyCount = 6, MixedFamily = NativeFamilyCount, FamilyCount = NativeFamilyCount + 1, DifficultyCount = 3;
         public const string EmeticSource = "Pukeberries", EmeticPrefab = "vmp_prison_emetic_Pukeberries";
         public const int EmeticServings = 3;
         private static readonly string[] Mobs = { "Greyling", "Greydwarf", "Draugr", "Skeleton", "Hatchling", "Wolf" };
@@ -126,8 +128,41 @@ namespace ValheimModPack.PartyPrison
         public static PrisonCombatLoadout Get(int family, int difficulty)
         {
             if (family < 0 || family >= FamilyCount || difficulty < 0 || difficulty >= DifficultyCount)
-                throw new ArgumentOutOfRangeException("family", "Выберите один из шести видов мобов и сложность 1–3.");
-            return new PrisonCombatLoadout(Mobs[family], Russian[family], English[family], Gear[family], Food[family][difficulty], Arrows[family], difficulty);
+                throw new ArgumentOutOfRangeException("family", "Выберите вид мобов или смешанный режим и сложность 1–3.");
+            bool mixed = family == MixedFamily;
+            // Mixed waves can contain wolves and drakes even at their lowest
+            // star level, so they use the mountain kit from the first wave.
+            int kitFamily = mixed ? NativeFamilyCount - 1 : family;
+            return new PrisonCombatLoadout(Mobs[kitFamily], mixed ? "Смешанные" : Russian[family], mixed ? "Mixed enemies" : English[family],
+                Gear[kitFamily], Food[kitFamily][difficulty], Arrows[kitFamily], difficulty, mixed);
+        }
+
+        public static string[] AllMobPrefabs() { return (string[])Mobs.Clone(); }
+
+        public static string[] GetWaveMobPrefabs(PrisonCombatLoadout choice, Random random)
+        {
+            if (choice == null) throw new ArgumentNullException("choice");
+            if (random == null) throw new ArgumentNullException("random");
+            var wave = new string[choice.WaveCount];
+            if (!choice.IsMixed) {
+                for (int i = 0; i < wave.Length; ++i) wave[i] = choice.MobPrefab;
+                return wave;
+            }
+            int first = -1; bool varied = false;
+            for (int i = 0; i < wave.Length; ++i) {
+                int family = random.Next(NativeFamilyCount);
+                if (first < 0) first = family; else if (family != first) varied = true;
+                wave[i] = Mobs[family];
+            }
+            // Independent rolls permit duplicate enemies. Only a completely
+            // homogeneous roll is adjusted, so every mixed wave has at least
+            // two native enemy types instead of quietly becoming a normal wave.
+            if (!varied) {
+                int different = random.Next(NativeFamilyCount - 1);
+                if (different >= first) ++different;
+                wave[wave.Length - 1] = Mobs[different];
+            }
+            return wave;
         }
 
         public static string Name(int family, bool russian) { return russian ? Get(family, 0).RussianName : Get(family, 0).EnglishName; }

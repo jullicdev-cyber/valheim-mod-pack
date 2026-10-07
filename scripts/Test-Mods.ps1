@@ -32,6 +32,8 @@ Run-Suite 'inventory-admin-policy' 'plugins/InventoryAdmin/Test-Policy.ps1'
 Run-Suite 'party-prison-policy' 'plugins/PartyPrison/Test-Policy.ps1'
 Run-Suite 'party-prison-timer' 'plugins/PartyPrison/Test-Timer.ps1'
 Run-Suite 'party-prison-placement' 'plugins/PartyPrison/Test-PlacementPlan.ps1'
+Run-Suite 'party-prison-random-spawn' 'plugins/PartyPrison/Test-RandomSpawn.ps1'
+Run-Suite 'party-prison-wave-progression' 'plugins/PartyPrison/Test-Waves.ps1'
 Run-Suite 'party-prison-protocol' 'plugins/PartyPrison/Test-Protocol.ps1'
 Run-Suite 'party-prison-combat' 'plugins/PartyPrison/Test-Combat.ps1' @('-GameDirectory',$GameDirectory)
 Run-Suite 'party-prison-backpack' 'plugins/PartyPrison/Test-Backpack.ps1'

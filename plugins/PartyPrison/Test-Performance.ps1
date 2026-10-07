@@ -147,11 +147,35 @@ try {
     foreach ($method in @(Graph $wave)) {
         Check (-not [bool](Calls $method 'UnityEngine\.Object::Instantiate')) 'Accepting a wave must queue mobs without instantiating the whole wave in one frame.'
     }
+    $mixedWave = Method $arenaType 'SpawnWave' 5
+    Check ([bool](Calls $wave 'ArenaBuilder::SpawnWave\(')) 'The ordinary wave overload must share the mixed scheduler rather than a separate synchronous spawn path.'
+    Check ([bool]($mixedWave.Body.Instructions | Where-Object {
+        $_.OpCode.Name -eq 'newarr' -and $_.Operand.FullName -eq 'UnityEngine.GameObject'
+    }) -and [bool]($mixedWave.Body.Instructions | Where-Object {
+        $_.OpCode.Name -eq 'stfld' -and $_.Operand.Name -eq 'Prefabs'
+    })) 'Mixed waves must resolve each mob into their own detached prefab queue before acceptance.'
+    Check ([bool](Calls $mixedWave 'ArenaWaveProgressionPolicy::Start') -and [bool](Calls $mixedWave 'ArenaBuilder::WriteWaveProgressZdo')) (
+        'An accepted sentence wave must publish its durable serial and expected count before native mob creation.')
+    foreach ($method in @(Graph $mixedWave)) {
+        Check (-not [bool](Calls $method 'UnityEngine\.Object::Instantiate')) 'Mixed wave acceptance must not instantiate any native mob in its validation frame.'
+    }
     $spawn = Method $arenaType 'TickWaveSpawning' 1
     $instantiation = @(Calls $spawn 'UnityEngine\.Object::Instantiate')
     Check ($instantiation.Count -eq 1) 'The wave scheduler must have exactly one native mob creation site.'
     Check ([bool]($spawn.Body.Instructions | Where-Object { $_.OpCode.Name -eq 'ldc.r4' -and [single]$_.Operand -eq [single]0.6 })) 'Mob creation must be staggered by at least 0.6 seconds.'
     Check ([bool](Calls $spawn 'UnityEngine\.Time::get_realtimeSinceStartup')) 'The wave scheduler needs a monotonic clock gate.'
+    foreach ($field in @('Prefabs','Spawned')) {
+        Check ([bool]($spawn.Body.Instructions | Where-Object {
+            $_.OpCode.Name -eq 'ldfld' -and $_.Operand.Name -eq $field
+        })) ('The scheduler must choose the individual current mob before placement: ' + $field)
+    }
+    Check (-not [bool]($spawn.Body.Instructions | Where-Object {
+        $_.Operand -is [Mono.Cecil.FieldReference] -and $_.Operand.Name -eq 'Prefab'
+    })) 'A mixed wave must not reuse one singular mob prefab for all spawn slots.'
+    Check (@($spawn.Body.Instructions | Where-Object { $_.OpCode.Name -eq 'ldstr' -and $_.Operand -eq 'Hatchling' }).Count -eq 2) (
+        'The current prefab must separately govern its flying collision check and two-metre spawn height.')
+    Check ([bool](Calls $spawn 'ArenaBuilder::RecordWaveSpawned') -and [bool](Calls $spawn 'ArenaBuilder::AbortSpawnWave')) (
+        'Successful spawns and cancelled/failed spawn queues must update the same durable wave identity.')
     if ($instantiation.Count -eq 1) {
         Check (-not [bool]($spawn.Body.Instructions | Where-Object {
             $_.Operand -is [Mono.Cecil.Cil.Instruction] -and $_.Operand.Offset -le $instantiation[0].Offset -and
@@ -159,12 +183,67 @@ try {
         })) 'Native mob creation must not occur in an in-frame loop.'
     }
     No-WorldScan $spawn
+    $position = Method $arenaType 'TryWavePosition' 4
+    $randomChoice = Method 'ValheimModPack.PartyPrison.ArenaSpawnGeometry' 'TryChoose' 4
+    Check ([bool](Calls $position 'ArenaSpawnGeometry::TryChoose') -and
+        [bool](@(Graph $position) | ForEach-Object { Calls $_ 'UnityEngine\.Random::get_value' }) -and
+        [bool](@(Graph $position) | ForEach-Object { Calls $_ 'UnityEngine\.Physics::CheckCapsule' })) (
+        'Production random placement must use the bounded sampler and actual native physical clearance.')
+    Check ([bool]($randomChoice.Body.Instructions | Where-Object {
+        $_.OpCode.Name -in @('ldc.i4','ldc.i4.s') -and [int]$_.Operand -eq 12
+    })) 'A blocked random spawn must remain bounded to twelve candidate checks per scheduler attempt.'
+    foreach ($method in @(Graph $position)) {
+        Check (-not [bool](Calls $method 'ArenaGeometry::Spawn|HashSet`1.*::.ctor')) (
+            'Random spawn selection must not fall back to fixed corner spokes or reserve unique positions.')
+    }
+    No-WorldScan $position
     $auto = Method $pluginType 'AutoWaves' 0
     $live = @(Calls $auto 'ArenaBuilder::LiveMobCount')
     $inside = @(Calls $auto 'ArenaBuilder::IsInsideArena')
     $ready = @(Calls $auto 'Plugin::HostFightReady')
     Check ($live.Count -eq 1 -and $inside.Count -gt 0 -and $ready.Count -gt 0 -and
         $inside[0].Offset -lt $live[0].Offset -and $ready[0].Offset -lt $live[0].Offset) 'Empty or unoccupied arenas must skip the mob-count query.'
+    $completed = @(Calls $auto 'ArenaBuilder::CompleteWaveIfDefeated')
+    Check ($completed.Count -eq 1 -and $inside[0].Offset -lt $completed[0].Offset -and $ready[0].Offset -lt $completed[0].Offset) (
+        'Only a ready inmate inside the arena may trigger completion queries or automatic difficulty progress.')
+    $completion = Method $arenaType 'CompleteWaveIfDefeated' 3
+    Check ([bool](Calls $completion 'ArenaBuilder::HasPendingWave') -and [bool](Calls $completion 'ArenaBuilder::IsLiveCurrentWaveMob')) (
+        'Wave credit must consider its own outstanding spawn queue and matching live mobs.')
+    Check ([bool](@(Graph $completion) | ForEach-Object { Calls $_ 'ZDOMan::FindSectorObjects' })) (
+        'Wave completion must count only bounded native region sectors.')
+    No-WorldScan $completion
+    $waveWriter = Method $arenaType 'WriteWaveProgressZdo' 2
+    Check ([bool](Calls $waveWriter 'ZDOMan::ForceSendZDO')) 'Wave progress must replicate its small native ZDO rather than checkpoint the whole world.'
+    foreach ($method in @(Graph $auto)) {
+        Check (-not [bool](Calls $method 'ZNet::Save|Game::Save|WorldCharacters\.Plugin::RequestAdministrativeSave')) (
+            'Automatic waves and difficulty progress must not block the server on character or world checkpoints.')
+        Check (-not [bool](Calls $method 'ArenaBuilder::ConfigureSentenceKit|ArenaBuilder::ClearSentenceKit|ArenaBuilder::RemoveObsolete.*|Plugin::ApplyCombatChoice')) (
+            'Automatic difficulty upgrades must keep the existing kit epoch and held loan equipment intact.')
+    }
+    foreach ($key in @('VMP_PP_KitRevision','VMP_PP_KitFamily','VMP_PP_KitDifficulty','VMP_PP_Gear')) {
+        Check (-not [bool]($waveWriter.Body.Instructions | Where-Object { $_.OpCode.Name -eq 'ldstr' -and $_.Operand -eq $key })) (
+            'Wave publication must not overwrite equipment identity or expiry provenance: ' + $key)
+    }
+    $alliance = Method $arenaType 'AreAlliedPrisonMobs' 2
+    No-WorldScan $alliance
+    Check ([bool](Calls $alliance 'ZNetView::IsValid') -and @(Calls $alliance 'ZDO::GetBool').Count -eq 2) (
+        'Enemy alliance must inspect both valid native views and both prison markers before accepting a mob pair.')
+    Check (-not [bool](Calls $alliance 'ArenaBuilder::Tagged|ArenaBuilder::GetKit|ArenaBuilder::GetWave|Inventory::|Character::SetFaction')) (
+        'Every AI enemy test must remain a local marker lookup without region queries, inventory reads or global faction mutation.')
+    $alliancePrefix = Method 'ValheimModPack.PartyPrison.PrisonEnemyAlliancePatch' 'Prefix' 3
+    $alliedGuard = @(Calls $alliancePrefix 'ArenaBuilder::AreAlliedPrisonMobs')
+    $overrideEnemy = @($alliancePrefix.Body.Instructions | Where-Object { $_.OpCode.Name -eq 'stind.i1' })
+    Check ($alliedGuard.Count -eq 1 -and $overrideEnemy.Count -eq 1 -and $alliedGuard[0].Offset -lt $overrideEnemy[0].Offset -and
+        [bool]($alliancePrefix.Body.Instructions | Where-Object {
+            $_.OpCode.FlowControl -eq [Mono.Cecil.Cil.FlowControl]::Cond_Branch -and $_.Offset -gt $alliedGuard[0].Offset -and
+            $_.Offset -lt $overrideEnemy[0].Offset
+        })) 'The IsEnemy override must stay behind the exact prison mob-pair guard.'
+    $nativeEnemy = @($native.MainModule.Types | Where-Object Name -eq 'BaseAI' | ForEach-Object Methods | Where-Object {
+        $_.Name -eq 'IsEnemy' -and $_.Parameters.Count -eq 2 -and $_.Parameters[0].ParameterType.FullName -eq 'Character' -and
+        $_.Parameters[1].ParameterType.FullName -eq 'Character'
+    })
+    Check ($nativeEnemy.Count -eq 1 -and $nativeEnemy[0].IsStatic -and $nativeEnemy[0].ReturnType.FullName -eq 'System.Boolean') (
+        'The native mixed-enemy alliance hook must retain the exact static Character-pair bool ABI.')
     Clock-Gate (Method $pluginType 'Enforce' 1) 'nextLoanMaintenance' 0.5 'Inventory::GetAllItems'
     # Immediate release cleanup is allowed; the ordinary idle-player fallback is gated in Update.
     Clock-Gate (Method $pluginType 'Update' 0) 'nextLoanRemoval' 1 'Plugin::RemoveLoans'

@@ -22,7 +22,7 @@ namespace ValheimModPack.PartyPrison
     [NetworkCompatibility(CompatibilityLevel.EveryoneMustHaveMod, VersionStrictness.Patch)]
     public sealed partial class Plugin : BaseUnityPlugin
     {
-        public const string Id = "valheimmodpack.partyprison", Version = "1.5.2";
+        public const string Id = "valheimmodpack.partyprison", Version = "1.5.3";
         internal const string LoanKey = "VMP_PP_Loan", InmateKey = "VMP_PP_Inmate";
         private const string RpcName = PrisonWire.RpcName;
         internal static Plugin Active;
@@ -69,10 +69,13 @@ namespace ValheimModPack.PartyPrison
                 LocalSentence = () => localSentence == null ? null : localSentence.Copy(), Impose = Impose, Release = Release, ForceRelease = ForceRelease,
                 PrepareBuild = PrepareBuild, Build = BuildConfirmedPrison, Wave = RequestWave, Move = Move, Kit = GiveKit, CanFight = () => FightReady, CustodyStatus = CustodyStatus,
                 Choice = RequestCombatChoice, CombatFamily = () => combatFamily, CombatDifficulty = () => combatDifficulty,
+                CombatKitDifficulty = () => combatStartingDifficulty,
+                CombatWavesCompleted = () => combatWavesCompleted,
+                CombatWavesUntilUpgrade = () => ArenaWaveProgressionPolicy.WavesUntilUpgrade(combatStartingDifficulty, combatWavesCompleted),
                 Notice = () => notice, Translate = T, Error = e => Report(e.Message) });
             harmony = new Harmony(Id); harmony.PatchAll(typeof(Plugin).Assembly);
             PrefabManager.OnVanillaPrefabsAvailable += RegisterContent;
-            new Terminal.ConsoleCommand("prison", "Prison: open, build, players, jail <account/name> <minutes> [reason], release/force-release <account/name>, cell, arena, mobs <0..5> [0..2], wave <0/1/2>", (Terminal.ConsoleEvent)Command);
+            new Terminal.ConsoleCommand("prison", "Prison: open, build, players, jail <account/name> <minutes> [reason], release/force-release <account/name>, cell, arena, mobs <0..6> [0..2], wave <0/1/2>", (Terminal.ConsoleEvent)Command);
             Logger.LogInfo("Party Prison ready; host-only sentences, mandatory identical clients.");
         }
         private void RegisterContent()
@@ -323,12 +326,14 @@ namespace ValheimModPack.PartyPrison
             if (kind != PrisonProtocol.State) throw new InvalidDataException("Unknown prison state message.");
             long serial = reader.ReadInt64(); PrisonRegion nextRegion = PrisonProtocol.Region(reader); SentenceState state = PrisonProtocol.Sentence(reader);
             int layoutVersion = reader.ReadInt32(), stage = reader.ReadInt32(); string account = PrisonProtocol.Text(reader), token = PrisonProtocol.Text(reader), hash = PrisonProtocol.Text(reader), recovery = PrisonProtocol.Text(reader);
-            int family = reader.ReadInt32(), difficulty = reader.ReadInt32(); string gearToken = PrisonProtocol.Text(reader); int gearRevision = reader.ReadInt32(); PrisonProtocol.End(reader);
+            int family = reader.ReadInt32(), difficulty = reader.ReadInt32(); string gearToken = PrisonProtocol.Text(reader); int gearRevision = reader.ReadInt32();
+            int startingDifficulty = reader.ReadInt32(), wavesCompleted = reader.ReadInt32(); PrisonProtocol.End(reader);
             if (serial <= receivedSequence) return;
             if (state != null && nextRegion == null && !state.EmergencyRelease) throw new InvalidDataException("Sentence without a prison.");
             if (localSentence != null && state == null && !releaseArrived) throw new InvalidDataException("Unconfirmed prison release.");
             if (layoutVersion < 0 || layoutVersion > ArenaBuilder.CurrentLayoutVersion) throw new InvalidDataException("Unknown prison layout version.");
             ValidateCombatState(family, difficulty, gearToken, gearRevision);
+            ValidateCombatProgress(difficulty, startingDifficulty, wavesCompleted);
             if (stage != -1 && (stage < 1 || stage > 5)) throw new InvalidDataException("Invalid custody stage.");
             if (stage != -1) { SentencePolicy.RequireAccountId(account); Guid custodyId; if (!Guid.TryParseExact(token, "N", out custodyId) || hash.Length != 64) throw new InvalidDataException("Invalid custody identity."); }
             receivedSequence = serial; receivedState = true; region = nextRegion; SiteClearer.ConfigureRegion(region);
@@ -339,6 +344,7 @@ namespace ValheimModPack.PartyPrison
             localLayoutVersion = layoutVersion;
             ReadCustodyState(stage, account, token, hash, recovery);
             ReadCombatState(family, difficulty, gearToken, gearRevision);
+            ReadCombatProgress(startingDifficulty, wavesCompleted);
         }
         internal bool CellSafe(PrisonPoint point)
         {
@@ -530,8 +536,10 @@ namespace ValheimModPack.PartyPrison
             if (ArenaBuilder.LiveMobCount(region) != 0) throw new InvalidOperationException(T("Сначала победите текущую волну.", "Defeat the current wave first."));
             if (!store.All().Any(s => !s.PendingRelease)) throw new InvalidOperationException(T("В тюрьме нет заключённых.", "There are no inmates."));
             int family, difficulty, revision; string kitToken; ArenaBuilder.GetCombatChoice(region, out family, out difficulty, out kitToken, out revision);
-            PrisonCombatLoadout choice = CombatCatalog.Get(family, difficulty);
-            ArenaBuilder.SpawnWave(region, choice.MobPrefab, choice.WaveCount, choice.MobLevel);
+            ArenaWaveProgress progress = ArenaBuilder.GetWaveProgress(region, kitToken, revision);
+            int effective = ArenaWaveProgressionPolicy.Difficulty(difficulty, progress.Completed);
+            PrisonCombatLoadout choice = CombatCatalog.Get(family, effective);
+            ArenaBuilder.SpawnWave(region, CombatCatalog.GetWaveMobPrefabs(choice, combatWaveRandom), choice.MobLevel, kitToken, revision);
             nextWave = Time.realtimeSinceStartup + 15; notice = T("Волна мобов началась.", "A mob wave has started.");
         }
         private string Resolve(string value)
@@ -550,7 +558,7 @@ namespace ValheimModPack.PartyPrison
                 if (words[1] == "arena") { Move(true); return; }
                 if (words[1] == "kit") { GiveKit(); return; }
                 if (words[1] == "wave") { int tier; if (words.Length != 3 || !Int32.TryParse(words[2], out tier)) throw new InvalidOperationException("prison wave <0/1/2>"); RequestWave(tier); return; }
-                if (words[1] == "mobs") { int family, difficulty = combatDifficulty; if (words.Length < 3 || words.Length > 4 || !Int32.TryParse(words[2], out family) || words.Length == 4 && !Int32.TryParse(words[3], out difficulty)) throw new InvalidOperationException("prison mobs <0..5> [0..2]"); RequestCombatChoice(family, difficulty); return; }
+                if (words[1] == "mobs") { int family, difficulty = combatDifficulty; if (words.Length < 3 || words.Length > 4 || !Int32.TryParse(words[2], out family) || words.Length == 4 && !Int32.TryParse(words[3], out difficulty)) throw new InvalidOperationException("prison mobs <0..6> [0..2]"); RequestCombatChoice(family, difficulty); return; }
                 RequireHost();
                 if (words[1] == "build" && words.Length == 2) { BuildPrison(); args.Context.AddString(notice); return; }
                 if (words[1] == "players") { foreach (var row in Roster()) args.Context.AddString(row.Name + " | " + row.AccountId + " | " + (row.Online ? "online" : "offline") + " | " + Math.Ceiling(row.RemainingSeconds) + "s"); return; }
@@ -558,7 +566,7 @@ namespace ValheimModPack.PartyPrison
                 if (words[1] == "force-release" && words.Length == 3) { ForceRelease(Resolve(words[2])); args.Context.AddString(notice); return; }
                 if (words[1] == "jail" && words.Length >= 4)
                 { double minutes; if (!Double.TryParse(words[3], NumberStyles.Float, CultureInfo.InvariantCulture, out minutes)) throw new InvalidOperationException("prison jail <account> <minutes> [reason]"); Impose(Resolve(words[2]), minutes, String.Join(" ", words.Skip(4).ToArray())); args.Context.AddString(notice); return; }
-                args.Context.AddString("prison open | build | players | jail <account> <minutes> [reason] | release/force-release <account> | cell | arena | mobs <0..5> [0..2] | wave <0/1/2>");
+                args.Context.AddString("prison open | build | players | jail <account> <minutes> [reason] | release/force-release <account> | cell | arena | mobs <0..6> [0..2] | wave <0/1/2>");
             }
             catch (Exception e) { args.Context.AddString(e.Message); Report(e.Message); }
         }
