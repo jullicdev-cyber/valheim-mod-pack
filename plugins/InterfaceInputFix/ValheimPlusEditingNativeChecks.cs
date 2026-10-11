@@ -142,8 +142,15 @@ namespace ValheimModPack.InterfaceInputFix
                 region.SetValue(prison.Instance, Activator.CreateInstance(region.FieldType));
                 ZNetView view = target.AddComponent<ZNetView>();
                 fixtureZdo = new ZDO { m_uid = new ZDOID(-643591881, 1) };
+                // A detached ZDO starts with prefab -1, which native IsValid rejects.
+                // Supply a normal building prefab without registering a world object.
+                AccessTools.Field(typeof(ZDO), "m_prefab").SetValue(fixtureZdo, "stone_floor_2x2".GetStableHashCode());
                 AccessTools.Field(typeof(ZNetView), "m_zdo").SetValue(view, fixtureZdo);
                 fixtureZdo.Set("VMP_PP_Protected", true);
+                Check(fixtureZdo.IsValid() && view.IsValid() && fixtureZdo.GetBool("VMP_PP_Protected", false),
+                    "detached native prison fixture has a valid view and real marker");
+                Check((bool)access.GetMethod("Protected", All).Invoke(null, new object[] { target }),
+                    "cached native delegate observes the real protected marker");
                 Check(!(bool)ray.Invoke(null, new object[] { player }), "real marker blocks normal-player prison selection");
                 AccessTools.Field(aem, "HitPiece").SetValue(null, piece); start.Invoke(null, null);
                 Check(!(bool)AccessTools.Field(aem, "isActive").GetValue(null), "real protected target cannot enter AEM");
